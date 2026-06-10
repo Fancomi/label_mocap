@@ -392,13 +392,14 @@ async function setFrame(i) {
 
 function layoutBg() {
   const p = cam.bgPlaneParams();
-  // Near plane (3D-only)
+  // Plane geometry uses NATIVE image dims; rotation is applied to the plane
+  // mesh's `rotation.z`. Texture sits in the rotated plane → pixels never get
+  // resized to a non-image aspect. With native plane + same rotation as
+  // mesh/joints, everything stays pixel-aligned through the camera matrix.
   bgNear.geometry.dispose();
   bgNear.geometry = new THREE.PlaneGeometry(p.near.w, p.near.h);
   bgNear.position.set(0, 0, p.near.z);
-  // Same N×90° CW rotation as the data, around camera -Z (= world +Z out of plane).
   bgNear.rotation.set(0, 0, -dataRotCw * Math.PI / 2);
-  // Far plane (always shown when bg flag is on)
   bgFar.geometry.dispose();
   bgFar.geometry = new THREE.PlaneGeometry(p.far.w, p.far.h);
   bgFar.position.set(0, 0, p.far.z);
@@ -524,21 +525,30 @@ flagBtns.forEach(([id, key]) => {
 window.addEventListener('resize', resize);
 function resize() {
   if (!cam) return;
-  // CSS letterbox: lock canvas's aspect-ratio to the (rotated) image aspect;
-  // browser sizes it to fit the container with bg-color bars on the short axis.
+  const containerEl = renderer.domElement.parentElement;
+  const cw = containerEl.clientWidth, ch = containerEl.clientHeight;
+  if (cw <= 0 || ch <= 0) return;
+
+  // Compute the largest WxH that fits inside the container while matching
+  // the rotated image aspect. Pure pixel math, no CSS aspect-ratio.
   const targetAspect = cam.effectiveAspect();
-  renderer.domElement.style.aspectRatio = `${targetAspect}`;
-  // After style change, query resulting layout size and resize the backing
-  // buffer to match. Done in next frame so the browser applies aspect-ratio.
-  requestAnimationFrame(() => {
-    const w = renderer.domElement.clientWidth;
-    const h = renderer.domElement.clientHeight;
-    if (w > 0 && h > 0) {
-      renderer.setSize(w, h, false);
-      cam.camera.aspect = w / h;       // tracks rotated aspect (CSS already locked)
-      cam.camera.updateProjectionMatrix();
-    }
-  });
+  const containerAspect = cw / ch;
+  let w, h;
+  if (containerAspect > targetAspect) {
+    // container wider than image → fit height, leave horizontal bars
+    h = ch;
+    w = Math.round(h * targetAspect);
+  } else {
+    // container taller than image → fit width, leave vertical bars
+    w = cw;
+    h = Math.round(w / targetAspect);
+  }
+  // Set canvas CSS pixel size; centering done by absolute + translate(-50%).
+  renderer.domElement.style.width = w + 'px';
+  renderer.domElement.style.height = h + 'px';
+  renderer.setSize(w, h, false);     // backing buffer matches CSS × DPR
+  cam.camera.aspect = w / h;
+  cam.camera.updateProjectionMatrix();
 }
 
 function renderFrame() {

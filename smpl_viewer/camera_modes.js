@@ -190,18 +190,30 @@ export class CameraModes {
   isAnimating() { return this._tween !== null; }
 
   /** Returns 'background plane params' for the current state, used by viewer to position bg planes.
-   *  Geometry uses the *rotated* aspect — bg planes still want to fill the camera fov. */
+   *
+   *  IMPORTANT: plane geometry is NATIVE (un-rotated) image dims. The viewer
+   *  will rotate the plane mesh by N×90° CW about camera-out, which then
+   *  rotates the texture into screen-aligned position. If we used the rotated
+   *  aspect here AND the viewer rotated the plane, we'd double-rotate (the
+   *  plane would end up landscape on screen even when camera is portrait).
+   *
+   *  Native plane width/height in world units = image_pixels * z / focal.
+   *  Verified: 1 image pixel at world distance z covers `z/f` world units.
+   */
   bgPlaneParams() {
-    const fovY = THREE.MathUtils.degToRad(this.camera.fov);
-    const aspect = this._effectiveAspect();
-    const tanHalf = Math.tan(fovY / 2);
-    const nearH = 2 * tanHalf * this.bgPlaneZ3D;
-    const nearW = nearH * aspect;
-    const farH = 2 * tanHalf * this.bgPlaneZ2D;
-    const farW = farH * aspect;
+    const W = this.meta.image_w, H = this.meta.image_h;
+    const fx = this.K.fx, fy = this.K.fy;
     return {
-      near: { z: -this.bgPlaneZ3D, w: nearW, h: nearH },
-      far:  { z: -this.bgPlaneZ2D, w: farW,  h: farH  },
+      near: {
+        z: -this.bgPlaneZ3D,
+        w: W * this.bgPlaneZ3D / fx,
+        h: H * this.bgPlaneZ3D / fy,
+      },
+      far: {
+        z: -this.bgPlaneZ2D,
+        w: W * this.bgPlaneZ2D / fx,
+        h: H * this.bgPlaneZ2D / fy,
+      },
       frustum_visible: this.mode === '3d',
     };
   }
