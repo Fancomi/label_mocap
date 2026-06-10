@@ -216,8 +216,7 @@ async function selectSeq(seqId) {
 
   ensureGridAxes();
   cam = new CameraModes({ canvas: renderer.domElement, meta });
-  syncIntrinsicsPanel(cam.K);
-  syncEffectiveKPanel();
+  syncIntrinsicsPanel();
   // CSS aspect-ratio drives canvas size; resize() reads back the resulting
   // pixel dims and informs camera.aspect. Called after `cam` exists.
   resize();
@@ -470,28 +469,21 @@ function applyMode(mode) {
   layoutBg();
 }
 
-// Intrinsics panel reflects the *base* (un-rotated) K so values stay
-// stable across rotation. The camera derives effective fov/aspect from
-// dataRotN automatically.
-function syncIntrinsicsPanel(K) {
-  $('k-fx').value = K.fx;
-  $('k-fy').value = K.fy;
-  $('k-cx').value = K.cx;
-  $('k-cy').value = K.cy;
-}
-
-// Effective K panel: read-only display of the rotated-image intrinsics.
-function syncEffectiveKPanel() {
+// Single intrinsics panel: shows the *live* K (the one currently rendering).
+// On data rotation, K rotates too (cx↔cy swap pattern + dims) and the panel
+// reflects that automatically. User edits land directly on cam.K.
+function syncIntrinsicsPanel() {
   if (!cam) return;
-  const ek = cam.effectiveK();
-  $('ek-fx').textContent = ek.fx.toFixed(1);
-  $('ek-fy').textContent = ek.fy.toFixed(1);
-  $('ek-cx').textContent = ek.cx.toFixed(1);
-  $('ek-cy').textContent = ek.cy.toFixed(1);
-  $('ek-wh').textContent = `${ek.image_w}×${ek.image_h}`;
+  $('k-fx').value = cam.K.fx;
+  $('k-fy').value = cam.K.fy;
+  $('k-cx').value = cam.K.cx;
+  $('k-cy').value = cam.K.cy;
+  $('k-wh').textContent = `${cam.imageW}×${cam.imageH}`;
 }
 
-// SMPL root state panel.
+// SMPL root state panel — shows the *world-coordinate* root pos / rotation
+// for the currently-rendered frame (i.e. after dataRotN has been applied to
+// SMPL pose). This is what the camera actually sees in 3D space.
 function syncRootPanel(pos, rota) {
   const fmt = v => v.map(x => x.toFixed(3)).join(', ');
   const mag = Math.hypot(rota[0], rota[1], rota[2]);
@@ -511,16 +503,15 @@ function readIntrinsicsPanel() {
   $(id).addEventListener('input', () => {
     if (!cam) return;
     cam.setIntrinsics(readIntrinsicsPanel());
-    syncEffectiveKPanel();
+    syncIntrinsicsPanel();    // mirror dims back if anything changed
     rebuildFrustum();
     layoutBg();
   });
 });
 $('btn-k-reset').addEventListener('click', () => {
-  if (!cam || !curSeq) return;
-  cam.setIntrinsics(curSeq.meta.K);
-  syncIntrinsicsPanel(cam.K);
-  syncEffectiveKPanel();
+  if (!cam) return;
+  cam.resetIntrinsics();      // restores meta.K rotated by current dataRotN
+  syncIntrinsicsPanel();
   rebuildFrustum();
   layoutBg();
 });
@@ -545,7 +536,7 @@ function rotateData(delta) {
   if (cam) {
     cam.setDataRotation(dataRotCw);
     rebuildFrustum();
-    syncEffectiveKPanel();    // effective K depends on rotation
+    syncIntrinsicsPanel();    // K + dims rotated together; panel reflects live values
     resize();
   }
   if (curN > 0) applyFrame(curFrame);

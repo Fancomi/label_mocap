@@ -1,11 +1,35 @@
 // label_mocap/smpl_viewer/camera_modes.js
 // One PerspectiveCamera, two modes (3d/2d), 1s slerp on switch.
 // Each switch interpolates from the *current* pose to the *last saved* target pose.
+//
+// Intrinsics model: `this.K` is the K *currently in use* by the camera.
+// `dataRotN` rotations transform K alongside content, so the panel always
+// reflects what's actually rendering. `this._meta_K` is the factory K kept
+// for the reset button and for bg-plane geometry (which lives in
+// un-rotated world space — only the plane mesh's `rotation.z` follows N).
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const TWEEN_MS = 1000;
+
+// Apply N×CW rotation about camera-out to (K, W, H). Image-space pixel
+// coords are y-down, so 1× CW maps (u, v) → (h − v, u). Focals swap each step.
+function rotateKn(K, W, H, n) {
+  let fx = K.fx, fy = K.fy, cx = K.cx, cy = K.cy;
+  let w = W, h = H;
+  const steps = ((n % 4) + 4) % 4;
+  for (let i = 0; i < steps; i++) {
+    const ncx = h - cy;
+    const ncy = cx;
+    const nfx = fy, nfy = fx;
+    fx = nfx; fy = nfy;
+    cx = ncx; cy = ncy;
+    const nw = h, nh = w;
+    w = nw; h = nh;
+  }
+  return { fx, fy, cx, cy, w, h };
+}
 
 export class CameraModes {
   /**
@@ -18,20 +42,24 @@ export class CameraModes {
   constructor({ canvas, meta, bgPlaneZ3D = 1.5, bgPlaneZ2D = 50 }) {
     this.canvas = canvas;
     this.meta = meta;
-    // Live-mutable intrinsics — start as a copy of meta.K so resets work.
-    this.K = { fx: meta.K.fx, fy: meta.K.fy, cx: meta.K.cx, cy: meta.K.cy };
+    // Factory K + dims (un-rotated). For reset button, and as the un-rotated
+    // reference for bg plane geometry (which lives in source coords; rotation
+    // is applied to the plane mesh's rotation.z by the viewer).
+    this._meta_K = { fx: meta.K.fx, fy: meta.K.fy, cx: meta.K.cx, cy: meta.K.cy };
+    this._meta_W = meta.image_w;
+    this._meta_H = meta.image_h;
+    // Live K + image dims. These rotate with dataRotN AND are user-editable.
+    // The panel always shows / edits this.K — single source of truth.
+    this.K = { ...this._meta_K };
+    this.imageW = this._meta_W;
+    this.imageH = this._meta_H;
     this.bgPlaneZ3D = bgPlaneZ3D;
     this.bgPlaneZ2D = bgPlaneZ2D;
-    // Data rotation (N×90° CW about camera-out axis). Lives here so the
-    // camera can swap fov/aspect — the rendered viewport must match the
-    // *rotated* content's aspect, otherwise a portrait-rotated landscape
-    // capture into a portrait browser becomes a tiny strip.
-    this._dataRotN = 0;
+    this._dataRotN = 0;     // 0..3, CW about camera-out
 
     const fovY = this._fovYDeg();
-    this.camera = new THREE.PerspectiveCamera(fovY, this._effectiveAspect(), 0.01, 200);
+    this.camera = new THREE.PerspectiveCamera(fovY, this.imageW / this.imageH, 0.01, 200);
     this.camera.up.set(0, 1, 0);
-
     this._applyViewOffset();
 
     // Default 3D pose: behind and above the diver, looking at origin.
@@ -63,36 +91,15 @@ export class CameraModes {
     this._tween = null;
   }
 
-  // ── Geometry helpers (depend on dataRotN) ────────────────────────────────
+  // ── Geometry helpers (single K is now the live, rotated K) ─────────────
 
-  /** image_w / image_h after N×90° rotation. Odd N → swapped W/H. */
-  _rotatedDims() {
-    if (this._dataRotN % 2 === 0) {
-      return { w: this.meta.image_w, h: this.meta.image_h };
-    }
-    return { w: this.meta.image_h, h: this.meta.image_w };
-  }
-
-  /** Camera fov_y is computed from the rotated effective image height.
-   *  When N is odd, the original sensor "width" becomes the new height,
-   *  so we need fy_eff = fx (because rotated H = original W).
-   *  Generalized: pick the focal that maps original-along-Y axis after rotation.
-   */
+  /** Camera fov_y is computed directly from the live K + imageH. */
   _fovYDeg() {
-    // After rotation, the new "vertical" pixel axis maps to:
-    //   N=0: original v   (length image_h, focal fy)
-    //   N=1: original  u  (length image_w, focal fx)  — turned 90°
-    //   N=2: original v   (length image_h, focal fy)
-    //   N=3: original  u  (length image_w, focal fx)
-    const odd = this._dataRotN % 2 === 1;
-    const newH = odd ? this.meta.image_w : this.meta.image_h;
-    const newFy = odd ? this.K.fx : this.K.fy;
-    return 2 * Math.atan(newH / (2 * newFy)) * 180 / Math.PI;
+    return 2 * Math.atan(this.imageH / (2 * this.K.fy)) * 180 / Math.PI;
   }
 
   _effectiveAspect() {
-    const d = this._rotatedDims();
-    return d.w / d.h;
+    return this.imageW / this.imageH;
   }
 
   _quatLookingAt(eye, target) {
@@ -101,32 +108,15 @@ export class CameraModes {
   }
 
   _applyViewOffset() {
-    // Principal-point offset → setViewOffset. After dataRotN CW rotations
-    // about camera-out, the principal point rotates with the content. We
-    // also have to rotate (cx, cy) into the rotated full-frame so the
-    // setViewOffset values are expressed in the rotated coordinate system.
-    //
-    // Image-space pixel coords are y-down. A CW rotation about the camera
-    // -Z axis (looking at the image), in pixel space, maps:
-    //   (u, v) → (H − 1 − v, u)
-    // Practically: (cx, cy) → (H − cy, cx)   (we drop the −1, intrinsics are float)
-    const W = this.meta.image_w, H = this.meta.image_h;
-    let cxR = this.K.cx, cyR = this.K.cy;
-    let fullW = W, fullH = H;
-    const n = ((this._dataRotN % 4) + 4) % 4;
-    for (let i = 0; i < n; i++) {
-      const ncx = fullH - cyR;
-      const ncy = cxR;
-      cxR = ncx; cyR = ncy;
-      const nfW = fullH, nfH = fullW;
-      fullW = nfW; fullH = nfH;
-    }
-    const offX = fullW / 2 - cxR;
-    const offY = fullH / 2 - cyR;
-    this.camera.setViewOffset(fullW, fullH, offX, offY, fullW, fullH);
+    // Principal-point offset → setViewOffset. K is already rotated, so we
+    // express the offset directly in the live (rotated) image frame.
+    const offX = this.imageW / 2 - this.K.cx;
+    const offY = this.imageH / 2 - this.K.cy;
+    this.camera.setViewOffset(this.imageW, this.imageH, offX, offY,
+                              this.imageW, this.imageH);
   }
 
-  /** Update intrinsics live; called by viewer when user edits the K panel. */
+  /** User-edited intrinsics from the panel — overwrites this.K, refreshes camera. */
   setIntrinsics({ fx, fy, cx, cy }) {
     if (Number.isFinite(fx)) this.K.fx = fx;
     if (Number.isFinite(fy)) this.K.fy = fy;
@@ -136,32 +126,42 @@ export class CameraModes {
     this.camera.fov = fovY;
     this._pose3D.fov = fovY;
     this._pose2D.fov = fovY;
-    this.camera.aspect = this._effectiveAspect();
+    this.camera.aspect = this.imageW / this.imageH;
     this._applyViewOffset();
     this.camera.updateProjectionMatrix();
   }
 
-  /** Set rotation count (mod 4). Recomputes fov, aspect, view offset. */
+  /** Restore K to the factory `meta.K` for the *current* dataRotN. */
+  resetIntrinsics() {
+    const r = rotateKn(this._meta_K, this._meta_W, this._meta_H, this._dataRotN);
+    this.K.fx = r.fx; this.K.fy = r.fy; this.K.cx = r.cx; this.K.cy = r.cy;
+    this.imageW = r.w; this.imageH = r.h;
+    this.setIntrinsics(this.K);   // re-apply (also updates camera matrix)
+  }
+
+  /** Set rotation count; rotates this.K AND imageW/H so panel shows live values. */
   setDataRotation(n) {
-    this._dataRotN = ((n % 4) + 4) % 4;
+    const target = ((n % 4) + 4) % 4;
+    const delta = ((target - this._dataRotN) % 4 + 4) % 4;
+    if (delta !== 0) {
+      // Apply `delta` CW steps to the *current* live K (so user edits made
+      // mid-rotation are preserved through the next rotation).
+      const r = rotateKn(this.K, this.imageW, this.imageH, delta);
+      this.K.fx = r.fx; this.K.fy = r.fy; this.K.cx = r.cx; this.K.cy = r.cy;
+      this.imageW = r.w; this.imageH = r.h;
+    }
+    this._dataRotN = target;
     const fovY = this._fovYDeg();
     this.camera.fov = fovY;
     this._pose3D.fov = fovY;
     this._pose2D.fov = fovY;
-    this.camera.aspect = this._effectiveAspect();
+    this.camera.aspect = this.imageW / this.imageH;
     this._applyViewOffset();
     this.camera.updateProjectionMatrix();
   }
   getDataRotation() { return this._dataRotN; }
 
-  /**
-   * Effective image aspect after dataRotN (CW about camera-out). Used by
-   * the viewer to set the canvas's CSS `aspect-ratio` — letterbox is pure
-   * CSS, no setViewport/setScissor scaling involved. K stays untouched.
-   */
-  effectiveAspect() {
-    return this._effectiveAspect();
-  }
+  effectiveAspect() { return this._effectiveAspect(); }
 
   _applyPose(p) {
     this.camera.position.copy(p.position);
@@ -200,18 +200,19 @@ export class CameraModes {
 
   /** Returns 'background plane params' for the current state, used by viewer to position bg planes.
    *
-   *  IMPORTANT: plane geometry is NATIVE (un-rotated) image dims. The viewer
-   *  will rotate the plane mesh by N×90° CW about camera-out, which then
-   *  rotates the texture into screen-aligned position. If we used the rotated
-   *  aspect here AND the viewer rotated the plane, we'd double-rotate (the
-   *  plane would end up landscape on screen even when camera is portrait).
+   *  IMPORTANT: plane geometry is NATIVE (un-rotated, factory-K) image dims.
+   *  The viewer rotates the plane mesh by `mesh.rotation.z` to track dataRotN.
+   *  If we used the live rotated K AND rotated the plane mesh, we'd double-
+   *  rotate. Plane geometry stays in source coords; live K/rotation only
+   *  affects camera projection.
    *
-   *  Native plane width/height in world units = image_pixels * z / focal.
-   *  Verified: 1 image pixel at world distance z covers `z/f` world units.
+   *  Native plane width/height in world units = image_pixels * z / focal,
+   *  using the *factory* meta_K (un-rotated). 1 image pixel at world distance
+   *  z covers `z/f` world units.
    */
   bgPlaneParams() {
-    const W = this.meta.image_w, H = this.meta.image_h;
-    const fx = this.K.fx, fy = this.K.fy;
+    const W = this._meta_W, H = this._meta_H;
+    const fx = this._meta_K.fx, fy = this._meta_K.fy;
     return {
       near: {
         z: -this.bgPlaneZ3D,
@@ -291,30 +292,4 @@ export class CameraModes {
     }
   }
 
-  // ── Effective intrinsics (after dataRotN rotation, image-pixel coords) ────
-
-  /** Returns the *effective* K seen by an external observer of the rotated
-   *  rendered image — fx/fy swap on odd N, (cx,cy) → (H − cy, cx) per CW step.
-   *  Base K (this.K) is the physical sensor's intrinsics, never changed by
-   *  rotation; the panel shows base K under "2D 内参" (editable) and the
-   *  derived effective K under "旋后等效 K" (read-only). */
-  effectiveK() {
-    const W = this.meta.image_w, H = this.meta.image_h;
-    let fx = this.K.fx, fy = this.K.fy;
-    let cx = this.K.cx, cy = this.K.cy;
-    let fullW = W, fullH = H;
-    const n = ((this._dataRotN % 4) + 4) % 4;
-    for (let i = 0; i < n; i++) {
-      // 1×CW about camera-out (image y-down): (u, v) → (H − v, u)
-      const ncx = fullH - cy;
-      const ncy = cx;
-      cx = ncx; cy = ncy;
-      // focals also swap (rotated image's "horizontal" was original vertical)
-      const nfx = fy, nfy = fx;
-      fx = nfx; fy = nfy;
-      const nfW = fullH, nfH = fullW;
-      fullW = nfW; fullH = nfH;
-    }
-    return { fx, fy, cx, cy, image_w: fullW, image_h: fullH };
-  }
 }

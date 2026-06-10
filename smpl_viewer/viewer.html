@@ -139,29 +139,19 @@
   </div>
 
   <div class="g">
-    <label>2D 内参 (实时)</label>
+    <label>当前内参 (实时, 渲染对齐)</label>
     <div class="kgrid">
       <label>fx</label><input type="number" id="k-fx" step="1">
       <label>fy</label><input type="number" id="k-fy" step="1">
       <label>cx</label><input type="number" id="k-cx" step="1">
       <label>cy</label><input type="number" id="k-cy" step="1">
+      <label>W×H</label><span class="ro" id="k-wh">—</span>
     </div>
-    <button id="btn-k-reset" style="font-size:10px;padding:3px 5px;margin-top:3px">重置内参</button>
+    <button id="btn-k-reset" style="font-size:10px;padding:3px 5px;margin-top:3px">重置内参 (恢复 meta.K)</button>
   </div>
 
   <div class="g">
-    <label>旋后等效 K (只读)</label>
-    <div class="kgrid">
-      <label>fx</label><span class="ro" id="ek-fx">—</span>
-      <label>fy</label><span class="ro" id="ek-fy">—</span>
-      <label>cx</label><span class="ro" id="ek-cx">—</span>
-      <label>cy</label><span class="ro" id="ek-cy">—</span>
-      <label>W×H</label><span class="ro" id="ek-wh">—</span>
-    </div>
-  </div>
-
-  <div class="g">
-    <label>SMPL Root (旋后)</label>
+    <label>SMPL Root (世界坐标系, 当前帧)</label>
     <div class="kgrid">
       <label>pos</label><span class="ro" id="r-pos">—</span>
       <label>rot</label><span class="ro" id="r-rot">—</span>
