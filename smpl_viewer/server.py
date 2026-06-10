@@ -11,12 +11,17 @@ smpl_viewer.diving_data.
 import argparse
 import logging
 import pickle
+import sys
 import threading
 from pathlib import Path
 
 import cv2
 import numpy as np
 from flask import Flask, Response, abort, jsonify, send_file, send_from_directory, request
+
+# Allow running as a script (`python server.py`) in addition to
+# `python -m smpl_viewer.server`. Adds repo root (parent of smpl_viewer/) to sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from smpl_viewer.diving_data import (
     load_smpl_params, detect_orientation, find_seq_root, FX, FY, CX, CY,

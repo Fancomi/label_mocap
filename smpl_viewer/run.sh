@@ -12,11 +12,14 @@ HOST="${2:-0.0.0.0}"
 VENV="/root/paddlejob/workspace/env_run/penghaotian/envs/lidar"
 RAW_ROOT="/root/paddlejob/workspace/env_run/penghaotian/sport_project/dataset/diving/raw"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${HERE}/.." && pwd)"
 
 # shellcheck disable=SC1091
 source "${VENV}/bin/activate"
 
-exec python3 "${HERE}/server.py" \
+# Run from repo root so `smpl_viewer.*` imports resolve.
+cd "${REPO_ROOT}"
+exec python3 -m smpl_viewer.server \
   --raw-root "${RAW_ROOT}" \
   --port "${PORT}" \
   --host "${HOST}"
