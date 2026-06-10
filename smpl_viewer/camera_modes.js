@@ -22,10 +22,14 @@ export class CameraModes {
     this.K = { fx: meta.K.fx, fy: meta.K.fy, cx: meta.K.cx, cy: meta.K.cy };
     this.bgPlaneZ3D = bgPlaneZ3D;
     this.bgPlaneZ2D = bgPlaneZ2D;
+    // Data rotation (N×90° CW about camera-out axis). Lives here so the
+    // camera can swap fov/aspect — the rendered viewport must match the
+    // *rotated* content's aspect, otherwise a portrait-rotated landscape
+    // capture into a portrait browser becomes a tiny strip.
+    this._dataRotN = 0;
 
-    const fovY = 2 * Math.atan(meta.image_h / (2 * this.K.fy)) * 180 / Math.PI;
-    const aspect = meta.image_w / meta.image_h;
-    this.camera = new THREE.PerspectiveCamera(fovY, aspect, 0.01, 200);
+    const fovY = this._fovYDeg();
+    this.camera = new THREE.PerspectiveCamera(fovY, this._effectiveAspect(), 0.01, 200);
     this.camera.up.set(0, 1, 0);
 
     this._applyViewOffset();
@@ -59,6 +63,38 @@ export class CameraModes {
     this._tween = null;
   }
 
+  // ── Geometry helpers (depend on dataRotN) ────────────────────────────────
+
+  /** image_w / image_h after N×90° rotation. Odd N → swapped W/H. */
+  _rotatedDims() {
+    if (this._dataRotN % 2 === 0) {
+      return { w: this.meta.image_w, h: this.meta.image_h };
+    }
+    return { w: this.meta.image_h, h: this.meta.image_w };
+  }
+
+  /** Camera fov_y is computed from the rotated effective image height.
+   *  When N is odd, the original sensor "width" becomes the new height,
+   *  so we need fy_eff = fx (because rotated H = original W).
+   *  Generalized: pick the focal that maps original-along-Y axis after rotation.
+   */
+  _fovYDeg() {
+    // After rotation, the new "vertical" pixel axis maps to:
+    //   N=0: original v   (length image_h, focal fy)
+    //   N=1: original  u  (length image_w, focal fx)  — turned 90°
+    //   N=2: original v   (length image_h, focal fy)
+    //   N=3: original  u  (length image_w, focal fx)
+    const odd = this._dataRotN % 2 === 1;
+    const newH = odd ? this.meta.image_w : this.meta.image_h;
+    const newFy = odd ? this.K.fx : this.K.fy;
+    return 2 * Math.atan(newH / (2 * newFy)) * 180 / Math.PI;
+  }
+
+  _effectiveAspect() {
+    const d = this._rotatedDims();
+    return d.w / d.h;
+  }
+
   _quatLookingAt(eye, target) {
     const m = new THREE.Matrix4().lookAt(eye, target, new THREE.Vector3(0, 1, 0));
     return new THREE.Quaternion().setFromRotationMatrix(m);
@@ -66,10 +102,24 @@ export class CameraModes {
 
   _applyViewOffset() {
     // Principal-point offset → setViewOffset; both modes use the same K.
-    const offX = this.meta.image_w / 2 - this.K.cx;
-    const offY = this.meta.image_h / 2 - this.K.cy;
-    this.camera.setViewOffset(this.meta.image_w, this.meta.image_h,
-                              offX, offY, this.meta.image_w, this.meta.image_h);
+    // After dataRotN rotation about camera-out, the principal point also
+    // rotates: each press of CW about camera -Z maps (cx, cy) (image-space,
+    // y-down) → (cy, W - cx) [for 1×CW]. We rebuild the rotated cx/cy and
+    // the rotated full-frame size every time.
+    const W = this.meta.image_w, H = this.meta.image_h;
+    let cxR = this.K.cx, cyR = this.K.cy;
+    let fullW = W, fullH = H;
+    for (let i = 0; i < (this._dataRotN % 4 + 4) % 4; i++) {
+      // rotate one CW step. Image y-down: (cx, cy) → (cy, W - cx) and W/H swap.
+      const ncx = cyR;
+      const ncy = fullW - cxR;
+      cxR = ncx; cyR = ncy;
+      const nfW = fullH, nfH = fullW;
+      fullW = nfW; fullH = nfH;
+    }
+    const offX = fullW / 2 - cxR;
+    const offY = fullH / 2 - cyR;
+    this.camera.setViewOffset(fullW, fullH, offX, offY, fullW, fullH);
   }
 
   /** Update intrinsics live; called by viewer when user edits the K panel. */
@@ -78,25 +128,37 @@ export class CameraModes {
     if (Number.isFinite(fy)) this.K.fy = fy;
     if (Number.isFinite(cx)) this.K.cx = cx;
     if (Number.isFinite(cy)) this.K.cy = cy;
-    const fovY = 2 * Math.atan(this.meta.image_h / (2 * this.K.fy)) * 180 / Math.PI;
+    const fovY = this._fovYDeg();
     this.camera.fov = fovY;
     this._pose3D.fov = fovY;
     this._pose2D.fov = fovY;
+    this.camera.aspect = this._effectiveAspect();
     this._applyViewOffset();
     this.camera.updateProjectionMatrix();
   }
 
+  /** Set rotation count (mod 4). Recomputes fov, aspect, view offset. */
+  setDataRotation(n) {
+    this._dataRotN = ((n % 4) + 4) % 4;
+    const fovY = this._fovYDeg();
+    this.camera.fov = fovY;
+    this._pose3D.fov = fovY;
+    this._pose2D.fov = fovY;
+    this.camera.aspect = this._effectiveAspect();
+    this._applyViewOffset();
+    this.camera.updateProjectionMatrix();
+  }
+  getDataRotation() { return this._dataRotN; }
+
   /**
    * Compute the letterbox sub-rectangle inside the canvas that has the
-   * meta image aspect (image_w/image_h). This lets us keep the camera's
-   * `aspect` locked to image_w/image_h — no K change ever — and the
-   * viewer's renderer.setViewport() draws into the centered sub-rect.
-   *
-   * Returns {x, y, w, h} in pixel coords, with (0,0) at canvas bottom-left
-   * (Three.js setViewport convention).
+   * (rotated) image aspect. K is never touched — the camera's own
+   * `aspect` and view offset already track rotation. The viewer's
+   * renderer.setViewport() draws into this sub-rect; out-of-rect is
+   * clear color.
    */
   letterbox(canvasW, canvasH) {
-    const targetAspect = this.meta.image_w / this.meta.image_h;
+    const targetAspect = this._effectiveAspect();
     const canvasAspect = canvasW / canvasH;
     let w = canvasW, h = canvasH, x = 0, y = 0;
     if (canvasAspect > targetAspect) {
@@ -113,12 +175,12 @@ export class CameraModes {
 
   /**
    * Tell the camera what canvas size to expect; we lock its `aspect` to the
-   * meta aspect so K is never touched. The viewer must call setViewport
-   * with the rectangle from `letterbox(canvasW, canvasH)` before render.
+   * (rotated) image aspect so K is never touched. The viewer must call
+   * setViewport with the rectangle from `letterbox(canvasW, canvasH)`
+   * before render.
    */
   setViewportAspect(canvasW, canvasH) {
-    // camera.aspect intentionally pinned to meta aspect to keep K invariant.
-    this.camera.aspect = this.meta.image_w / this.meta.image_h;
+    this.camera.aspect = this._effectiveAspect();
     this.camera.updateProjectionMatrix();
     this._lastCanvas = { w: canvasW, h: canvasH };
   }
@@ -149,10 +211,11 @@ export class CameraModes {
   /** Returns true while a tween is in progress. */
   isAnimating() { return this._tween !== null; }
 
-  /** Returns 'background plane params' for the current state, used by viewer to position bg planes. */
+  /** Returns 'background plane params' for the current state, used by viewer to position bg planes.
+   *  Geometry uses the *rotated* aspect — bg planes still want to fill the camera fov. */
   bgPlaneParams() {
     const fovY = THREE.MathUtils.degToRad(this.camera.fov);
-    const aspect = this.meta.image_w / this.meta.image_h;
+    const aspect = this._effectiveAspect();
     const tanHalf = Math.tan(fovY / 2);
     const nearH = 2 * tanHalf * this.bgPlaneZ3D;
     const nearW = nearH * aspect;

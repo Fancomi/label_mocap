@@ -446,10 +446,15 @@ $('btn-prev').addEventListener('click', () => setFrame(curFrame - 1));
 $('btn-next').addEventListener('click', () => setFrame(curFrame + 1));
 
 // Data rotation: rotate verts/joints/bg by N×90° about camera -Z (camera frame
-// stays put). Apply to current frame, *invalidate cache* (cache holds raw bin,
-// rotation is applied on rebuild via applyFrame).
+// stays put, but its fov/aspect swap with N to follow rotated content).
+// Apply to current frame; cache holds raw bin so rotation is re-applied on rebuild.
 function rotateData(delta) {
   dataRotCw = ((dataRotCw + delta) % 4 + 4) % 4;
+  if (cam) {
+    cam.setDataRotation(dataRotCw);
+    // Re-fit canvas aspect so the letterbox tracks the (now rotated) image aspect.
+    cam.setViewportAspect(renderer.domElement.clientWidth, renderer.domElement.clientHeight);
+  }
   if (curN > 0) applyFrame(curFrame);
 }
 $('btn-rot-ccw').addEventListener('click', () => rotateData(-1));
