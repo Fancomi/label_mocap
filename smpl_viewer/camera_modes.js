@@ -18,19 +18,17 @@ export class CameraModes {
   constructor({ canvas, meta, bgPlaneZ3D = 1.5, bgPlaneZ2D = 50 }) {
     this.canvas = canvas;
     this.meta = meta;
+    // Live-mutable intrinsics — start as a copy of meta.K so resets work.
+    this.K = { fx: meta.K.fx, fy: meta.K.fy, cx: meta.K.cx, cy: meta.K.cy };
     this.bgPlaneZ3D = bgPlaneZ3D;
     this.bgPlaneZ2D = bgPlaneZ2D;
 
-    const fovY = 2 * Math.atan(meta.image_h / (2 * meta.K.fy)) * 180 / Math.PI;
+    const fovY = 2 * Math.atan(meta.image_h / (2 * this.K.fy)) * 180 / Math.PI;
     const aspect = meta.image_w / meta.image_h;
     this.camera = new THREE.PerspectiveCamera(fovY, aspect, 0.01, 200);
     this.camera.up.set(0, 1, 0);
 
-    // Apply principal-point offset once; both modes use the same K.
-    const offX = meta.image_w / 2 - meta.K.cx;
-    const offY = meta.image_h / 2 - meta.K.cy;
-    this.camera.setViewOffset(meta.image_w, meta.image_h, offX, offY,
-                              meta.image_w, meta.image_h);
+    this._applyViewOffset();
 
     // Default 3D pose: behind and above the diver, looking at origin.
     this._pose3D = {
@@ -64,6 +62,28 @@ export class CameraModes {
   _quatLookingAt(eye, target) {
     const m = new THREE.Matrix4().lookAt(eye, target, new THREE.Vector3(0, 1, 0));
     return new THREE.Quaternion().setFromRotationMatrix(m);
+  }
+
+  _applyViewOffset() {
+    // Principal-point offset → setViewOffset; both modes use the same K.
+    const offX = this.meta.image_w / 2 - this.K.cx;
+    const offY = this.meta.image_h / 2 - this.K.cy;
+    this.camera.setViewOffset(this.meta.image_w, this.meta.image_h,
+                              offX, offY, this.meta.image_w, this.meta.image_h);
+  }
+
+  /** Update intrinsics live; called by viewer when user edits the K panel. */
+  setIntrinsics({ fx, fy, cx, cy }) {
+    if (Number.isFinite(fx)) this.K.fx = fx;
+    if (Number.isFinite(fy)) this.K.fy = fy;
+    if (Number.isFinite(cx)) this.K.cx = cx;
+    if (Number.isFinite(cy)) this.K.cy = cy;
+    const fovY = 2 * Math.atan(this.meta.image_h / (2 * this.K.fy)) * 180 / Math.PI;
+    this.camera.fov = fovY;
+    this._pose3D.fov = fovY;
+    this._pose2D.fov = fovY;
+    this._applyViewOffset();
+    this.camera.updateProjectionMatrix();
   }
 
   _applyPose(p) {
@@ -127,6 +147,17 @@ export class CameraModes {
 
     const startTs = performance.now();
     this._tween = { from, to, startTs, dest: mode };
+  }
+
+  /** Instantly switch mode without slerp; used for initial sequence load. */
+  snapTo(mode) {
+    if (mode !== '2d' && mode !== '3d') throw new Error(`bad mode: ${mode}`);
+    this._tween = null;
+    this.mode = mode;
+    const slot = (mode === '2d') ? this._pose2D : this._pose3D;
+    this._applyPose(slot);
+    this.controls.target.copy(slot.target);
+    this.controls.enabled = (mode === '3d');
   }
 
   /** Advance any active tween. Call once per frame *before* renderer.render(). */

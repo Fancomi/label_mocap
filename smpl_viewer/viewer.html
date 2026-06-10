@@ -33,6 +33,14 @@
   button:hover, select:hover { background:#3a3a3a; }
   button.on { background:#0066cc; border-color:#0088ff; }
   input[type=range] { width:100%; accent-color:#0088ff; }
+  input[type=number] {
+    background:#222; border:1px solid #444; color:#eee;
+    padding:3px 5px; border-radius:3px; font:inherit;
+    font-size:11px; width:100%;
+  }
+  input[type=number]:focus { outline:none; border-color:#0088ff; }
+  .kgrid { display:grid; grid-template-columns:auto 1fr; gap:3px 6px; align-items:center; }
+  .kgrid > label { font-size:10px; color:#999; text-align:right; }
   #frame-info { font-size:10px; color:#666; text-align:right; }
 </style>
 </head>
@@ -93,6 +101,17 @@
       <button id="btn-axes">轴</button>
       <button id="btn-bg" class="on">底图</button>
     </div>
+  </div>
+
+  <div class="g">
+    <label>2D 内参 (实时)</label>
+    <div class="kgrid">
+      <label>fx</label><input type="number" id="k-fx" step="1">
+      <label>fy</label><input type="number" id="k-fy" step="1">
+      <label>cx</label><input type="number" id="k-cx" step="1">
+      <label>cy</label><input type="number" id="k-cy" step="1">
+    </div>
+    <button id="btn-k-reset" style="font-size:10px;padding:3px 5px;margin-top:3px">重置内参</button>
   </div>
 </div>
 

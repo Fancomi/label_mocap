@@ -37,7 +37,15 @@ const renderer = new THREE.WebGLRenderer({
 });
 renderer.setPixelRatio(1);
 renderer.setClearColor(0x111111, 1);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
+
+// Lighting — hemisphere + key directional. Cheap, looks decent on white skin.
+scene.add(new THREE.HemisphereLight(0xddeeff, 0x223344, 0.55));
+const keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
+keyLight.position.set(3, 5, -2);
+scene.add(keyLight);
+scene.add(new THREE.AmbientLight(0xffffff, 0.15));
 
 let cam = null;            // CameraModes instance, created after meta loads
 let bg = null;             // background image plane
@@ -50,6 +58,18 @@ let grid = null;
 let axes = null;
 
 const flags = { mesh: true, points: true, bones: true, grid: true, axes: false, bg: true };
+
+// Re-evaluate visibility of mode-sensitive helpers (grid hidden in 2D).
+function applyVisibility() {
+  if (!cam) return;
+  if (mesh) mesh.visible = flags.mesh;
+  if (pointsGroup) pointsGroup.visible = flags.points;
+  if (bonesGroup) bonesGroup.visible = flags.bones;
+  if (grid) grid.visible = flags.grid && cam.mode === '3d';
+  if (axes) axes.visible = flags.axes && cam.mode === '3d';
+  if (bg) bg.visible = flags.bg;
+  if (frustum) frustum.visible = cam.mode === '3d';
+}
 
 function ensureGridAxes() {
   if (!grid) {
@@ -97,6 +117,8 @@ let playing = false;
 let fps = 24;
 let lastTickTs = 0;
 let accT = 0;
+let seqEpoch = 0;          // bumped on every selectSeq; stale loads bail
+let frameBusy = false;     // gate for tick() to avoid concurrent setFrame
 
 async function loadSeqList() {
   const resp = await fetch('/seqs');
@@ -113,11 +135,21 @@ async function loadSeqList() {
 }
 
 async function selectSeq(seqId) {
+  // Stop the play loop and bump epoch — any in-flight setFrame from prior
+  // sequence will see a stale epoch and bail before mutating scene state.
+  playing = false;
+  $('btn-play').textContent = '▶ 播放';
+  $('btn-play').classList.remove('on');
+  seqEpoch++;
+  const myEpoch = seqEpoch;
+
   const [src, name] = seqId.split('/');
   setStatus(`loading meta for ${seqId}…`);
   const meta = await (await fetch(`/seq/${src}/${name}/meta`)).json();
+  if (myEpoch !== seqEpoch) return;
   setStatus(`forwarding SMPL (~10s on first call)…`);
   const facesBuf = await (await fetch(meta.faces_url)).arrayBuffer();
+  if (myEpoch !== seqEpoch) return;
   const faces = new Int32Array(facesBuf);
 
   if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); mesh = null; }
@@ -138,76 +170,113 @@ async function selectSeq(seqId) {
 
   ensureGridAxes();
   cam = new CameraModes({ canvas: renderer.domElement, meta });
+  syncIntrinsicsPanel(cam.K);
 
   bg = new THREE.Mesh(
     new THREE.PlaneGeometry(1, 1),
-    new THREE.MeshBasicMaterial({ depthWrite: false }));
+    new THREE.MeshBasicMaterial({ depthWrite: false, color: 0xffffff }));
   bg.renderOrder = 0;
   scene.add(bg);
 
+  // White skin + simple lighting (Lambert is cheap and looks fine here).
   const geom = new THREE.BufferGeometry();
   geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6890 * 3), 3));
   geom.setIndex(new THREE.BufferAttribute(new Uint32Array(faces), 1));
   geom.computeVertexNormals();
-  mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({
-    color: 0x00dd00, wireframe: true, depthTest: false, depthWrite: false,
+  mesh = new THREE.Mesh(geom, new THREE.MeshLambertMaterial({
+    color: 0xf0f0f0, side: THREE.DoubleSide,
   }));
-  mesh.renderOrder = 10;
+  mesh.frustumCulled = false;   // bbox stays at origin since we update positions in-place
+  mesh.renderOrder = 5;
   scene.add(mesh);
 
   pointsGroup = new THREE.Group();
+  pointsGroup.frustumCulled = false;
   pointsGroup.renderOrder = 11;
   scene.add(pointsGroup);
   for (let i = 0; i < 24; i++) {
     const p = new THREE.Mesh(
       new THREE.SphereGeometry(0.025, 8, 6),
       new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, depthWrite: false }));
+    p.frustumCulled = false;
     p.renderOrder = 11;
     pointsGroup.add(p);
   }
   bonesGroup = new THREE.Group();
+  bonesGroup.frustumCulled = false;
   bonesGroup.renderOrder = 11;
   scene.add(bonesGroup);
   for (const [, , g] of BONES) {
     const line = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
       new THREE.LineBasicMaterial({ color: BONE_COLORS[g], depthTest: false }));
+    line.frustumCulled = false;
     line.renderOrder = 11;
     bonesGroup.add(line);
   }
   frustum = makeFrustum(meta);
+  frustum.frustumCulled = false;
   scene.add(frustum);
 
-  await loadFrame(0);
-  applyMode(cam.mode);
-  setStatus(`${seqId} ready (${curN} frames)`);
+  try { await applyFrame(0); }
+  catch (_) { /* stale-epoch — outer return below */ }
+  if (myEpoch !== seqEpoch) return;
+
+  // 用户偏好: 切换序列后立即跳到 2D 对齐, 让数据切换可视化.
+  cam.snapTo('2d');
+  applyMode('2d');
+  setStatus(`${seqId} ready (${curN} frames) · 2D`);
 }
 
 async function loadFrame(i) {
+  // Returns {verts, joints, root, tex} — fetched in parallel, cached.
+  // Caller must handle epoch/staleness; this is a pure data fetch.
   if (frameCache.has(i)) return frameCache.get(i);
   const { src, name } = curSeq;
-  const buf = await (await fetch(`/seq/${src}/${name}/frame/${i}.bin`)).arrayBuffer();
+  const myEpoch = seqEpoch;
+
+  const binP = fetch(`/seq/${src}/${name}/frame/${i}.bin`).then(r => r.arrayBuffer());
+  const texP = new Promise((resolve, reject) => {
+    new THREE.TextureLoader().load(
+      `/seq/${src}/${name}/img/${i}.jpg`,
+      t => { t.colorSpace = THREE.SRGBColorSpace; resolve(t); },
+      undefined, reject);
+  });
+  const [buf, tex] = await Promise.all([binP, texP]);
+  if (myEpoch !== seqEpoch) {
+    tex.dispose();
+    throw new Error('stale-epoch');
+  }
   const verts = new Float32Array(buf, 0, 6890 * 3);
   const joints = new Float32Array(buf, 6890 * 3 * 4, 24 * 3);
   const root = new Float32Array(buf, (6890 * 3 + 24 * 3) * 4, 3);
-  const entry = { verts, joints, root };
+  const entry = { verts, joints, root, tex };
   frameCache.set(i, entry);
   return entry;
 }
 
-async function setFrame(i) {
-  curFrame = Math.max(0, Math.min(curN - 1, i | 0));
+// Atomically apply a fully-loaded frame to the scene.
+// All geometry/texture updates land in the same RAF tick to avoid
+// the "new mesh + old image" tear during playback or seq switch.
+async function applyFrame(i) {
+  const myEpoch = seqEpoch;
+  const f = await loadFrame(i);
+  if (myEpoch !== seqEpoch) return;
+
+  curFrame = i;
   $('frame-slider').value = curFrame;
   $('frame-info').textContent = `${curFrame} / ${curN - 1}`;
 
-  const f = await loadFrame(curFrame);
+  // mesh verts
   const pos = mesh.geometry.attributes.position;
   pos.array.set(f.verts);
   pos.needsUpdate = true;
+  mesh.geometry.computeVertexNormals();
 
+  // joints + bones
   for (let j = 0; j < 24; j++) {
-    const x = f.joints[j * 3], y = f.joints[j * 3 + 1], z = f.joints[j * 3 + 2];
-    pointsGroup.children[j].position.set(x, y, z);
+    pointsGroup.children[j].position.set(
+      f.joints[j * 3], f.joints[j * 3 + 1], f.joints[j * 3 + 2]);
   }
   for (let bi = 0; bi < BONES.length; bi++) {
     const [a, b] = BONES[bi];
@@ -220,18 +289,19 @@ async function setFrame(i) {
   }
   cam.set3DFollowTarget(new THREE.Vector3(f.joints[0], f.joints[1], f.joints[2]));
 
-  const newTex = await new Promise(resolve => {
-    new THREE.TextureLoader().load(`/seq/${curSeq.src}/${curSeq.name}/img/${curFrame}.jpg`, t => {
-      t.colorSpace = THREE.SRGBColorSpace;
-      resolve(t);
-    });
-  });
-  if (bgTex) bgTex.dispose();
-  bgTex = newTex;
-  bg.material.map = bgTex;
+  // background image (texture is already loaded; just rebind)
+  bg.material.map = f.tex;
   bg.material.needsUpdate = true;
+
   layoutBg();
   renderAngles(f.joints);
+}
+
+// Old setFrame is now a thin wrapper used by UI handlers.
+async function setFrame(i) {
+  if (curN === 0) return;
+  const target = Math.max(0, Math.min(curN - 1, i | 0));
+  await applyFrame(target);
 }
 
 function layoutBg() {
@@ -239,8 +309,7 @@ function layoutBg() {
   bg.geometry.dispose();
   bg.geometry = new THREE.PlaneGeometry(p.w, p.h);
   bg.position.set(0, 0, p.z);
-  bg.visible = flags.bg;
-  frustum.visible = (cam.mode === '3d');
+  applyVisibility();
 }
 
 function renderAngles(joints) {
@@ -264,6 +333,35 @@ function applyMode(mode) {
   layoutBg();
 }
 
+// ── Intrinsics panel ───────────────────────────────────────────────────────
+function syncIntrinsicsPanel(K) {
+  $('k-fx').value = K.fx;
+  $('k-fy').value = K.fy;
+  $('k-cx').value = K.cx;
+  $('k-cy').value = K.cy;
+}
+function readIntrinsicsPanel() {
+  return {
+    fx: parseFloat($('k-fx').value),
+    fy: parseFloat($('k-fy').value),
+    cx: parseFloat($('k-cx').value),
+    cy: parseFloat($('k-cy').value),
+  };
+}
+['k-fx', 'k-fy', 'k-cx', 'k-cy'].forEach(id => {
+  $(id).addEventListener('input', () => {
+    if (!cam) return;
+    cam.setIntrinsics(readIntrinsicsPanel());
+    layoutBg();
+  });
+});
+$('btn-k-reset').addEventListener('click', () => {
+  if (!cam || !curSeq) return;
+  cam.setIntrinsics(curSeq.meta.K);
+  syncIntrinsicsPanel(cam.K);
+  layoutBg();
+});
+
 // ── UI wiring ──────────────────────────────────────────────────────────────
 $('seq-select').addEventListener('change', e => selectSeq(e.target.value));
 $('btn-mode-3d').addEventListener('click', () => { cam.switchTo('3d'); applyMode('3d'); });
@@ -275,7 +373,15 @@ $('btn-play').addEventListener('click', () => {
 });
 $('btn-prev').addEventListener('click', () => setFrame(curFrame - 1));
 $('btn-next').addEventListener('click', () => setFrame(curFrame + 1));
-$('frame-slider').addEventListener('input', e => setFrame(+e.target.value));
+$('frame-slider').addEventListener('input', e => {
+  // Drag-to-scrub: stop playback so we don't fight the play loop on the same frame.
+  if (playing) {
+    playing = false;
+    $('btn-play').textContent = '▶ 播放';
+    $('btn-play').classList.remove('on');
+  }
+  setFrame(+e.target.value);
+});
 $('speed-slider').addEventListener('input', e => {
   fps = +e.target.value; $('speed-val').textContent = `${fps} fps`;
 });
@@ -287,12 +393,7 @@ flagBtns.forEach(([id, key]) => {
   $(id).addEventListener('click', e => {
     flags[key] = !flags[key];
     e.target.classList.toggle('on', flags[key]);
-    if (mesh && key === 'mesh') mesh.visible = flags.mesh;
-    if (pointsGroup && key === 'points') pointsGroup.visible = flags.points;
-    if (bonesGroup && key === 'bones') bonesGroup.visible = flags.bones;
-    if (grid && key === 'grid') grid.visible = flags.grid;
-    if (axes && key === 'axes') axes.visible = flags.axes;
-    if (bg && key === 'bg') bg.visible = flags.bg;
+    applyVisibility();
   });
 });
 
@@ -310,12 +411,20 @@ function resize() {
 // ── Render loop ────────────────────────────────────────────────────────────
 async function tick(ts) {
   requestAnimationFrame(tick);
-  if (playing && curN > 0) {
+
+  // Frame advance: serial — never schedule a second setFrame while one is
+  // still loading. Prevents the "stale-frame splash" on slow image fetches.
+  if (playing && curN > 0 && !frameBusy) {
     accT += ts - lastTickTs;
     const iv = 1000 / fps;
     if (accT >= iv) {
       accT = accT % iv;
-      await setFrame((curFrame + 1) % curN);
+      const next = (curFrame + 1) % curN;
+      const myEpoch = seqEpoch;
+      frameBusy = true;
+      try { await applyFrame(next); }
+      catch (_) { /* stale-epoch or fetch err — drop */ }
+      finally { if (myEpoch === seqEpoch) frameBusy = false; }
     }
   }
   lastTickTs = ts;
@@ -334,10 +443,8 @@ async function tick(ts) {
     if (validateSeq) {
       $('seq-select').value = validateSeq;
       await selectSeq(validateSeq);
-      cam.switchTo('2d');
-      cam.update(performance.now() + 9999);
-      applyMode('2d');
-      await setFrame(validateFrame);
+      // selectSeq already snaps to 2D and applies frame 0.
+      if (validateFrame !== 0) await applyFrame(validateFrame);
       renderer.render(scene, cam.camera);
       const tag = `${validateSeq.replace('/', '_')}_f${String(validateFrame).padStart(4, '0')}`;
       const a = document.createElement('a');
