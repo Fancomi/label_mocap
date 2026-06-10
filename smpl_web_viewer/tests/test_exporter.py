@@ -1,5 +1,6 @@
 import io
 import json
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr
@@ -91,6 +92,21 @@ class ExporterTest(unittest.TestCase):
             np.array([[1.0, 0.0], [0.0, 3.0], [2.0, 0.0]], dtype=np.float64),
         )
 
+    def test_compat_csc_matrix_accumulates_duplicate_sparse_entries(self):
+        sparse = export_smpl_model._CompatCscMatrix()
+        sparse.__setstate__(
+            {
+                "_shape": (2, 1),
+                "data": np.array([1.0, 2.0], dtype=np.float64),
+                "indices": np.array([0, 0], dtype=np.int32),
+                "indptr": np.array([0, 2], dtype=np.int32),
+            }
+        )
+
+        dense = sparse.todense()
+
+        np.testing.assert_array_equal(dense, np.array([[3.0], [0.0]], dtype=np.float64))
+
     def test_compat_chumpy_array_converts_x_state_to_ndarray(self):
         chumpy_array = export_smpl_model._CompatChumpyArray()
         payload = np.arange(12, dtype=np.float64).reshape(2, 3, 2)
@@ -99,6 +115,51 @@ class ExporterTest(unittest.TestCase):
         dense = export_smpl_model._dense(chumpy_array)
 
         np.testing.assert_array_equal(dense, payload)
+
+    def test_pickle_compat_modules_restores_missing_import_state(self):
+        module_names = [
+            "scipy",
+            "scipy.sparse",
+            "scipy.sparse.csc",
+            "chumpy",
+            "chumpy.ch",
+        ]
+        missing = object()
+        saved = {name: sys.modules.get(name, missing) for name in module_names}
+
+        try:
+            for name in module_names:
+                sys.modules.pop(name, None)
+
+            def fail_optional_import(module_name):
+                if module_name in ("scipy.sparse.csc", "chumpy.ch"):
+                    exc = ModuleNotFoundError(f"No module named {module_name!r}")
+                    exc.name = module_name
+                    raise exc
+                return __import__(module_name)
+
+            with patch(
+                "tools.export_smpl_model.importlib.import_module",
+                side_effect=fail_optional_import,
+            ):
+                with export_smpl_model._pickle_compat_modules():
+                    self.assertIs(
+                        sys.modules["scipy.sparse.csc"].csc_matrix,
+                        export_smpl_model._CompatCscMatrix,
+                    )
+                    self.assertIs(
+                        sys.modules["chumpy.ch"].Ch,
+                        export_smpl_model._CompatChumpyArray,
+                    )
+
+            for name in module_names:
+                self.assertNotIn(name, sys.modules)
+        finally:
+            for name, module in saved.items():
+                if module is missing:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
 
     def test_cli_reports_expected_errors_without_traceback(self):
         with tempfile.TemporaryDirectory() as tmp:

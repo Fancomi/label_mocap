@@ -4,6 +4,7 @@ import json
 import pickle
 import sys
 import types
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +13,7 @@ import numpy as np
 F32_BIN = "smpl_neutral.f32.bin"
 I32_BIN = "smpl_neutral.i32.bin"
 META_JSON = "smpl_neutral.meta.json"
+_MISSING = object()
 
 
 class _CompatCscMatrix:
@@ -27,7 +29,7 @@ class _CompatCscMatrix:
         for col in range(indptr.size - 1):
             start = int(indptr[col])
             end = int(indptr[col + 1])
-            dense[indices[start:end], col] = data[start:end]
+            np.add.at(dense[:, col], indices[start:end], data[start:end])
 
         return dense
 
@@ -62,22 +64,66 @@ def _ensure_module(module_name):
     return module
 
 
-def _install_pickle_compat_modules():
-    if not _can_import("scipy.sparse.csc"):
-        scipy = _ensure_module("scipy")
-        sparse = _ensure_module("scipy.sparse")
-        csc = types.ModuleType("scipy.sparse.csc")
-        csc.csc_matrix = _CompatCscMatrix
-        sys.modules["scipy.sparse.csc"] = csc
-        scipy.sparse = sparse
-        sparse.csc = csc
+@contextmanager
+def _pickle_compat_modules():
+    saved_modules = {}
+    saved_attrs = []
 
-    if not _can_import("chumpy.ch"):
-        chumpy = _ensure_module("chumpy")
-        ch = types.ModuleType("chumpy.ch")
-        ch.Ch = _CompatChumpyArray
-        sys.modules["chumpy.ch"] = ch
-        chumpy.ch = ch
+    def remember_module(name):
+        if name not in saved_modules:
+            saved_modules[name] = sys.modules.get(name, _MISSING)
+
+    def remember_attr(module, attr):
+        saved_attrs.append((module, attr, getattr(module, attr, _MISSING)))
+
+    def set_module(name, module):
+        remember_module(name)
+        sys.modules[name] = module
+
+    try:
+        if not _can_import("scipy.sparse.csc"):
+            remember_module("scipy")
+            remember_module("scipy.sparse")
+            scipy = _ensure_module("scipy")
+            sparse = _ensure_module("scipy.sparse")
+            csc = types.ModuleType("scipy.sparse.csc")
+
+            if hasattr(sparse, "csc_matrix"):
+                csc.csc_matrix = sparse.csc_matrix
+            else:
+                csc.csc_matrix = _CompatCscMatrix
+
+            set_module("scipy.sparse.csc", csc)
+            remember_attr(scipy, "sparse")
+            remember_attr(sparse, "csc")
+            scipy.sparse = sparse
+            sparse.csc = csc
+
+        if not _can_import("chumpy.ch"):
+            remember_module("chumpy")
+            chumpy = _ensure_module("chumpy")
+            ch = types.ModuleType("chumpy.ch")
+            ch.Ch = _CompatChumpyArray
+            set_module("chumpy.ch", ch)
+            remember_attr(chumpy, "ch")
+            chumpy.ch = ch
+
+        yield
+    finally:
+        for module, attr, old_value in reversed(saved_attrs):
+            if old_value is _MISSING:
+                try:
+                    delattr(module, attr)
+                except AttributeError:
+                    pass
+            else:
+                setattr(module, attr, old_value)
+
+        for name, old_module in reversed(list(saved_modules.items())):
+            if old_module is _MISSING:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = old_module
 
 
 def _dense(array):
@@ -127,9 +173,9 @@ def write_asset(out_dir, arrays):
 
 
 def load_smpl_pkl(path):
-    _install_pickle_compat_modules()
-    with Path(path).open("rb") as f:
-        data = pickle.load(f, encoding="latin1")
+    with _pickle_compat_modules():
+        with Path(path).open("rb") as f:
+            data = pickle.load(f, encoding="latin1")
 
     posedirs_raw = _dense(data["posedirs"])
     posedirs = np.reshape(posedirs_raw, (-1, posedirs_raw.shape[-1])).T
