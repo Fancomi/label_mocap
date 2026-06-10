@@ -5,7 +5,7 @@
 <title>SMPL Viewer</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  html,body { height:100%; background:#111; color:#eee; font-family:monospace; overflow:hidden; }
+  html,body { height:100%; background:#1a1f2a; color:#eee; font-family:monospace; overflow:hidden; }
   body { display:flex; }
   #canvas-container { position:relative; flex:1; }
   canvas { display:block; width:100%; height:100%; }
@@ -63,6 +63,21 @@
     <div class="row">
       <button id="btn-mode-3d" class="on">3D 自由</button>
       <button id="btn-mode-2d">2D 对齐</button>
+    </div>
+    <div class="row">
+      <button id="btn-rot-ccw">↶ 左90°</button>
+      <button id="btn-rot-cw">↷ 右90°</button>
+      <button id="btn-rot-reset" style="flex:0;padding:5px 9px">⟲</button>
+    </div>
+  </div>
+
+  <div class="g">
+    <label>底网</label>
+    <div class="row" style="align-items:center">
+      <label style="font-size:10px;color:#888;width:36px">范围</label>
+      <input type="number" id="grid-size" step="1" min="1" max="500" value="20" style="flex:1">
+      <label style="font-size:10px;color:#888;width:36px">间隔</label>
+      <input type="number" id="grid-step" step="0.1" min="0.1" max="50" value="0.5" style="flex:1">
     </div>
   </div>
 

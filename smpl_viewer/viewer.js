@@ -36,7 +36,7 @@ const renderer = new THREE.WebGLRenderer({
   canvas: $('c'), antialias: true, preserveDrawingBuffer: true,
 });
 renderer.setPixelRatio(1);
-renderer.setClearColor(0x111111, 1);
+renderer.setClearColor(0x1a1f2a, 1);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
 
@@ -48,14 +48,24 @@ scene.add(keyLight);
 scene.add(new THREE.AmbientLight(0xffffff, 0.15));
 
 let cam = null;            // CameraModes instance, created after meta loads
-let bg = null;             // background image plane
-let bgTex = null;
+let bgNear = null;         // 3D-mode near image plane (1.5m)
+let bgFar = null;          // both-mode far image plane (50m)
+let bgTex = null;          // shared texture for both planes
+// `dataRotCw` rotates BOTH the SMPL geometry (vertices/joints) and the bg
+// texture by N×90° clockwise about the camera -Z axis. Camera intrinsics &
+// extrinsics never change. Each press of CCW/CW shifts dataRotCw by ∓1 mod 4.
+// 0 = native capture, 1 = 90° CW (turns sideways portrait into "upright"
+// from the camera's POV after flipping the canvas? no — just rotates
+// content; user picks whichever orientation reads).
+let dataRotCw = 0;
 let mesh = null;
 let bonesGroup = null;
 let pointsGroup = null;
 let frustum = null;
 let grid = null;
 let axes = null;
+let gridSize = 20;
+let gridStep = 0.5;
 
 const flags = { mesh: true, points: true, bones: true, grid: true, axes: false, bg: true };
 
@@ -67,25 +77,37 @@ function applyVisibility() {
   if (bonesGroup) bonesGroup.visible = flags.bones;
   if (grid) grid.visible = flags.grid && cam.mode === '3d';
   if (axes) axes.visible = flags.axes && cam.mode === '3d';
-  if (bg) bg.visible = flags.bg;
+  // Two image planes: far always on (visible from both modes), near only in 3D.
+  if (bgFar) bgFar.visible = flags.bg;
+  if (bgNear) bgNear.visible = flags.bg && cam.mode === '3d';
   if (frustum) frustum.visible = cam.mode === '3d';
 }
 
-function ensureGridAxes() {
-  if (!grid) {
-    grid = new THREE.GridHelper(20, 40, 0x335577, 0x223344);
-    grid.position.y = -1.0;
-    grid.material.opacity = 0.6;
-    grid.material.transparent = true;
-    scene.add(grid);
+// Rebuild grid geometry. Larger range + tighter spacing → cleaner read.
+function buildGrid() {
+  if (grid) {
+    scene.remove(grid);
+    grid.geometry.dispose();
+    grid.material.dispose();
+    grid = null;
   }
+  // Rounded divisions ensures lines fall on integer offsets when step is whole.
+  const divisions = Math.max(2, Math.round(gridSize / gridStep));
+  grid = new THREE.GridHelper(gridSize, divisions, 0x6695c8, 0x4a6080);
+  grid.position.y = -1.0;
+  grid.material.opacity = 0.85;
+  grid.material.transparent = true;
+  grid.material.depthWrite = false;
+  scene.add(grid);
+}
+
+function ensureGridAxes() {
+  if (!grid) buildGrid();
   if (!axes) {
     axes = new THREE.AxesHelper(0.5);
     axes.visible = flags.axes;
     scene.add(axes);
   }
-  grid.visible = flags.grid;
-  axes.visible = flags.axes;
 }
 
 function makeFrustum(meta) {
@@ -156,7 +178,8 @@ async function selectSeq(seqId) {
   if (bonesGroup) { scene.remove(bonesGroup); bonesGroup = null; }
   if (pointsGroup) { scene.remove(pointsGroup); pointsGroup = null; }
   if (frustum) { scene.remove(frustum); frustum.geometry.dispose(); frustum.material.dispose(); frustum = null; }
-  if (bg) { scene.remove(bg); bg.geometry.dispose(); bg.material.dispose(); bg = null; }
+  if (bgNear) { scene.remove(bgNear); bgNear.geometry.dispose(); bgNear.material.dispose(); bgNear = null; }
+  if (bgFar) { scene.remove(bgFar); bgFar.geometry.dispose(); bgFar.material.dispose(); bgFar = null; }
   if (bgTex) { bgTex.dispose(); bgTex = null; }
   if (cam) { cam.controls.dispose(); cam = null; }
   frameCache.clear();
@@ -164,6 +187,7 @@ async function selectSeq(seqId) {
   curSeq = { src, name, meta, faces };
   curN = meta.n_frames;
   curFrame = 0;
+  dataRotCw = 0;     // reset rotation per-sequence
 
   $('frame-slider').max = curN - 1;
   $('frame-info').textContent = `0 / ${curN - 1}`;
@@ -171,12 +195,27 @@ async function selectSeq(seqId) {
   ensureGridAxes();
   cam = new CameraModes({ canvas: renderer.domElement, meta });
   syncIntrinsicsPanel(cam.K);
+  // Apply current canvas aspect to viewport-only state (does NOT touch K).
+  cam.setViewportAspect(renderer.domElement.clientWidth, renderer.domElement.clientHeight);
 
-  bg = new THREE.Mesh(
-    new THREE.PlaneGeometry(1, 1),
-    new THREE.MeshBasicMaterial({ depthWrite: false, color: 0xffffff }));
-  bg.renderOrder = 0;
-  scene.add(bg);
+  // Two image planes share one texture. Far plane (z=-50) is the 2D-aligned
+  // backdrop and stays visible in 3D too; near plane (z=-1.5) is the
+  // frustum-near preview, only shown in 3D. depthTest stays enabled so
+  // the body mesh, which writes depth, occludes the near plane correctly
+  // ("near bg inside is not erased" per spec — body sits between camera
+  // and near plane only when user orbits inside the frustum).
+  const bgMatNear = new THREE.MeshBasicMaterial({
+    color: 0xffffff, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const bgMatFar = new THREE.MeshBasicMaterial({
+    color: 0xffffff, depthWrite: false, side: THREE.DoubleSide,
+  });
+  bgNear = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), bgMatNear);
+  bgFar = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), bgMatFar);
+  bgNear.renderOrder = 0;
+  bgFar.renderOrder = -1;     // far renders before near
+  scene.add(bgNear);
+  scene.add(bgFar);
 
   // White skin + simple lighting (Lambert is cheap and looks fine here).
   const geom = new THREE.BufferGeometry();
@@ -267,34 +306,58 @@ async function applyFrame(i) {
   $('frame-slider').value = curFrame;
   $('frame-info').textContent = `${curFrame} / ${curN - 1}`;
 
-  // mesh verts
+  // Rotation about camera -Z (i.e. the source-coord +Z axis comes out of
+  // screen → +Z is "out". A clockwise rotation as seen looking *down* the
+  // -Z direction maps (x, y) → (y, -x). N applications give Nx 90° CW.
+  const cR = Math.cos(dataRotCw * Math.PI / 2);
+  const sR = Math.sin(dataRotCw * Math.PI / 2);
+  // CW rotation about -Z (camera-out) keeping right-hand frame:
+  //   x' =  cos·x + sin·y
+  //   y' = -sin·x + cos·y
+  // (When dataRotCw=1 → x'=y, y'=-x.)
+  function rot(x, y) {
+    return [cR * x + sR * y, -sR * x + cR * y];
+  }
+
+  // mesh verts (rotated, write into geometry buffer in place)
   const pos = mesh.geometry.attributes.position;
-  pos.array.set(f.verts);
+  const dst = pos.array;
+  for (let v = 0, vlen = 6890 * 3; v < vlen; v += 3) {
+    const x = f.verts[v], y = f.verts[v + 1];
+    const [rx, ry] = rot(x, y);
+    dst[v] = rx; dst[v + 1] = ry; dst[v + 2] = f.verts[v + 2];
+  }
   pos.needsUpdate = true;
   mesh.geometry.computeVertexNormals();
 
-  // joints + bones
+  // joints + bones (rotated)
+  const rotJ = new Float32Array(24 * 3);
   for (let j = 0; j < 24; j++) {
-    pointsGroup.children[j].position.set(
-      f.joints[j * 3], f.joints[j * 3 + 1], f.joints[j * 3 + 2]);
+    const x = f.joints[j * 3], y = f.joints[j * 3 + 1];
+    const [rx, ry] = rot(x, y);
+    rotJ[j * 3] = rx; rotJ[j * 3 + 1] = ry; rotJ[j * 3 + 2] = f.joints[j * 3 + 2];
+    pointsGroup.children[j].position.set(rx, ry, f.joints[j * 3 + 2]);
   }
   for (let bi = 0; bi < BONES.length; bi++) {
     const [a, b] = BONES[bi];
     const line = bonesGroup.children[bi];
     line.geometry.setFromPoints([
-      new THREE.Vector3(f.joints[a * 3], f.joints[a * 3 + 1], f.joints[a * 3 + 2]),
-      new THREE.Vector3(f.joints[b * 3], f.joints[b * 3 + 1], f.joints[b * 3 + 2]),
+      new THREE.Vector3(rotJ[a * 3], rotJ[a * 3 + 1], rotJ[a * 3 + 2]),
+      new THREE.Vector3(rotJ[b * 3], rotJ[b * 3 + 1], rotJ[b * 3 + 2]),
     ]);
     line.geometry.attributes.position.needsUpdate = true;
   }
-  cam.set3DFollowTarget(new THREE.Vector3(f.joints[0], f.joints[1], f.joints[2]));
+  cam.set3DFollowTarget(new THREE.Vector3(rotJ[0], rotJ[1], rotJ[2]));
 
-  // background image (texture is already loaded; just rebind)
-  bg.material.map = f.tex;
-  bg.material.needsUpdate = true;
+  // background image — bind same texture to both planes
+  bgNear.material.map = f.tex;
+  bgNear.material.needsUpdate = true;
+  bgFar.material.map = f.tex;
+  bgFar.material.needsUpdate = true;
+  bgTex = f.tex;
 
   layoutBg();
-  renderAngles(f.joints);
+  renderAngles(rotJ);
 }
 
 // Old setFrame is now a thin wrapper used by UI handlers.
@@ -306,9 +369,17 @@ async function setFrame(i) {
 
 function layoutBg() {
   const p = cam.bgPlaneParams();
-  bg.geometry.dispose();
-  bg.geometry = new THREE.PlaneGeometry(p.w, p.h);
-  bg.position.set(0, 0, p.z);
+  // Near plane (3D-only)
+  bgNear.geometry.dispose();
+  bgNear.geometry = new THREE.PlaneGeometry(p.near.w, p.near.h);
+  bgNear.position.set(0, 0, p.near.z);
+  // Same N×90° CW rotation as the data, around camera -Z (= world +Z out of plane).
+  bgNear.rotation.set(0, 0, -dataRotCw * Math.PI / 2);
+  // Far plane (always shown when bg flag is on)
+  bgFar.geometry.dispose();
+  bgFar.geometry = new THREE.PlaneGeometry(p.far.w, p.far.h);
+  bgFar.position.set(0, 0, p.far.z);
+  bgFar.rotation.set(0, 0, -dataRotCw * Math.PI / 2);
   applyVisibility();
 }
 
@@ -373,6 +444,29 @@ $('btn-play').addEventListener('click', () => {
 });
 $('btn-prev').addEventListener('click', () => setFrame(curFrame - 1));
 $('btn-next').addEventListener('click', () => setFrame(curFrame + 1));
+
+// Data rotation: rotate verts/joints/bg by N×90° about camera -Z (camera frame
+// stays put). Apply to current frame, *invalidate cache* (cache holds raw bin,
+// rotation is applied on rebuild via applyFrame).
+function rotateData(delta) {
+  dataRotCw = ((dataRotCw + delta) % 4 + 4) % 4;
+  if (curN > 0) applyFrame(curFrame);
+}
+$('btn-rot-ccw').addEventListener('click', () => rotateData(-1));
+$('btn-rot-cw').addEventListener('click', () => rotateData(+1));
+$('btn-rot-reset').addEventListener('click', () => rotateData(-dataRotCw));
+
+// Grid range/step inputs
+function rebuildGrid() {
+  const sz = parseFloat($('grid-size').value);
+  const st = parseFloat($('grid-step').value);
+  if (Number.isFinite(sz) && sz > 0) gridSize = sz;
+  if (Number.isFinite(st) && st > 0) gridStep = st;
+  buildGrid();
+  applyVisibility();
+}
+$('grid-size').addEventListener('input', rebuildGrid);
+$('grid-step').addEventListener('input', rebuildGrid);
 $('frame-slider').addEventListener('input', e => {
   // Drag-to-scrub: stop playback so we don't fight the play loop on the same frame.
   if (playing) {
@@ -403,9 +497,23 @@ function resize() {
   const w = c.clientWidth, h = c.clientHeight;
   renderer.setSize(w, h, false);
   if (cam) {
-    cam.camera.aspect = w / h;
-    cam.camera.updateProjectionMatrix();
+    // Lock camera aspect to image aspect; letterbox via setViewport on render.
+    cam.setViewportAspect(w, h);
   }
+}
+
+function renderFrame() {
+  if (!cam) return;
+  const cw = renderer.domElement.clientWidth;
+  const ch = renderer.domElement.clientHeight;
+  const lb = cam.letterbox(cw, ch);
+  renderer.setScissorTest(false);
+  renderer.clear();
+  renderer.setViewport(lb.x, lb.y, lb.w, lb.h);
+  renderer.setScissor(lb.x, lb.y, lb.w, lb.h);
+  renderer.setScissorTest(true);
+  renderer.render(scene, cam.camera);
+  renderer.setScissorTest(false);
 }
 
 // ── Render loop ────────────────────────────────────────────────────────────
@@ -431,7 +539,7 @@ async function tick(ts) {
   if (cam) {
     cam.update(ts);
     layoutBg();
-    renderer.render(scene, cam.camera);
+    renderFrame();
   }
 }
 
@@ -445,7 +553,7 @@ async function tick(ts) {
       await selectSeq(validateSeq);
       // selectSeq already snaps to 2D and applies frame 0.
       if (validateFrame !== 0) await applyFrame(validateFrame);
-      renderer.render(scene, cam.camera);
+      renderFrame();
       const tag = `${validateSeq.replace('/', '_')}_f${String(validateFrame).padStart(4, '0')}`;
       const a = document.createElement('a');
       a.download = `viewer_${tag}.png`;

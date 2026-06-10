@@ -86,6 +86,43 @@ export class CameraModes {
     this.camera.updateProjectionMatrix();
   }
 
+  /**
+   * Compute the letterbox sub-rectangle inside the canvas that has the
+   * meta image aspect (image_w/image_h). This lets us keep the camera's
+   * `aspect` locked to image_w/image_h — no K change ever — and the
+   * viewer's renderer.setViewport() draws into the centered sub-rect.
+   *
+   * Returns {x, y, w, h} in pixel coords, with (0,0) at canvas bottom-left
+   * (Three.js setViewport convention).
+   */
+  letterbox(canvasW, canvasH) {
+    const targetAspect = this.meta.image_w / this.meta.image_h;
+    const canvasAspect = canvasW / canvasH;
+    let w = canvasW, h = canvasH, x = 0, y = 0;
+    if (canvasAspect > targetAspect) {
+      // canvas wider than image: pillar-box (vertical bars)
+      w = canvasH * targetAspect;
+      x = (canvasW - w) / 2;
+    } else if (canvasAspect < targetAspect) {
+      // canvas taller than image: letter-box (horizontal bars)
+      h = canvasW / targetAspect;
+      y = (canvasH - h) / 2;
+    }
+    return { x, y, w, h };
+  }
+
+  /**
+   * Tell the camera what canvas size to expect; we lock its `aspect` to the
+   * meta aspect so K is never touched. The viewer must call setViewport
+   * with the rectangle from `letterbox(canvasW, canvasH)` before render.
+   */
+  setViewportAspect(canvasW, canvasH) {
+    // camera.aspect intentionally pinned to meta aspect to keep K invariant.
+    this.camera.aspect = this.meta.image_w / this.meta.image_h;
+    this.camera.updateProjectionMatrix();
+    this._lastCanvas = { w: canvasW, h: canvasH };
+  }
+
   _applyPose(p) {
     this.camera.position.copy(p.position);
     this.camera.quaternion.copy(p.quaternion);
@@ -112,19 +149,20 @@ export class CameraModes {
   /** Returns true while a tween is in progress. */
   isAnimating() { return this._tween !== null; }
 
-  /** Returns 'background plane params' for the current state, used by viewer to position the bg plane. */
+  /** Returns 'background plane params' for the current state, used by viewer to position bg planes. */
   bgPlaneParams() {
     const fovY = THREE.MathUtils.degToRad(this.camera.fov);
-    if (this.mode === '3d') {
-      // Plane in front of camera at bgPlaneZ3D, sized to fov (frustum near).
-      const h = 2 * Math.tan(fovY / 2) * this.bgPlaneZ3D;
-      const w = h * this.meta.image_w / this.meta.image_h;
-      return { z: -this.bgPlaneZ3D, w, h, frustum_visible: true };
-    } else {
-      const h = 2 * Math.tan(fovY / 2) * this.bgPlaneZ2D;
-      const w = h * this.meta.image_w / this.meta.image_h;
-      return { z: -this.bgPlaneZ2D, w, h, frustum_visible: false };
-    }
+    const aspect = this.meta.image_w / this.meta.image_h;
+    const tanHalf = Math.tan(fovY / 2);
+    const nearH = 2 * tanHalf * this.bgPlaneZ3D;
+    const nearW = nearH * aspect;
+    const farH = 2 * tanHalf * this.bgPlaneZ2D;
+    const farW = farH * aspect;
+    return {
+      near: { z: -this.bgPlaneZ3D, w: nearW, h: nearH },
+      far:  { z: -this.bgPlaneZ2D, w: farW,  h: farH  },
+      frustum_visible: this.mode === '3d',
+    };
   }
 
   switchTo(mode) {
