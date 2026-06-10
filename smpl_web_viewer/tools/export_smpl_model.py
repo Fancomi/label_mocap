@@ -1,6 +1,9 @@
 import argparse
+import importlib
 import json
 import pickle
+import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +12,72 @@ import numpy as np
 F32_BIN = "smpl_neutral.f32.bin"
 I32_BIN = "smpl_neutral.i32.bin"
 META_JSON = "smpl_neutral.meta.json"
+
+
+class _CompatCscMatrix:
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
+    def todense(self):
+        data = np.asarray(self.data)
+        indices = np.asarray(self.indices, dtype=np.intp)
+        indptr = np.asarray(self.indptr, dtype=np.intp)
+        dense = np.zeros(tuple(self._shape), dtype=data.dtype)
+
+        for col in range(indptr.size - 1):
+            start = int(indptr[col])
+            end = int(indptr[col + 1])
+            dense[indices[start:end], col] = data[start:end]
+
+        return dense
+
+
+class _CompatChumpyArray:
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
+    @property
+    def r(self):
+        return self.x
+
+    def __array__(self, dtype=None):
+        return np.asarray(self.x, dtype=dtype)
+
+
+def _can_import(module_name):
+    try:
+        importlib.import_module(module_name)
+        return True
+    except ModuleNotFoundError as exc:
+        if exc.name == module_name or module_name.startswith(f"{exc.name}."):
+            return False
+        raise
+
+
+def _ensure_module(module_name):
+    module = sys.modules.get(module_name)
+    if module is None:
+        module = types.ModuleType(module_name)
+        sys.modules[module_name] = module
+    return module
+
+
+def _install_pickle_compat_modules():
+    if not _can_import("scipy.sparse.csc"):
+        scipy = _ensure_module("scipy")
+        sparse = _ensure_module("scipy.sparse")
+        csc = types.ModuleType("scipy.sparse.csc")
+        csc.csc_matrix = _CompatCscMatrix
+        sys.modules["scipy.sparse.csc"] = csc
+        scipy.sparse = sparse
+        sparse.csc = csc
+
+    if not _can_import("chumpy.ch"):
+        chumpy = _ensure_module("chumpy")
+        ch = types.ModuleType("chumpy.ch")
+        ch.Ch = _CompatChumpyArray
+        sys.modules["chumpy.ch"] = ch
+        chumpy.ch = ch
 
 
 def _dense(array):
@@ -58,6 +127,7 @@ def write_asset(out_dir, arrays):
 
 
 def load_smpl_pkl(path):
+    _install_pickle_compat_modules()
     with Path(path).open("rb") as f:
         data = pickle.load(f, encoding="latin1")
 

@@ -73,6 +73,33 @@ class ExporterTest(unittest.TestCase):
 
         self.assertIs(dense, arr)
 
+    def test_compat_csc_matrix_restores_dense_array_from_pickle_state(self):
+        sparse = export_smpl_model._CompatCscMatrix()
+        sparse.__setstate__(
+            {
+                "_shape": (3, 2),
+                "data": np.array([1.0, 2.0, 3.0], dtype=np.float64),
+                "indices": np.array([0, 2, 1], dtype=np.int32),
+                "indptr": np.array([0, 2, 3], dtype=np.int32),
+            }
+        )
+
+        dense = sparse.todense()
+
+        np.testing.assert_array_equal(
+            dense,
+            np.array([[1.0, 0.0], [0.0, 3.0], [2.0, 0.0]], dtype=np.float64),
+        )
+
+    def test_compat_chumpy_array_converts_x_state_to_ndarray(self):
+        chumpy_array = export_smpl_model._CompatChumpyArray()
+        payload = np.arange(12, dtype=np.float64).reshape(2, 3, 2)
+        chumpy_array.__setstate__({"x": payload, "_dirty_vars": set(), "_itr": None})
+
+        dense = export_smpl_model._dense(chumpy_array)
+
+        np.testing.assert_array_equal(dense, payload)
+
     def test_cli_reports_expected_errors_without_traceback(self):
         with tempfile.TemporaryDirectory() as tmp:
             missing = Path(tmp) / "missing.pkl"
