@@ -36,6 +36,7 @@ export class SmplScene {
     this.controls.target.set(0, 0.9, 0);
 
     this.mesh = null;
+    this.referenceMesh = null;
     this.points = null;
 
     this.addLights();
@@ -82,6 +83,29 @@ export class SmplScene {
     }
   }
 
+  setReferenceTopology(faces) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(faces), 1));
+    const material = new THREE.MeshStandardMaterial({
+      color: 0xff4f5e,
+      metalness: 0.02,
+      roughness: 0.7,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.75,
+      depthWrite: false,
+    });
+
+    if (this.referenceMesh) {
+      this.scene.remove(this.referenceMesh);
+      this.referenceMesh.geometry.dispose();
+      this.referenceMesh.material.dispose();
+    }
+
+    this.referenceMesh = new THREE.Mesh(geometry, material);
+    this.scene.add(this.referenceMesh);
+  }
+
   updateFrame(vertices, joints) {
     if (!this.mesh || !this.points) {
       return;
@@ -93,6 +117,16 @@ export class SmplScene {
 
     copyToPositionAttribute(this.points.geometry, joints, 3);
     this.points.geometry.computeBoundingSphere();
+  }
+
+  updateReferenceFrame(vertices) {
+    if (!this.referenceMesh) {
+      return;
+    }
+
+    copyToPositionAttribute(this.referenceMesh.geometry, vertices, 3);
+    this.referenceMesh.geometry.computeVertexNormals();
+    this.referenceMesh.geometry.computeBoundingSphere();
   }
 
   configure2DCamera(sequence) {

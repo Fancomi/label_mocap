@@ -7,6 +7,7 @@ test('app imports scene, worker, model loader, and sequence loader', async () =>
   assert.match(app, /from '\.\/viewer\/scene\.js'/);
   assert.match(app, /from '\.\/smpl\/smpl_model\.js'/);
   assert.match(app, /from '\.\/data\/sequence_loader\.js'/);
+  assert.match(app, /from '\.\/debug\/reference_mesh\.js'/);
   assert.match(app, /new Worker\(new URL\('\.\/smpl\/smpl_worker\.js'/);
 });
 
@@ -20,4 +21,11 @@ test('app ignores stale worker frame results', async () => {
   const app = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
   assert.doesNotMatch(app, /\?\?\s*playback\.frame/);
   assert.match(app, /if \(!pendingFrames\.has\(msg\.requestId\)\)\s*{\s*return;\s*}/s);
+});
+
+test('scene exposes a separate reference mesh overlay', async () => {
+  const scene = await readFile(new URL('../src/viewer/scene.js', import.meta.url), 'utf8');
+  assert.match(scene, /referenceMesh/);
+  assert.match(scene, /setReferenceTopology/);
+  assert.match(scene, /updateReferenceFrame/);
 });

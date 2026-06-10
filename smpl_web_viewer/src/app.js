@@ -1,4 +1,5 @@
 import { loadSequence } from './data/sequence_loader.js';
+import { loadReferenceMeshIfAvailable } from './debug/reference_mesh.js';
 import { loadModel } from './smpl/smpl_model.js';
 import { Playback } from './viewer/playback.js';
 import { SmplScene } from './viewer/scene.js';
@@ -14,6 +15,7 @@ const worker = new Worker(new URL('./smpl/smpl_worker.js', import.meta.url), { t
 
 let playback = new Playback(0);
 let sequence = null;
+let referenceMesh = null;
 let requestId = 0;
 const pendingFrames = new Map();
 
@@ -46,6 +48,9 @@ worker.addEventListener('message', (event) => {
     const frameIndex = pendingFrames.get(msg.requestId);
     pendingFrames.delete(msg.requestId);
     scene.updateFrame(new Float32Array(msg.vertices), new Float32Array(msg.joints));
+    if (referenceMesh) {
+      scene.updateReferenceFrame(referenceMesh.frameVertices(frameIndex));
+    }
     setStatus(frameLabel(frameIndex, msg.ms));
     return;
   }
@@ -79,10 +84,18 @@ async function loadSample() {
     pendingFrames.clear();
     const model = await loadModel('./public/models/smpl_neutral.meta.json');
     scene.setTopology(model.faces);
+    scene.setReferenceTopology(model.faces);
     worker.postMessage({ type: 'init', model });
 
     setStatus('Loading sample sequence...');
     sequence = await loadSequence('./public/samples/a_famale_224/a1/sequence.json');
+    try {
+      referenceMesh = await loadReferenceMeshIfAvailable(
+        './public/debug/a_famale_224/a1/python_ref_mesh.meta.json'
+      );
+    } catch (_err) {
+      referenceMesh = null;
+    }
     playback = new Playback(sequence.frames.length, sequence.fps);
     slider.max = String(Math.max(0, sequence.frames.length - 1));
     slider.value = '0';
