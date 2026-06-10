@@ -24,11 +24,20 @@ function tinyModel() {
   };
 }
 
+function onceMessage(worker) {
+  return Promise.race([
+    once(worker, 'message').then(([msg]) => msg),
+    once(worker, 'error').then(([err]) => {
+      throw err;
+    })
+  ]);
+}
+
 test('worker initializes a tiny model and forwards one frame', async () => {
   const worker = createWorker();
   try {
     worker.postMessage({ type: 'init', model: tinyModel() });
-    assert.equal((await once(worker, 'message'))[0].type, 'ready');
+    assert.equal((await onceMessage(worker)).type, 'ready');
 
     worker.postMessage({
       type: 'frame',
@@ -36,7 +45,7 @@ test('worker initializes a tiny model and forwards one frame', async () => {
       frame: { root_rota: [0,0,0], root_pos: [1,2,3], body_pose: [], betas: [0] }
     });
 
-    const msg = (await once(worker, 'message'))[0];
+    const msg = await onceMessage(worker);
     assert.equal(msg.type, 'frameResult');
     assert.equal(msg.requestId, 1);
     assert.equal(typeof msg.ms, 'number');
@@ -58,10 +67,42 @@ test('worker returns an error for frame before init', async () => {
       frame: { root_rota: [0,0,0], root_pos: [1,2,3], body_pose: [], betas: [0] }
     });
 
-    const msg = (await once(worker, 'message'))[0];
+    const msg = await onceMessage(worker);
     assert.equal(msg.type, 'error');
     assert.equal(msg.requestId, 2);
     assert.match(msg.message, /not initialized/);
+  } finally {
+    await worker.terminate();
+  }
+});
+
+test('worker reports frame errors and continues processing frames', async () => {
+  const worker = createWorker();
+  try {
+    worker.postMessage({ type: 'init', model: tinyModel() });
+    assert.equal((await onceMessage(worker)).type, 'ready');
+
+    worker.postMessage({
+      type: 'frame',
+      requestId: 3,
+      frame: { root_pos: [1,2,3], body_pose: [], betas: [0] }
+    });
+
+    const errorMsg = await onceMessage(worker);
+    assert.equal(errorMsg.type, 'error');
+    assert.equal(errorMsg.requestId, 3);
+    assert.match(errorMsg.message, /root_rota|undefined|Cannot/);
+
+    worker.postMessage({
+      type: 'frame',
+      requestId: 4,
+      frame: { root_rota: [0,0,0], root_pos: [1,2,3], body_pose: [], betas: [0] }
+    });
+
+    const frameMsg = await onceMessage(worker);
+    assert.equal(frameMsg.type, 'frameResult');
+    assert.equal(frameMsg.requestId, 4);
+    assert.deepEqual(Array.from(new Float32Array(frameMsg.vertices)), [1,2,3, 2,2,3]);
   } finally {
     await worker.terminate();
   }

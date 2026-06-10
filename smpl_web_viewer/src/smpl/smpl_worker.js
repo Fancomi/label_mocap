@@ -33,14 +33,18 @@ port.addEventListener('message', (event) => {
       return;
     }
 
-    const t0 = performance.now();
-    const out = forwardSmpl(model, msg.frame);
-    port.postMessage({
-      type: 'frameResult',
-      requestId: msg.requestId,
-      ms: performance.now() - t0,
-      vertices: out.vertices.buffer,
-      joints: out.joints.buffer
-    }, [out.vertices.buffer, out.joints.buffer]);
+    try {
+      const t0 = performance.now();
+      const out = forwardSmpl(model, msg.frame);
+      port.postMessage({
+        type: 'frameResult',
+        requestId: msg.requestId,
+        ms: performance.now() - t0,
+        vertices: out.vertices.buffer,
+        joints: out.joints.buffer
+      }, [out.vertices.buffer, out.joints.buffer]);
+    } catch (err) {
+      sendError(msg.requestId, err instanceof Error ? err.message : String(err));
+    }
   }
 });
