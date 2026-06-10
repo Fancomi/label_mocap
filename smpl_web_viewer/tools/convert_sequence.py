@@ -27,7 +27,7 @@ def _require_len(record, key, n):
 
 
 def _require_frame(record):
-    value = record.get("frame")
+    value = record.get("frame", record.get("image_id"))
     if isinstance(value, bool):
         raise ValueError("frame must be an integer")
     if isinstance(value, int):
@@ -69,7 +69,9 @@ def convert_records(name, records, image_base_url, fps=30, width=1920, height=10
 def _load_records(path):
     data = json.loads(path.read_text(encoding="utf8"))
     if isinstance(data, dict):
-        return data["records"]
+        if "records" in data:
+            return data["records"]
+        return data["annotations"]
     return data
 
 

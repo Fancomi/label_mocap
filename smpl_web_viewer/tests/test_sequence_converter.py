@@ -74,10 +74,12 @@ class SequenceConverterTest(unittest.TestCase):
             out_dir = tmp_path / "samples"
 
             for actor in ("a1", "a2", "a3", "a4"):
-                pose_dir = source / "a" / actor / "pose_files"
+                pose_dir = source / "a" / actor / "json_results" / "player_0"
                 pose_dir.mkdir(parents=True)
-                (pose_dir / f"{actor}.json").write_text(
-                    json.dumps({"records": [valid_record(frame=0)]}),
+                record = valid_record(frame=999, image_id=0)
+                del record["frame"]
+                (pose_dir / "player_0.json").write_text(
+                    json.dumps({"annotations": [record]}),
                     encoding="utf8",
                 )
 
@@ -106,6 +108,7 @@ class SequenceConverterTest(unittest.TestCase):
             )
             sequence = json.loads((out_dir / "a1" / "sequence.json").read_text(encoding="utf8"))
             self.assertEqual(sequence["image"]["baseUrl"], "./images/")
+            self.assertEqual(sequence["frames"][0]["frame"], 0)
 
 
 if __name__ == "__main__":

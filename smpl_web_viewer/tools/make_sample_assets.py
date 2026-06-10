@@ -10,7 +10,10 @@ except ImportError:
 
 
 def _load_records(path):
-    return json.loads(path.read_text(encoding="utf8"))["records"]
+    data = json.loads(path.read_text(encoding="utf8"))
+    if "records" in data:
+        return data["records"]
+    return data["annotations"]
 
 
 def main():
@@ -31,7 +34,7 @@ def main():
 
     try:
         for actor in ("a1", "a2", "a3", "a4"):
-            pose_path = args.source / "a" / actor / "pose_files" / f"{actor}.json"
+            pose_path = args.source / "a" / actor / "json_results/player_0/player_0.json"
             image_dir = args.source / "a" / actor / "images"
             seq_dir = args.out / actor
             seq_dir.mkdir(parents=True, exist_ok=True)
