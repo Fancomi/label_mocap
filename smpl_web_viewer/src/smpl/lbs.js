@@ -58,12 +58,63 @@ export function regressJoints(model, vertices) {
   return out;
 }
 
+function buildPoseOffsets(model, rot, verts) {
+  const poseRows = model.posedirsShape[0];
+  const vertexCols = model.posedirsShape[1];
+  const feature = new Float32Array(Math.min(poseRows, Math.max(0, (rot.length - 1) * 9)));
+  const identity = [
+    1, 0, 0,
+    0, 1, 0,
+    0, 0, 1
+  ];
+
+  for (let j = 1; j < rot.length; j++) {
+    const dst = (j - 1) * 9;
+    if (dst >= feature.length) {
+      break;
+    }
+    for (let k = 0; k < 9 && dst + k < feature.length; k++) {
+      feature[dst + k] = rot[j][k] - identity[k];
+    }
+  }
+
+  const out = new Float32Array(verts * 3);
+  for (let p = 0; p < feature.length; p++) {
+    const f = feature[p];
+    if (f === 0) {
+      continue;
+    }
+    const row = p * vertexCols;
+    for (let c = 0; c < out.length && c < vertexCols; c++) {
+      out[c] += f * model.posedirs[row + c];
+    }
+  }
+
+  return out;
+}
+
+function transformVector(m, p) {
+  const x = p[0];
+  const y = p[1];
+  const z = p[2];
+  return new Float32Array([
+    m[0] * x + m[1] * y + m[2] * z,
+    m[4] * x + m[5] * y + m[6] * z,
+    m[8] * x + m[9] * y + m[10] * z
+  ]);
+}
+
 export function forwardSmpl(model, frame) {
   const verts = vertexCount(model);
   const jointsN = jointCount(model);
   const vShaped = blendShape(model, frame.betas);
   const joints = regressJoints(model, vShaped);
   const rot = buildPoseRotations(frame, jointsN);
+  const poseOffsets = buildPoseOffsets(model, rot, verts);
+  const vPosed = new Float32Array(vShaped);
+  for (let i = 0; i < vPosed.length; i++) {
+    vPosed[i] += poseOffsets[i];
+  }
   const transforms = new Array(jointsN);
   const relTransforms = new Array(jointsN);
 
@@ -77,7 +128,7 @@ export function forwardSmpl(model, frame) {
     const local = mat4FromRt(rot[j], rel);
     transforms[j] = parent >= 0 ? mat4Mul(transforms[parent], local) : local;
 
-    const jp = transformPoint(transforms[j], [
+    const jp = transformVector(transforms[j], [
       joints[j * 3 + 0],
       joints[j * 3 + 1],
       joints[j * 3 + 2],
@@ -90,7 +141,7 @@ export function forwardSmpl(model, frame) {
 
   const outVerts = new Float32Array(verts * 3);
   for (let v = 0; v < verts; v++) {
-    const p = [vShaped[v * 3], vShaped[v * 3 + 1], vShaped[v * 3 + 2]];
+    const p = [vPosed[v * 3], vPosed[v * 3 + 1], vPosed[v * 3 + 2]];
     let x = 0;
     let y = 0;
     let z = 0;
