@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SMPL Web Viewer</title>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./public/vendor/three.module.js",
+        "three/addons/controls/OrbitControls.js": "./public/vendor/OrbitControls.js"
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="./src/viewer/style.css">
+</head>
+<body>
+  <main id="app" class="shell">
+    <aside class="panel">
+      <h1>SMPL Web Viewer</h1>
+      <button id="loadSample" type="button">Load sample</button>
+      <button id="playPause" type="button">Play</button>
+      <input id="frameSlider" type="range" min="0" max="0" value="0">
+      <output id="status">Idle</output>
+    </aside>
+    <section id="viewport" class="viewport" aria-label="SMPL viewport"></section>
+  </main>
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
