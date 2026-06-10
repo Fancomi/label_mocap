@@ -85,7 +85,7 @@ test('buildPoseRotations chunks body pose and pads missing joints with identity'
   ]);
 });
 
-test('forwardSmpl keeps zero-pose vertices fixed when root rest joint is nonzero', () => {
+test('forwardSmpl centers vertices so root joint lands on root_pos', () => {
   const model = tinyModel();
   model.J_regressor = new Float32Array([0, 1]);
 
@@ -96,8 +96,8 @@ test('forwardSmpl keeps zero-pose vertices fixed when root rest joint is nonzero
     betas: [0]
   });
 
-  assert.deepEqual(Array.from(out.joints), [1,0,0]);
-  assert.deepEqual(Array.from(out.vertices), [0,0,0, 1,0,0]);
+  assert.deepEqual(Array.from(out.joints), [0,0,0]);
+  assert.deepEqual(Array.from(out.vertices), [-1,0,0, 0,0,0]);
 });
 
 test('forwardSmpl applies pose blend offsets from child rotations before skinning', () => {

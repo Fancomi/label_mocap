@@ -140,6 +140,11 @@ export function forwardSmpl(model, frame) {
   }
 
   const outVerts = new Float32Array(verts * 3);
+  const rootOffset = [
+    transforms[0][3],
+    transforms[0][7],
+    transforms[0][11],
+  ];
   for (let v = 0; v < verts; v++) {
     const p = [vPosed[v * 3], vPosed[v * 3 + 1], vPosed[v * 3 + 2]];
     let x = 0;
@@ -157,16 +162,16 @@ export function forwardSmpl(model, frame) {
       z += w * q[2];
     }
 
-    outVerts[v * 3 + 0] = x + frame.root_pos[0];
-    outVerts[v * 3 + 1] = y + frame.root_pos[1];
-    outVerts[v * 3 + 2] = z + frame.root_pos[2];
+    outVerts[v * 3 + 0] = x - rootOffset[0] + frame.root_pos[0];
+    outVerts[v * 3 + 1] = y - rootOffset[1] + frame.root_pos[1];
+    outVerts[v * 3 + 2] = z - rootOffset[2] + frame.root_pos[2];
   }
 
   const outJoints = new Float32Array(jointsN * 3);
   for (let j = 0; j < jointsN; j++) {
-    outJoints[j * 3 + 0] = transforms[j][3] + frame.root_pos[0];
-    outJoints[j * 3 + 1] = transforms[j][7] + frame.root_pos[1];
-    outJoints[j * 3 + 2] = transforms[j][11] + frame.root_pos[2];
+    outJoints[j * 3 + 0] = transforms[j][3] - rootOffset[0] + frame.root_pos[0];
+    outJoints[j * 3 + 1] = transforms[j][7] - rootOffset[1] + frame.root_pos[1];
+    outJoints[j * 3 + 2] = transforms[j][11] - rootOffset[2] + frame.root_pos[2];
   }
 
   return { vertices: outVerts, joints: outJoints };
