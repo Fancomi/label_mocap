@@ -12,6 +12,13 @@ function requireInteger(value, name) {
   return value;
 }
 
+function requirePositiveFiniteNumber(value, name) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be a finite positive number`);
+  }
+  return value;
+}
+
 function requireLen(value, n, name) {
   if (!Array.isArray(value) || value.length !== n) {
     throw new Error(`${name} must have length ${n}`);
@@ -29,7 +36,7 @@ export function normalizeSequence(data) {
 
   return {
     ...data,
-    fps: data.fps ?? 30,
+    fps: data.fps === undefined ? 30 : requirePositiveFiniteNumber(data.fps, 'fps'),
     frames: data.frames.map((f) => ({
       frame: requireInteger(f.frame, 'frame'),
       root_pos: requireLen(f.root_pos, 3, 'root_pos'),

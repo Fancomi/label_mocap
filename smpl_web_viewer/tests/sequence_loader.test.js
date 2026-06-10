@@ -73,6 +73,24 @@ test('normalizeSequence rejects non-integer and bool frame values', () => {
   }
 });
 
+test('normalizeSequence defaults missing fps to 30', () => {
+  const data = validSequence();
+  delete data.fps;
+
+  const seq = normalizeSequence(data);
+
+  assert.equal(seq.fps, 30);
+});
+
+test('normalizeSequence rejects invalid fps values', () => {
+  for (const fps of ['fast', 0, Infinity, -Infinity, NaN, true, false, -30]) {
+    assert.throws(
+      () => normalizeSequence(validSequence({ fps })),
+      /fps.*finite positive number/
+    );
+  }
+});
+
 test('normalizeSequence preserves metadata and excludes extra frame fields', () => {
   const seq = normalizeSequence(
     validSequence({
