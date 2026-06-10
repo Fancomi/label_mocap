@@ -60,3 +60,51 @@ def test_meta_for_portrait_seq(client):
 def test_meta_404_for_unknown_seq(client):
     resp = client.get("/seq/10m/NOPE_NOT_REAL/meta")
     assert resp.status_code == 404
+
+
+def test_faces_bin_size_and_dtype(client):
+    """faces.bin: int32, shape (F, 3), F == 13776 for SMPL."""
+    resp = client.get("/seq/10m/TiaoShui_a_male_5500_597/faces.bin")
+    assert resp.status_code == 200
+    assert resp.mimetype == "application/octet-stream"
+    # SMPL has 13776 triangle faces × 3 verts × int32
+    assert len(resp.data) == 13776 * 3 * 4
+
+
+def test_frame_bin_layout(client):
+    """frame/<i>.bin: 6890*3 + 24*3 + 3 floats == (6890*3 + 24*3 + 3)*4 bytes."""
+    resp = client.get("/seq/10m/TiaoShui_a_male_5500_597/frame/0.bin")
+    assert resp.status_code == 200
+    assert resp.mimetype == "application/octet-stream"
+    expected = (6890 * 3 + 24 * 3 + 3) * 4
+    assert len(resp.data) == expected, f"got {len(resp.data)} expected {expected}"
+
+
+def test_frame_bin_contents_are_finite_floats(client):
+    """frame/0.bin parses as float32 and contains no NaN/Inf."""
+    import numpy as np
+    resp = client.get("/seq/10m/TiaoShui_a_male_5500_597/frame/0.bin")
+    buf = np.frombuffer(resp.data, dtype=np.float32)
+    assert buf.shape == (6890 * 3 + 24 * 3 + 3,)
+    assert np.isfinite(buf).all()
+    verts = buf[:6890 * 3].reshape(6890, 3)
+    # all verts in front of camera in src coords (Z<0)
+    assert (verts[:, 2] < 0).all()
+
+
+def test_frame_bin_404_out_of_range(client):
+    resp = client.get("/seq/10m/TiaoShui_a_male_5500_597/frame/99999.bin")
+    assert resp.status_code == 404
+
+
+def test_image_endpoint_serves_jpeg(client):
+    resp = client.get("/seq/10m/TiaoShui_a_male_5500_597/img/0.jpg")
+    assert resp.status_code == 200
+    assert resp.mimetype == "image/jpeg"
+    # JPEG magic
+    assert resp.data[:3] == b"\xff\xd8\xff"
+
+
+def test_image_endpoint_404_out_of_range(client):
+    resp = client.get("/seq/10m/TiaoShui_a_male_5500_597/img/99999.jpg")
+    assert resp.status_code == 404
