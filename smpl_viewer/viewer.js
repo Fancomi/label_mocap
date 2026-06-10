@@ -35,8 +35,11 @@ function setStatus(t) { status.textContent = t; }
 const renderer = new THREE.WebGLRenderer({
   canvas: $('c'), antialias: true, preserveDrawingBuffer: true,
 });
-renderer.setPixelRatio(1);
-renderer.setClearColor(0x1a1f2a, 1);
+// devicePixelRatio so the rendered texture isn't blurry on HiDPI displays
+// (was setPixelRatio(1) → upscaled blur on retina). Capped at 2 to keep
+// fragment-shader cost sane.
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setClearColor(0x0f1216, 1);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
 
@@ -110,9 +113,16 @@ function ensureGridAxes() {
   }
 }
 
-function makeFrustum(meta) {
-  const fovY = THREE.MathUtils.degToRad(2 * Math.atan(meta.image_h / (2 * meta.K.fy)) * 180 / Math.PI);
-  const aspect = meta.image_w / meta.image_h;
+function makeFrustum(meta, rotN = 0) {
+  // Frustum mirrors what camera_modes.js does: when N is odd the new
+  // "vertical" axis is the original sensor width, so use fx; otherwise fy.
+  // Result: 3D mode's wireframe always matches the rotated 2D-aligned fov.
+  const odd = rotN % 2 === 1;
+  const newH = odd ? meta.image_w : meta.image_h;
+  const newFy = odd ? meta.K.fx : meta.K.fy;
+  const fovY = 2 * Math.atan(newH / (2 * newFy));    // radians
+  const aspect = odd ? meta.image_h / meta.image_w
+                     : meta.image_w / meta.image_h;
   const d = 2.0;
   const h = 2 * Math.tan(fovY / 2) * d;
   const w = h * aspect;
@@ -128,6 +138,18 @@ function makeFrustum(meta) {
   ];
   const geom = new THREE.BufferGeometry().setFromPoints(segs);
   return new THREE.LineSegments(geom, new THREE.LineBasicMaterial({ color: 0x66aaff }));
+}
+
+function rebuildFrustum() {
+  if (!cam || !curSeq) return;
+  if (frustum) {
+    scene.remove(frustum);
+    frustum.geometry.dispose();
+    frustum.material.dispose();
+  }
+  frustum = makeFrustum(curSeq.meta, dataRotCw);
+  frustum.frustumCulled = false;
+  scene.add(frustum);
 }
 
 // ── Sequence loading ──────────────────────────────────────────────────────
@@ -195,8 +217,9 @@ async function selectSeq(seqId) {
   ensureGridAxes();
   cam = new CameraModes({ canvas: renderer.domElement, meta });
   syncIntrinsicsPanel(cam.K);
-  // Apply current canvas aspect to viewport-only state (does NOT touch K).
-  cam.setViewportAspect(renderer.domElement.clientWidth, renderer.domElement.clientHeight);
+  // CSS aspect-ratio drives canvas size; resize() reads back the resulting
+  // pixel dims and informs camera.aspect. Called after `cam` exists.
+  resize();
 
   // Two image planes share one texture. Far plane (z=-50) is the 2D-aligned
   // backdrop and stays visible in 3D too; near plane (z=-1.5) is the
@@ -253,7 +276,7 @@ async function selectSeq(seqId) {
     line.renderOrder = 11;
     bonesGroup.add(line);
   }
-  frustum = makeFrustum(meta);
+  frustum = makeFrustum(meta, dataRotCw);
   frustum.frustumCulled = false;
   scene.add(frustum);
 
@@ -404,7 +427,9 @@ function applyMode(mode) {
   layoutBg();
 }
 
-// ── Intrinsics panel ───────────────────────────────────────────────────────
+// Intrinsics panel reflects the *base* (un-rotated) K so values stay
+// stable across rotation. The camera derives effective fov/aspect from
+// dataRotN automatically.
 function syncIntrinsicsPanel(K) {
   $('k-fx').value = K.fx;
   $('k-fy').value = K.fy;
@@ -452,8 +477,8 @@ function rotateData(delta) {
   dataRotCw = ((dataRotCw + delta) % 4 + 4) % 4;
   if (cam) {
     cam.setDataRotation(dataRotCw);
-    // Re-fit canvas aspect so the letterbox tracks the (now rotated) image aspect.
-    cam.setViewportAspect(renderer.domElement.clientWidth, renderer.domElement.clientHeight);
+    rebuildFrustum();           // 3D frustum wireframe also follows rotation
+    resize();                   // CSS aspect-ratio + canvas backing buffer
   }
   if (curN > 0) applyFrame(curFrame);
 }
@@ -498,27 +523,30 @@ flagBtns.forEach(([id, key]) => {
 
 window.addEventListener('resize', resize);
 function resize() {
-  const c = renderer.domElement;
-  const w = c.clientWidth, h = c.clientHeight;
-  renderer.setSize(w, h, false);
-  if (cam) {
-    // Lock camera aspect to image aspect; letterbox via setViewport on render.
-    cam.setViewportAspect(w, h);
-  }
+  if (!cam) return;
+  // CSS letterbox: lock canvas's aspect-ratio to the (rotated) image aspect;
+  // browser sizes it to fit the container with bg-color bars on the short axis.
+  const targetAspect = cam.effectiveAspect();
+  renderer.domElement.style.aspectRatio = `${targetAspect}`;
+  // After style change, query resulting layout size and resize the backing
+  // buffer to match. Done in next frame so the browser applies aspect-ratio.
+  requestAnimationFrame(() => {
+    const w = renderer.domElement.clientWidth;
+    const h = renderer.domElement.clientHeight;
+    if (w > 0 && h > 0) {
+      renderer.setSize(w, h, false);
+      cam.camera.aspect = w / h;       // tracks rotated aspect (CSS already locked)
+      cam.camera.updateProjectionMatrix();
+    }
+  });
 }
 
 function renderFrame() {
   if (!cam) return;
-  const cw = renderer.domElement.clientWidth;
-  const ch = renderer.domElement.clientHeight;
-  const lb = cam.letterbox(cw, ch);
-  renderer.setScissorTest(false);
-  renderer.clear();
-  renderer.setViewport(lb.x, lb.y, lb.w, lb.h);
-  renderer.setScissor(lb.x, lb.y, lb.w, lb.h);
-  renderer.setScissorTest(true);
+  // No setViewport / setScissor — canvas is sized by CSS aspect-ratio so
+  // its pixel buffer already matches the (rotated) image aspect. Renderer
+  // fills the entire backing buffer.
   renderer.render(scene, cam.camera);
-  renderer.setScissorTest(false);
 }
 
 // ── Render loop ────────────────────────────────────────────────────────────

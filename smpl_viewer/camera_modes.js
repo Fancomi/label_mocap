@@ -101,18 +101,22 @@ export class CameraModes {
   }
 
   _applyViewOffset() {
-    // Principal-point offset → setViewOffset; both modes use the same K.
-    // After dataRotN rotation about camera-out, the principal point also
-    // rotates: each press of CW about camera -Z maps (cx, cy) (image-space,
-    // y-down) → (cy, W - cx) [for 1×CW]. We rebuild the rotated cx/cy and
-    // the rotated full-frame size every time.
+    // Principal-point offset → setViewOffset. After dataRotN CW rotations
+    // about camera-out, the principal point rotates with the content. We
+    // also have to rotate (cx, cy) into the rotated full-frame so the
+    // setViewOffset values are expressed in the rotated coordinate system.
+    //
+    // Image-space pixel coords are y-down. A CW rotation about the camera
+    // -Z axis (looking at the image), in pixel space, maps:
+    //   (u, v) → (H − 1 − v, u)
+    // Practically: (cx, cy) → (H − cy, cx)   (we drop the −1, intrinsics are float)
     const W = this.meta.image_w, H = this.meta.image_h;
     let cxR = this.K.cx, cyR = this.K.cy;
     let fullW = W, fullH = H;
-    for (let i = 0; i < (this._dataRotN % 4 + 4) % 4; i++) {
-      // rotate one CW step. Image y-down: (cx, cy) → (cy, W - cx) and W/H swap.
-      const ncx = cyR;
-      const ncy = fullW - cxR;
+    const n = ((this._dataRotN % 4) + 4) % 4;
+    for (let i = 0; i < n; i++) {
+      const ncx = fullH - cyR;
+      const ncy = cxR;
       cxR = ncx; cyR = ncy;
       const nfW = fullH, nfH = fullW;
       fullW = nfW; fullH = nfH;
@@ -151,38 +155,12 @@ export class CameraModes {
   getDataRotation() { return this._dataRotN; }
 
   /**
-   * Compute the letterbox sub-rectangle inside the canvas that has the
-   * (rotated) image aspect. K is never touched — the camera's own
-   * `aspect` and view offset already track rotation. The viewer's
-   * renderer.setViewport() draws into this sub-rect; out-of-rect is
-   * clear color.
+   * Effective image aspect after dataRotN (CW about camera-out). Used by
+   * the viewer to set the canvas's CSS `aspect-ratio` — letterbox is pure
+   * CSS, no setViewport/setScissor scaling involved. K stays untouched.
    */
-  letterbox(canvasW, canvasH) {
-    const targetAspect = this._effectiveAspect();
-    const canvasAspect = canvasW / canvasH;
-    let w = canvasW, h = canvasH, x = 0, y = 0;
-    if (canvasAspect > targetAspect) {
-      // canvas wider than image: pillar-box (vertical bars)
-      w = canvasH * targetAspect;
-      x = (canvasW - w) / 2;
-    } else if (canvasAspect < targetAspect) {
-      // canvas taller than image: letter-box (horizontal bars)
-      h = canvasW / targetAspect;
-      y = (canvasH - h) / 2;
-    }
-    return { x, y, w, h };
-  }
-
-  /**
-   * Tell the camera what canvas size to expect; we lock its `aspect` to the
-   * (rotated) image aspect so K is never touched. The viewer must call
-   * setViewport with the rectangle from `letterbox(canvasW, canvasH)`
-   * before render.
-   */
-  setViewportAspect(canvasW, canvasH) {
-    this.camera.aspect = this._effectiveAspect();
-    this.camera.updateProjectionMatrix();
-    this._lastCanvas = { w: canvasW, h: canvasH };
+  effectiveAspect() {
+    return this._effectiveAspect();
   }
 
   _applyPose(p) {
