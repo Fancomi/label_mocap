@@ -1,19 +1,22 @@
-function toFiniteNumber(value, name) {
-  if (typeof value === 'boolean') {
+function requireFiniteNumber(value, name) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw new Error(`${name} must be a finite number`);
   }
-  const n = Number(value);
-  if (!Number.isFinite(n)) {
-    throw new Error(`${name} must be a finite number`);
+  return value;
+}
+
+function requireInteger(value, name) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)) {
+    throw new Error(`${name} must be an integer`);
   }
-  return n;
+  return value;
 }
 
 function requireLen(value, n, name) {
   if (!Array.isArray(value) || value.length !== n) {
     throw new Error(`${name} must have length ${n}`);
   }
-  return value.map((x, i) => toFiniteNumber(x, `${name}[${i}]`));
+  return value.map((x, i) => requireFiniteNumber(x, `${name}[${i}]`));
 }
 
 export function normalizeSequence(data) {
@@ -26,9 +29,9 @@ export function normalizeSequence(data) {
 
   return {
     ...data,
-    fps: toFiniteNumber(data.fps ?? 30, 'fps'),
+    fps: data.fps ?? 30,
     frames: data.frames.map((f) => ({
-      frame: toFiniteNumber(f.frame, 'frame'),
+      frame: requireInteger(f.frame, 'frame'),
       root_pos: requireLen(f.root_pos, 3, 'root_pos'),
       root_rota: requireLen(f.root_rota, 3, 'root_rota'),
       body_pose: requireLen(f.body_pose, 63, 'body_pose'),
@@ -42,5 +45,17 @@ export async function loadSequence(url) {
   if (!res.ok) {
     throw new Error(`failed to load sequence ${url}: ${res.status}`);
   }
-  return normalizeSequence(await res.json());
+
+  let data;
+  try {
+    data = await res.json();
+  } catch (err) {
+    throw new Error(`failed to parse sequence ${url}: ${err.message}`);
+  }
+
+  try {
+    return normalizeSequence(data);
+  } catch (err) {
+    throw new Error(`invalid sequence ${url}: ${err.message}`);
+  }
 }
