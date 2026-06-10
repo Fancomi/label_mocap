@@ -13,16 +13,40 @@ function uint8View(buffer) {
 
 export function arrayFromBuffer(buffer, spec) {
   const view = uint8View(buffer);
-  const start = view.byteOffset + spec.offset;
-  const end = start + spec.length * 4;
-  const bytes = view.buffer.slice(start, end);
+  const elementBytes = 4;
+  const offset = spec.offset;
+  const length = spec.length;
+
   if (spec.dtype === 'float32') {
-    return new Float32Array(bytes);
+    validateSlice(view, offset, length, elementBytes);
+    const bytes = sliceBytes(view, offset, length * elementBytes);
+    return new Float32Array(bytes.buffer, bytes.byteOffset, length);
   }
   if (spec.dtype === 'int32') {
-    return new Int32Array(bytes);
+    validateSlice(view, offset, length, elementBytes);
+    const bytes = sliceBytes(view, offset, length * elementBytes);
+    return new Int32Array(bytes.buffer, bytes.byteOffset, length);
   }
   throw new Error(`unsupported model dtype: ${spec.dtype}`);
+}
+
+function sliceBytes(view, offset, byteLength) {
+  return new Uint8Array(view.subarray(offset, offset + byteLength));
+}
+
+function validateSlice(view, offset, length, elementBytes) {
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error(`model array offset must be a non-negative integer: ${offset}`);
+  }
+  if (!Number.isInteger(length) || length < 0) {
+    throw new Error(`model array length must be a non-negative integer: ${length}`);
+  }
+  const byteLength = length * elementBytes;
+  if (offset + byteLength > view.byteLength) {
+    throw new Error(
+      `model array slice is outside model asset view: offset ${offset}, byteLength ${byteLength}, view byteLength ${view.byteLength}`
+    );
+  }
 }
 
 function textFromBuffer(buffer) {
