@@ -116,6 +116,7 @@ def create_app(raw_root: Path):
                 "verts": verts.astype(np.float32, copy=False),
                 "joints": joints.astype(np.float32, copy=False),
                 "root_pos": root_pos.astype(np.float32, copy=False),
+                "root_rota": root_rota.astype(np.float32, copy=False),  # axis-angle (N, 3)
                 "faces": faces,
             }
             state["forward_cache"][key] = entry
@@ -200,16 +201,19 @@ def create_app(raw_root: Path):
 
     @app.route("/seq/<src>/<name>/frame/<int:i>.bin")
     def frame_bin(src, name, i):
+        # Layout: verts(6890,3) + joints(24,3) + root_pos(3) + root_rota(3), all float32.
+        # Total = (6890*3 + 24*3 + 3 + 3) * 4 bytes.
         entry = _ensure_forward(src, name)
         if entry is None:
             abort(404)
         n = entry["verts"].shape[0]
         if i < 0 or i >= n:
             abort(404)
-        v = entry["verts"][i].astype(np.float32, copy=False)   # (6890, 3)
-        j = entry["joints"][i].astype(np.float32, copy=False)  # (24, 3)
-        rp = entry["root_pos"][i].astype(np.float32, copy=False)  # (3,)
-        buf = v.tobytes() + j.tobytes() + rp.tobytes()
+        v = entry["verts"][i].astype(np.float32, copy=False)        # (6890, 3)
+        j = entry["joints"][i].astype(np.float32, copy=False)       # (24, 3)
+        rp = entry["root_pos"][i].astype(np.float32, copy=False)    # (3,)
+        rr = entry["root_rota"][i].astype(np.float32, copy=False)   # (3,) axis-angle
+        buf = v.tobytes() + j.tobytes() + rp.tobytes() + rr.tobytes()
         return Response(buf, mimetype="application/octet-stream")
 
     @app.route("/seq/<src>/<name>/img/<int:i>.jpg")

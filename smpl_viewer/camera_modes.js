@@ -180,10 +180,19 @@ export class CameraModes {
     slot.fov = this.camera.fov;
   }
 
-  /** Update the 3D OrbitControls target (call per frame to follow root joint). */
+  /** Update the 3D OrbitControls target (call per frame to follow root joint).
+   *  Also re-aim the saved 3D pose so a 2D→3D switch lerps to a quaternion
+   *  that actually faces the new pelvis (otherwise tween lands aimed at the
+   *  prior target and OrbitControls.update() would snap-correct → "瞬移"). */
   set3DFollowTarget(vec3) {
     this._pose3D.target.copy(vec3);
-    if (this.mode === '3d' && !this._tween) this.controls.target.copy(vec3);
+    // Re-derive the saved-pose quaternion using the saved-pose position →
+    // new target. Keeps the user's rotated/zoomed eye, just re-aims.
+    this._pose3D.quaternion.copy(
+      this._quatLookingAt(this._pose3D.position, vec3));
+    if (this.mode === '3d' && !this._tween) {
+      this.controls.target.copy(vec3);
+    }
   }
 
   /** Returns true while a tween is in progress. */
@@ -249,6 +258,7 @@ export class CameraModes {
     this._applyPose(slot);
     this.controls.target.copy(slot.target);
     this.controls.enabled = (mode === '3d');
+    this.controls.update();   // sync OrbitControls' spherical state to new pose
   }
 
   /** Advance any active tween. Call once per frame *before* renderer.render(). */
@@ -274,6 +284,37 @@ export class CameraModes {
       // Snap to the exact target to kill any rounding error.
       this._applyPose(to);
       this.controls.target.copy(to.target);
+      // Sync OrbitControls' internal spherical state to the freshly-snapped
+      // camera/target. Without this, the next .update() can recompute the
+      // quaternion from spherical coords stored before the tween → 瞬移.
+      this.controls.update();
     }
+  }
+
+  // ── Effective intrinsics (after dataRotN rotation, image-pixel coords) ────
+
+  /** Returns the *effective* K seen by an external observer of the rotated
+   *  rendered image — fx/fy swap on odd N, (cx,cy) → (H − cy, cx) per CW step.
+   *  Base K (this.K) is the physical sensor's intrinsics, never changed by
+   *  rotation; the panel shows base K under "2D 内参" (editable) and the
+   *  derived effective K under "旋后等效 K" (read-only). */
+  effectiveK() {
+    const W = this.meta.image_w, H = this.meta.image_h;
+    let fx = this.K.fx, fy = this.K.fy;
+    let cx = this.K.cx, cy = this.K.cy;
+    let fullW = W, fullH = H;
+    const n = ((this._dataRotN % 4) + 4) % 4;
+    for (let i = 0; i < n; i++) {
+      // 1×CW about camera-out (image y-down): (u, v) → (H − v, u)
+      const ncx = fullH - cy;
+      const ncy = cx;
+      cx = ncx; cy = ncy;
+      // focals also swap (rotated image's "horizontal" was original vertical)
+      const nfx = fy, nfy = fx;
+      fx = nfx; fy = nfy;
+      const nfW = fullH, nfH = fullW;
+      fullW = nfW; fullH = nfH;
+    }
+    return { fx, fy, cx, cy, image_w: fullW, image_h: fullH };
   }
 }

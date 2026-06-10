@@ -55,6 +55,12 @@
   input[type=number]:focus { outline:none; border-color:#0088ff; }
   .kgrid { display:grid; grid-template-columns:auto 1fr; gap:3px 6px; align-items:center; }
   .kgrid > label { font-size:10px; color:#999; text-align:right; }
+  .ro {
+    background:#222; border:1px solid #333; color:#ffa;
+    padding:2px 5px; border-radius:3px;
+    font: inherit; font-size:11px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
   #frame-info { font-size:10px; color:#666; text-align:right; }
 </style>
 </head>
@@ -141,6 +147,26 @@
       <label>cy</label><input type="number" id="k-cy" step="1">
     </div>
     <button id="btn-k-reset" style="font-size:10px;padding:3px 5px;margin-top:3px">重置内参</button>
+  </div>
+
+  <div class="g">
+    <label>旋后等效 K (只读)</label>
+    <div class="kgrid">
+      <label>fx</label><span class="ro" id="ek-fx">—</span>
+      <label>fy</label><span class="ro" id="ek-fy">—</span>
+      <label>cx</label><span class="ro" id="ek-cx">—</span>
+      <label>cy</label><span class="ro" id="ek-cy">—</span>
+      <label>W×H</label><span class="ro" id="ek-wh">—</span>
+    </div>
+  </div>
+
+  <div class="g">
+    <label>SMPL Root (旋后)</label>
+    <div class="kgrid">
+      <label>pos</label><span class="ro" id="r-pos">—</span>
+      <label>rot</label><span class="ro" id="r-rot">—</span>
+      <label>‖rot‖</label><span class="ro" id="r-rotmag">—</span>
+    </div>
   </div>
 </div>
 

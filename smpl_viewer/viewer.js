@@ -217,6 +217,7 @@ async function selectSeq(seqId) {
   ensureGridAxes();
   cam = new CameraModes({ canvas: renderer.domElement, meta });
   syncIntrinsicsPanel(cam.K);
+  syncEffectiveKPanel();
   // CSS aspect-ratio drives canvas size; resize() reads back the resulting
   // pixel dims and informs camera.aspect. Called after `cam` exists.
   resize();
@@ -284,6 +285,11 @@ async function selectSeq(seqId) {
   catch (_) { /* stale-epoch — outer return below */ }
   if (myEpoch !== seqEpoch) return;
 
+  // applyFrame called set3DFollowTarget(pelvis_0), which re-aimed the saved
+  // _pose3D quaternion to face pelvis. This is the "prime" step that prevents
+  // the first 2D→3D switch from snap-correcting on the next OrbitControls
+  // tick.
+
   // 用户偏好: 切换序列后立即跳到 2D 对齐, 让数据切换可视化.
   cam.snapTo('2d');
   applyMode('2d');
@@ -311,8 +317,9 @@ async function loadFrame(i) {
   }
   const verts = new Float32Array(buf, 0, 6890 * 3);
   const joints = new Float32Array(buf, 6890 * 3 * 4, 24 * 3);
-  const root = new Float32Array(buf, (6890 * 3 + 24 * 3) * 4, 3);
-  const entry = { verts, joints, root, tex };
+  const rootPos = new Float32Array(buf, (6890 * 3 + 24 * 3) * 4, 3);
+  const rootRota = new Float32Array(buf, (6890 * 3 + 24 * 3 + 3) * 4, 3);
+  const entry = { verts, joints, rootPos, rootRota, tex };
   frameCache.set(i, entry);
   return entry;
 }
@@ -379,8 +386,43 @@ async function applyFrame(i) {
   bgFar.material.needsUpdate = true;
   bgTex = f.tex;
 
+  // SMPL root pos/rota — also rotated about camera -Z, then displayed.
+  const [rpx, rpy] = rot(f.rootPos[0], f.rootPos[1]);
+  const rotatedRootPos = [rpx, rpy, f.rootPos[2]];
+  // Compose camera-out rotation onto the root axis-angle.
+  // Axis-angle (vec, magnitude=angle) → quaternion → premultiply → axis-angle.
+  const rrAngle = Math.hypot(f.rootRota[0], f.rootRota[1], f.rootRota[2]);
+  const qRoot = new THREE.Quaternion();
+  if (rrAngle > 1e-9) {
+    qRoot.setFromAxisAngle(
+      new THREE.Vector3(f.rootRota[0] / rrAngle, f.rootRota[1] / rrAngle, f.rootRota[2] / rrAngle),
+      rrAngle);
+  }
+  // CW rotation about camera-out (-Z world): rotation axis is +Z (camera out
+  // is -Z, but data rotation is CW *seen by camera*, which is +Z in the
+  // right-handed world frame), angle = -dataRotCw·π/2.
+  const qCam = new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(0, 0, 1), -dataRotCw * Math.PI / 2);
+  const qComposed = qCam.clone().multiply(qRoot);
+  // back to axis-angle for display
+  const composedAxis = new THREE.Vector3();
+  let composedAngle = 2 * Math.acos(Math.min(1, Math.max(-1, qComposed.w)));
+  const sinHalf = Math.sqrt(Math.max(0, 1 - qComposed.w * qComposed.w));
+  if (sinHalf > 1e-9) {
+    composedAxis.set(qComposed.x / sinHalf, qComposed.y / sinHalf, qComposed.z / sinHalf);
+  } else {
+    composedAxis.set(1, 0, 0);
+    composedAngle = 0;
+  }
+  const rotatedRootRota = [
+    composedAxis.x * composedAngle,
+    composedAxis.y * composedAngle,
+    composedAxis.z * composedAngle,
+  ];
+
   layoutBg();
   renderAngles(rotJ);
+  syncRootPanel(rotatedRootPos, rotatedRootRota);
 }
 
 // Old setFrame is now a thin wrapper used by UI handlers.
@@ -437,6 +479,26 @@ function syncIntrinsicsPanel(K) {
   $('k-cx').value = K.cx;
   $('k-cy').value = K.cy;
 }
+
+// Effective K panel: read-only display of the rotated-image intrinsics.
+function syncEffectiveKPanel() {
+  if (!cam) return;
+  const ek = cam.effectiveK();
+  $('ek-fx').textContent = ek.fx.toFixed(1);
+  $('ek-fy').textContent = ek.fy.toFixed(1);
+  $('ek-cx').textContent = ek.cx.toFixed(1);
+  $('ek-cy').textContent = ek.cy.toFixed(1);
+  $('ek-wh').textContent = `${ek.image_w}×${ek.image_h}`;
+}
+
+// SMPL root state panel.
+function syncRootPanel(pos, rota) {
+  const fmt = v => v.map(x => x.toFixed(3)).join(', ');
+  const mag = Math.hypot(rota[0], rota[1], rota[2]);
+  $('r-pos').textContent = fmt(pos);
+  $('r-rot').textContent = fmt(rota);
+  $('r-rotmag').textContent = `${mag.toFixed(3)} rad / ${(mag * 180 / Math.PI).toFixed(1)}°`;
+}
 function readIntrinsicsPanel() {
   return {
     fx: parseFloat($('k-fx').value),
@@ -449,6 +511,8 @@ function readIntrinsicsPanel() {
   $(id).addEventListener('input', () => {
     if (!cam) return;
     cam.setIntrinsics(readIntrinsicsPanel());
+    syncEffectiveKPanel();
+    rebuildFrustum();
     layoutBg();
   });
 });
@@ -456,6 +520,8 @@ $('btn-k-reset').addEventListener('click', () => {
   if (!cam || !curSeq) return;
   cam.setIntrinsics(curSeq.meta.K);
   syncIntrinsicsPanel(cam.K);
+  syncEffectiveKPanel();
+  rebuildFrustum();
   layoutBg();
 });
 
@@ -478,8 +544,9 @@ function rotateData(delta) {
   dataRotCw = ((dataRotCw + delta) % 4 + 4) % 4;
   if (cam) {
     cam.setDataRotation(dataRotCw);
-    rebuildFrustum();           // 3D frustum wireframe also follows rotation
-    resize();                   // CSS aspect-ratio + canvas backing buffer
+    rebuildFrustum();
+    syncEffectiveKPanel();    // effective K depends on rotation
+    resize();
   }
   if (curN > 0) applyFrame(curFrame);
 }
