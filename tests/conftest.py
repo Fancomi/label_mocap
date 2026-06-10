@@ -28,3 +28,16 @@ def landscape_seq():
     if not LANDSCAPE_SEQ.exists():
         pytest.skip(f"landscape fixture seq missing: {LANDSCAPE_SEQ}")
     return LANDSCAPE_SEQ
+
+
+@pytest.fixture(scope="session")
+def smpl_and_faces():
+    """Shared SMPL model + faces array. Module loads ~80MB; cache for the whole session."""
+    import pickle
+    import numpy as np
+    from vis_tools import PySMPL
+    smpl = PySMPL()
+    pkl = ROLLOUT / "dep/vis/vis_tools/data/smpl/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl"
+    with open(pkl, "rb") as f:
+        faces = np.array(pickle.load(f, encoding="latin1")["f"], dtype=np.int32)
+    return smpl, faces

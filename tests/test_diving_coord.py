@@ -8,19 +8,6 @@ import numpy as np
 import pytest
 
 
-@pytest.fixture(scope="module")
-def smpl_and_faces():
-    import pickle
-    from vis_tools import PySMPL
-    smpl = PySMPL()
-    pkl = ("/root/paddlejob/workspace/env_run/penghaotian/sport_project/"
-           "rollout_lidar_mocap_badminton/dep/vis/vis_tools/data/smpl/"
-           "basicModel_neutral_lbs_10_207_0_v1.0.0.pkl")
-    with open(pkl, "rb") as f:
-        faces = np.array(pickle.load(f, encoding="latin1")["f"], dtype=np.int32)
-    return smpl, faces
-
-
 def test_default_coord_is_dst_unchanged(landscape_seq, smpl_and_faces):
     """coord defaults to 'dst' — vertices in dst coords have Y>0 (depth in front of camera).
 
