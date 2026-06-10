@@ -1,5 +1,5 @@
 import { createReadStream, statSync } from 'node:fs';
-import { resolve, join, extname } from 'node:path';
+import { resolve, join, extname, relative, isAbsolute } from 'node:path';
 import { createServer } from 'node:http';
 
 const args = new Map(process.argv.slice(2).map((v, i, a) => v.startsWith('--') ? [v, a[i + 1]] : []));
@@ -16,10 +16,17 @@ const types = new Map([
 ]);
 
 createServer((req, res) => {
-  const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+  let pathname;
+  try {
+    pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+  } catch {
+    res.writeHead(400).end('Bad request');
+    return;
+  }
   const rel = pathname === '/' ? '/index.html' : pathname;
   const file = resolve(join(root, rel));
-  if (!file.startsWith(root)) {
+  const rootRelativePath = relative(root, file);
+  if (rootRelativePath.startsWith('..') || isAbsolute(rootRelativePath)) {
     res.writeHead(403).end('Forbidden');
     return;
   }
