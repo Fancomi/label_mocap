@@ -9,3 +9,15 @@ test('app imports scene, worker, model loader, and sequence loader', async () =>
   assert.match(app, /from '\.\/data\/sequence_loader\.js'/);
   assert.match(app, /new Worker\(new URL\('\.\/smpl\/smpl_worker\.js'/);
 });
+
+test('scene applies camera principal point view offsets', async () => {
+  const scene = await readFile(new URL('../src/viewer/scene.js', import.meta.url), 'utf8');
+  assert.match(scene, /viewOffsetForCamera/);
+  assert.match(scene, /\.setViewOffset\(/);
+});
+
+test('app ignores stale worker frame results', async () => {
+  const app = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(app, /\?\?\s*playback\.frame/);
+  assert.match(app, /if \(!pendingFrames\.has\(msg\.requestId\)\)\s*{\s*return;\s*}/s);
+});

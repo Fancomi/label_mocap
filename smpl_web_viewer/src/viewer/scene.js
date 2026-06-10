@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { verticalFovDeg } from './camera_modes.js';
+import { verticalFovDeg, viewOffsetForCamera } from './camera_modes.js';
 
 function copyToPositionAttribute(geometry, values, itemSize) {
   const current = geometry.getAttribute('position');
@@ -100,8 +100,19 @@ export class SmplScene {
       return;
     }
 
-    this.camera.fov = verticalFovDeg(sequence.image.height, sequence.camera.fy);
-    this.camera.aspect = sequence.image.width / sequence.image.height;
+    const { image, camera } = sequence;
+    const view = viewOffsetForCamera(image.width, image.height, camera);
+
+    this.camera.fov = verticalFovDeg(image.height, camera.fy);
+    this.camera.aspect = image.width / image.height;
+    this.camera.setViewOffset(
+      view.fullWidth,
+      view.fullHeight,
+      view.x,
+      view.y,
+      view.width,
+      view.height
+    );
     this.camera.position.set(0, 0, 0);
     this.camera.rotation.set(0, 0, 0);
     this.camera.lookAt(0, 0, -1);
@@ -116,7 +127,9 @@ export class SmplScene {
     const width = Math.max(1, Math.floor(rect.width));
     const height = Math.max(1, Math.floor(rect.height));
     this.renderer.setSize(width, height, false);
-    this.camera.aspect = width / height;
+    if (!this.camera.view?.enabled) {
+      this.camera.aspect = width / height;
+    }
     this.camera.updateProjectionMatrix();
   }
 

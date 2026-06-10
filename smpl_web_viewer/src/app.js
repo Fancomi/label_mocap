@@ -40,7 +40,10 @@ worker.addEventListener('message', (event) => {
   }
 
   if (msg.type === 'frameResult') {
-    const frameIndex = pendingFrames.get(msg.requestId) ?? playback.frame;
+    if (!pendingFrames.has(msg.requestId)) {
+      return;
+    }
+    const frameIndex = pendingFrames.get(msg.requestId);
     pendingFrames.delete(msg.requestId);
     scene.updateFrame(new Float32Array(msg.vertices), new Float32Array(msg.joints));
     setStatus(frameLabel(frameIndex, msg.ms));
