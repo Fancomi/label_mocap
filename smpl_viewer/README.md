@@ -2,6 +2,8 @@
 
 HTML observer for diving SMPL sequences. One PerspectiveCamera, slerps between 3D-orbit and 2D-aligned views. Backend runs SMPL forward in source coordinates and ships binary frame data.
 
+**Self-contained.** SMPL model files (40 MB total) are stored via Git LFS in `_data/smpl/`. The Python SMPL forward (`pysmpl.py` + `_smpl_lib/SMPL.py` + `_smpl_lib/lbs.py`) and the diving-data loader (`diving_data.py`) are vendored — no `rollout_lidar_mocap_badminton` dependency.
+
 ## Setup
 
 All commands assume:
@@ -73,8 +75,10 @@ $PY -m pytest
 - **Three.js 404 in browser console** — the `/smpl_viewer/<path>` route
   serves `vendor/three.module.js`. Confirm it returns 200 with `curl -I
   http://localhost:5173/smpl_viewer/vendor/three.module.js`.
-- **`pytest` cannot import `data_convert`** — `tests/conftest.py` injects
-  the rollout repo path; if you renamed it, update `ROLLOUT` there.
+- **SMPL model files missing** — `_data/smpl/*.pkl` and `*.npy` are tracked
+  via Git LFS. After cloning fresh, run `git lfs install && git lfs pull`.
+- **`pytest` cannot find `smpl_viewer` module** — `tests/conftest.py` adds
+  the repo root to `sys.path`. Run pytest from the repo root.
 
 ## Architecture cheat sheet
 

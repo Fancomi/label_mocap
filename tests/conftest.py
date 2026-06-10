@@ -2,15 +2,11 @@ import sys
 from pathlib import Path
 import pytest
 
-ROLLOUT = Path("/root/paddlejob/workspace/env_run/penghaotian/sport_project/rollout_lidar_mocap_badminton")
 DATA_ROOT = Path("/root/paddlejob/workspace/env_run/penghaotian/sport_project/dataset/diving/raw")
-
-# Make rollout repo importable (for vis_tools + data_convert)
-sys.path.insert(0, str(ROLLOUT / "dep" / "vis"))
-sys.path.insert(0, str(ROLLOUT))
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Make this repo importable (for smpl_viewer)
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(REPO_ROOT))
 
 PORTRAIT_SEQ = DATA_ROOT / "10m" / "TiaoShui_a_male_5500_597"
 LANDSCAPE_SEQ = DATA_ROOT / "olympic" / "a_famale_70"
@@ -35,9 +31,9 @@ def smpl_and_faces():
     """Shared SMPL model + faces array. Module loads ~80MB; cache for the whole session."""
     import pickle
     import numpy as np
-    from vis_tools import PySMPL
+    from smpl_viewer.pysmpl import PySMPL
     smpl = PySMPL()
-    pkl = ROLLOUT / "dep/vis/vis_tools/data/smpl/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl"
+    pkl = REPO_ROOT / "smpl_viewer/_data/smpl/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl"
     with open(pkl, "rb") as f:
         faces = np.array(pickle.load(f, encoding="latin1")["f"], dtype=np.int32)
     return smpl, faces

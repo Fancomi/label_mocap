@@ -99,13 +99,16 @@ def test_threejs_projection_matches_for_smpl_frame0(landscape_seq, smpl_and_face
     """End-to-end: SMPL frame-0 verts project through both pipelines to the
     same pixels (max diff < 0.01 px on all 6890 vertices).
     """
-    from data_convert.diving_convert import process_diving_sequence, find_seq_root, FX, FY, CX, CY
+    from smpl_viewer.diving_data import (
+        find_seq_root, load_smpl_params, smpl_forward_batch, FX, FY, CX, CY,
+    )
     from smpl_viewer.projection import project_src
 
-    smpl, faces = smpl_and_faces
+    smpl, _ = smpl_and_faces
     a1 = find_seq_root(str(landscape_seq))
-    out = process_diving_sequence(a1, smpl, faces, coord="src")
-    verts = out["vertices"][0]   # (6890, 3)
+    root_rota, root_pos, body_23, _ = load_smpl_params(a1)
+    verts_all, _ = smpl_forward_batch(smpl, root_rota[:1], body_23[:1], root_pos[:1])
+    verts = verts_all[0]   # (6890, 3)
 
     W, H = 1920, 1080
     u_src, v_src = project_src(verts, FX, FY, CX, CY)

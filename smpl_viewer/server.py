@@ -3,31 +3,28 @@
 Run:
     python label_mocap/smpl_viewer/server.py \
         --raw-root /path/to/dataset/diving/raw --port 5173
+
+Self-contained — no rollout_lidar_mocap_badminton dependency. SMPL forward
+lives in smpl_viewer.pysmpl.PySMPL; the diving raw-data loader lives in
+smpl_viewer.diving_data.
 """
 import argparse
 import logging
-import sys
+import pickle
 import threading
 from pathlib import Path
-
-import pickle
 
 import cv2
 import numpy as np
 from flask import Flask, Response, abort, jsonify, send_file, send_from_directory, request
 
-ROLLOUT = Path("/root/paddlejob/workspace/env_run/penghaotian/sport_project/rollout_lidar_mocap_badminton")
-sys.path.insert(0, str(ROLLOUT / "dep" / "vis"))
-sys.path.insert(0, str(ROLLOUT))
-
-from data_convert.diving_convert import (  # noqa: E402
+from smpl_viewer.diving_data import (
     load_smpl_params, detect_orientation, find_seq_root, FX, FY, CX, CY,
-    smpl_forward_batch,  # noqa: F401
 )
-from vis_tools import PySMPL  # noqa: E402
+from smpl_viewer.pysmpl import PySMPL
 
 VIEWER_DIR = Path(__file__).resolve().parent
-SMPL_PKL = ROLLOUT / "dep/vis/vis_tools/data/smpl/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl"
+SMPL_PKL = VIEWER_DIR / "_data/smpl/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl"
 SMPL_KP_COUNT = 24
 
 

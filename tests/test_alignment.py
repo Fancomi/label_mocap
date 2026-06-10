@@ -31,11 +31,14 @@ def test_project_rejects_positive_z():
 
 def test_smpl_first_frame_lands_in_image_landscape(landscape_seq, smpl_and_faces):
     """End-to-end: src-forward verts of frame 0 project inside [0,1920)x[0,1080)."""
-    from data_convert.diving_convert import process_diving_sequence, find_seq_root, FX, FY, CX, CY
+    from smpl_viewer.diving_data import (
+        find_seq_root, load_smpl_params, smpl_forward_batch, FX, FY, CX, CY,
+    )
     from smpl_viewer.projection import project_src
-    smpl, faces = smpl_and_faces
+    smpl, _ = smpl_and_faces
     a1 = find_seq_root(str(landscape_seq))
-    out = process_diving_sequence(a1, smpl, faces, coord="src")
-    u, v = project_src(out["vertices"][0], FX, FY, CX, CY)
+    root_rota, root_pos, body_23, _ = load_smpl_params(a1)
+    verts, _ = smpl_forward_batch(smpl, root_rota[:1], body_23[:1], root_pos[:1])
+    u, v = project_src(verts[0], FX, FY, CX, CY)
     inside = ((u >= 0) & (u < 1920) & (v >= 0) & (v < 1080)).mean()
     assert inside > 0.9, f"only {inside*100:.1f}% verts project inside image"

@@ -1,7 +1,7 @@
 """CLI: render SMPL src-coord projection on top of raw images for visual GT.
 
 Usage:
-    python label_mocap/smpl_viewer/alignment_check.py \
+    python -m smpl_viewer.alignment_check \
        --raw-root /path/to/dataset/diving/raw \
        --seq 10m/TiaoShui_a_male_5500_597 \
        --frames 0,300,596 \
@@ -15,16 +15,17 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-ROLLOUT = Path("/root/paddlejob/workspace/env_run/penghaotian/sport_project/rollout_lidar_mocap_badminton")
-sys.path.insert(0, str(ROLLOUT / "dep" / "vis"))
-sys.path.insert(0, str(ROLLOUT))
+# Allow `python label_mocap/smpl_viewer/alignment_check.py` (run-as-script)
+# in addition to `python -m smpl_viewer.alignment_check`.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from data_convert.diving_convert import process_diving_sequence, find_seq_root, FX, FY, CX, CY  # noqa: E402
-from vis_tools import PySMPL  # noqa: E402
+from smpl_viewer.diving_data import (  # noqa: E402
+    find_seq_root, load_smpl_params, smpl_forward_batch, FX, FY, CX, CY,
+)
+from smpl_viewer.pysmpl import PySMPL  # noqa: E402
 from smpl_viewer.projection import project_src  # noqa: E402
 
-SMPL_PKL = ROLLOUT / "dep/vis/vis_tools/data/smpl/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl"
+SMPL_PKL = Path(__file__).resolve().parent / "_data/smpl/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl"
 
 
 def main():
@@ -40,12 +41,13 @@ def main():
 
     smpl = PySMPL()
     with open(SMPL_PKL, "rb") as f:
-        faces = np.array(pickle.load(f, encoding="latin1")["f"], dtype=np.int32)
+        # We don't actually need faces here, but loading the pkl proves the
+        # data path resolves; the projection only uses verts.
+        pickle.load(f, encoding="latin1")
 
-    print(f"Forward SMPL (src coords): {args.seq}")
-    out = process_diving_sequence(a1, smpl, faces, coord="src")
-    verts = out["vertices"]
-    n = out["n_frames"]
+    root_rota, root_pos, body_23, n = load_smpl_params(a1)
+    print(f"Forward SMPL (src coords): {args.seq} ({n} frames)")
+    verts, _ = smpl_forward_batch(smpl, root_rota, body_23, root_pos)
 
     img_dir = Path(a1) / "images"
     img_files = sorted(img_dir.glob("*.jpg"))
