@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 from pathlib import Path
 
 
@@ -7,12 +8,33 @@ def image_name(pattern, frame):
     return pattern % frame
 
 
+def _require_finite_number(value, key, frame, index):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"record frame {frame}: {key}[{index}] must be a finite number")
+    value = float(value)
+    if not math.isfinite(value):
+        raise ValueError(f"record frame {frame}: {key}[{index}] must be finite")
+    return value
+
+
 def _require_len(record, key, n):
     value = record.get(key)
     if not isinstance(value, list) or len(value) != n:
         frame = record.get("frame", "<unknown>")
         raise ValueError(f"record frame {frame}: {key} must be a list of length {n}")
-    return [float(x) for x in value]
+    frame = record.get("frame", "<unknown>")
+    return [_require_finite_number(x, key, frame, i) for i, x in enumerate(value)]
+
+
+def _require_frame(record):
+    value = record.get("frame")
+    if isinstance(value, bool):
+        raise ValueError("frame must be an integer")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return int(value)
+    raise ValueError("frame must be an integer")
 
 
 def convert_records(name, records, image_base_url, fps=30, width=1920, height=1080):
@@ -20,7 +42,7 @@ def convert_records(name, records, image_base_url, fps=30, width=1920, height=10
     for record in records:
         frames.append(
             {
-                "frame": int(record["frame"]),
+                "frame": _require_frame(record),
                 "root_pos": _require_len(record, "root_pos", 3),
                 "root_rota": _require_len(record, "root_rota", 3),
                 "body_pose": _require_len(record, "body_pose", 63),

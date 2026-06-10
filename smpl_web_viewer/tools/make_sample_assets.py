@@ -4,9 +4,9 @@ import shutil
 from pathlib import Path
 
 try:
-    from convert_sequence import convert_records
+    from .convert_sequence import convert_records
 except ImportError:
-    from tools.convert_sequence import convert_records
+    from convert_sequence import convert_records
 
 
 def _load_records(path):
@@ -14,10 +14,16 @@ def _load_records(path):
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(
+        description="Build sample SMPL sequence JSON. Images are not copied by default.",
+    )
     ap.add_argument("--source", required=True, type=Path)
     ap.add_argument("--out", default="smpl_web_viewer/public/samples/a_famale_224", type=Path)
-    ap.add_argument("--copy-images", action="store_true")
+    ap.add_argument(
+        "--copy-images",
+        action="store_true",
+        help="Copy source images into the output. Default: do not copy images.",
+    )
     args = ap.parse_args()
 
     manifest = {"schema": "smpl-web-sample-manifest-v1", "sequences": []}
@@ -33,7 +39,7 @@ def main():
             sequence = convert_records(
                 f"a_famale_224/{actor}",
                 _load_records(pose_path),
-                f"./{actor}/images/",
+                "./images/",
             )
             (seq_dir / "sequence.json").write_text(
                 json.dumps(sequence, indent=2),

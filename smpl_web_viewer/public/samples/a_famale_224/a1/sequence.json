@@ -4,7 +4,7 @@
   "fps": 30,
   "image": {
     "type": "image_sequence",
-    "baseUrl": "./a1/images/",
+    "baseUrl": "./images/",
     "pattern": "%04d.jpg",
     "width": 1920,
     "height": 1080
