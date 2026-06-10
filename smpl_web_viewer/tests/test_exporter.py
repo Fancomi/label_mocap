@@ -1,10 +1,14 @@
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
+from tools import export_smpl_model
 from tools.export_smpl_model import add_array, write_asset
 
 
@@ -16,14 +20,33 @@ class ExporterTest(unittest.TestCase):
 
         add_array(meta, f32, i32, "v_template", np.array([[1, 2, 3]], dtype=np.float32))
         add_array(meta, f32, i32, "faces", np.array([[0, 1, 2]], dtype=np.int32))
+        add_array(meta, f32, i32, "weights", np.array([[4, 5]], dtype=np.float64))
+        add_array(meta, f32, i32, "parents", np.array([-1, 0, 1, 2], dtype=np.int64))
 
         self.assertEqual(meta["arrays"]["v_template"]["offset"], 0)
         self.assertEqual(meta["arrays"]["v_template"]["shape"], [1, 3])
         self.assertEqual(meta["arrays"]["v_template"]["dtype"], "float32")
-        self.assertEqual(len(f32), 12)
+        self.assertEqual(meta["arrays"]["v_template"]["length"], 3)
+        self.assertEqual(meta["arrays"]["v_template"]["bin"], "smpl_neutral.f32.bin")
         self.assertEqual(meta["arrays"]["faces"]["offset"], 0)
         self.assertEqual(meta["arrays"]["faces"]["dtype"], "int32")
-        self.assertEqual(len(i32), 12)
+        self.assertEqual(meta["arrays"]["faces"]["length"], 3)
+        self.assertEqual(meta["arrays"]["faces"]["bin"], "smpl_neutral.i32.bin")
+        self.assertEqual(meta["arrays"]["weights"]["offset"], 12)
+        self.assertEqual(meta["arrays"]["weights"]["length"], 2)
+        self.assertEqual(meta["arrays"]["parents"]["offset"], 12)
+        self.assertEqual(meta["arrays"]["parents"]["length"], 4)
+        self.assertEqual(len(f32), 20)
+        self.assertEqual(len(i32), 28)
+        self.assertEqual(
+            bytes(f32),
+            b"\x00\x00\x80?\x00\x00\x00@\x00\x00@@\x00\x00\x80@\x00\x00\xa0@",
+        )
+        self.assertEqual(
+            bytes(i32),
+            b"\x00\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00"
+            b"\xff\xff\xff\xff\x00\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00",
+        )
 
     def test_write_asset_outputs_meta_and_bins(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -42,6 +65,59 @@ class ExporterTest(unittest.TestCase):
             self.assertEqual(meta["schema"], "smpl-web-model-v1")
             self.assertTrue((out / "smpl_neutral.f32.bin").exists())
             self.assertTrue((out / "smpl_neutral.i32.bin").exists())
+
+    def test_dense_returns_ndarray_input_without_scipy(self):
+        arr = np.array([[1, 2], [3, 4]], dtype=np.float32)
+
+        dense = export_smpl_model._dense(arr)
+
+        self.assertIs(dense, arr)
+
+    def test_cli_reports_expected_errors_without_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing.pkl"
+            stderr = io.StringIO()
+
+            with patch(
+                "sys.argv",
+                [
+                    "export_smpl_model.py",
+                    "--pkl",
+                    str(missing),
+                    "--out",
+                    str(Path(tmp) / "models"),
+                ],
+            ):
+                with redirect_stderr(stderr), self.assertRaises(SystemExit) as cm:
+                    export_smpl_model.main()
+
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("error:", stderr.getvalue())
+        self.assertIn("missing.pkl", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_cli_reports_empty_pickle_without_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            empty_pkl = Path(tmp) / "empty.pkl"
+            empty_pkl.write_bytes(b"")
+            stderr = io.StringIO()
+
+            with patch(
+                "sys.argv",
+                [
+                    "export_smpl_model.py",
+                    "--pkl",
+                    str(empty_pkl),
+                    "--out",
+                    str(Path(tmp) / "models"),
+                ],
+            ):
+                with redirect_stderr(stderr), self.assertRaises(SystemExit) as cm:
+                    export_smpl_model.main()
+
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("error:", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
 
 
 if __name__ == "__main__":

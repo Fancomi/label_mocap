@@ -79,15 +79,26 @@ def load_smpl_pkl(path):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
         "--pkl",
         default="smpl_viewer/_data/smpl/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl",
     )
-    parser.add_argument("--out", default="smpl_web_viewer/public/models")
-    args = parser.parse_args()
+    ap.add_argument("--out", default="smpl_web_viewer/public/models")
+    args = ap.parse_args()
 
-    write_asset(Path(args.out), load_smpl_pkl(args.pkl))
+    try:
+        write_asset(Path(args.out), load_smpl_pkl(args.pkl))
+    except (
+        OSError,
+        KeyError,
+        pickle.UnpicklingError,
+        EOFError,
+        AttributeError,
+        ValueError,
+        ModuleNotFoundError,
+    ) as exc:
+        ap.error(str(exc))
 
 
 if __name__ == "__main__":
