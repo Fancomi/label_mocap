@@ -140,6 +140,11 @@ def create_app(raw_root: Path):
     def static_js(filename):
         return send_from_directory(VIEWER_DIR, filename + ".js")
 
+    @app.route("/smpl_viewer/<path:filename>")
+    def static_smpl_viewer(filename):
+        # Importmap and other absolute /smpl_viewer/<path> requests.
+        return send_from_directory(VIEWER_DIR, filename)
+
     @app.route("/seqs")
     def list_seqs():
         refresh = request.args.get("refresh") == "1"

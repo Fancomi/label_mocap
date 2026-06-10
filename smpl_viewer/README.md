@@ -23,6 +23,11 @@ Open <http://localhost:5173/>. Pick a sequence from the dropdown.
 
 ## Validate alignment
 
+The fully-automated gate is `tests/test_camera_math.py` — it proves the
+Three.js camera setup reproduces `project_src` algebraically. Run
+`$PY -m pytest tests/test_camera_math.py -v`. The browser-based visual
+check below is a future-manual sanity step.
+
 1. Generate ground truth overlays (Python projection):
 
    ```bash
