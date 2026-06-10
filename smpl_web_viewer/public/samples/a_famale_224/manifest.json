@@ -1,0 +1,21 @@
+{
+  "schema": "smpl-web-sample-manifest-v1",
+  "sequences": [
+    {
+      "name": "a1",
+      "url": "./a1/sequence.json"
+    },
+    {
+      "name": "a2",
+      "url": "./a2/sequence.json"
+    },
+    {
+      "name": "a3",
+      "url": "./a3/sequence.json"
+    },
+    {
+      "name": "a4",
+      "url": "./a4/sequence.json"
+    }
+  ]
+}
