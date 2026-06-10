@@ -4,15 +4,98 @@
 <meta charset="UTF-8">
 <title>SMPL Viewer</title>
 <style>
-  html, body { margin:0; padding:0; height:100%; background:#111; color:#eee; font-family:monospace; overflow:hidden; }
-  #canvas-container { position:absolute; inset:0; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; background:#111; color:#eee; font-family:monospace; overflow:hidden; }
+  body { display:flex; }
+  #canvas-container { position:relative; flex:1; }
   canvas { display:block; width:100%; height:100%; }
-  #status { position:absolute; top:10px; left:10px; background:rgba(0,0,0,0.6); padding:6px 10px; font-size:12px; }
+  #status { position:absolute; top:8px; left:8px; background:rgba(0,0,0,0.55);
+            padding:5px 9px; font-size:11px; color:#aaa; pointer-events:none; }
+  #angle-panel { position:absolute; top:8px; right:8px; background:rgba(0,0,0,0.7);
+                 border:1px solid #333; border-radius:4px; padding:8px 10px;
+                 font-size:11px; line-height:1.6; min-width:160px; pointer-events:none; }
+  #angle-panel h3 { color:#7df; font-size:11px; margin-bottom:3px;
+                    border-bottom:1px solid #333; padding-bottom:2px; }
+  .ar { display:flex; justify-content:space-between; gap:10px; }
+  .ar span:first-child { color:#999; }
+  .ar span:last-child { color:#ffa; }
+
+  #sidebar { width:260px; background:#1a1a1a; border-left:1px solid #333;
+             display:flex; flex-direction:column; padding:10px; gap:10px; overflow-y:auto; }
+  #sidebar h2 { font-size:12px; color:#7df; border-bottom:1px solid #333; padding-bottom:4px; }
+  .g { display:flex; flex-direction:column; gap:4px; }
+  .g > label { font-size:10px; color:#888; }
+  .row { display:flex; gap:5px; }
+  button, select {
+    flex:1; padding:5px 8px; background:#2a2a2a; border:1px solid #444;
+    color:#eee; border-radius:3px; font:inherit; cursor:pointer;
+  }
+  button:hover, select:hover { background:#3a3a3a; }
+  button.on { background:#0066cc; border-color:#0088ff; }
+  input[type=range] { width:100%; accent-color:#0088ff; }
+  #frame-info { font-size:10px; color:#666; text-align:right; }
 </style>
 </head>
 <body>
-<div id="canvas-container"><canvas id="c"></canvas></div>
-<div id="status">loading…</div>
+<div id="canvas-container">
+  <canvas id="c"></canvas>
+  <div id="status">loading…</div>
+  <div id="angle-panel"><h3>Joint Angles</h3><div id="angle-list"></div></div>
+</div>
+<div id="sidebar">
+  <h2>SMPL Viewer</h2>
+
+  <div class="g">
+    <label>序列</label>
+    <select id="seq-select"></select>
+  </div>
+
+  <div class="g">
+    <label>相机模式</label>
+    <div class="row">
+      <button id="btn-mode-3d" class="on">3D 自由</button>
+      <button id="btn-mode-2d">2D 对齐</button>
+    </div>
+  </div>
+
+  <div class="g">
+    <label>播放</label>
+    <div class="row">
+      <button id="btn-play">▶ 播放</button>
+      <button id="btn-prev" style="flex:0;padding:5px 9px">◀</button>
+      <button id="btn-next" style="flex:0;padding:5px 9px">▶|</button>
+    </div>
+  </div>
+
+  <div class="g">
+    <label>帧</label>
+    <input type="range" id="frame-slider" min="0" step="1" value="0">
+    <div id="frame-info">— / —</div>
+  </div>
+
+  <div class="g">
+    <label>速度</label>
+    <div class="row" style="align-items:center">
+      <input type="range" id="speed-slider" min="1" max="60" value="24" step="1">
+      <span id="speed-val" style="color:#ffa;min-width:46px;text-align:right">24 fps</span>
+    </div>
+  </div>
+
+  <div class="g">
+    <label>显示</label>
+    <div class="row">
+      <button id="btn-mesh" class="on">网格</button>
+      <button id="btn-points" class="on">关键点</button>
+      <button id="btn-bones" class="on">骨骼</button>
+    </div>
+    <div class="row">
+      <button id="btn-grid" class="on">底网</button>
+      <button id="btn-axes">轴</button>
+      <button id="btn-bg" class="on">底图</button>
+    </div>
+  </div>
+</div>
+
 <script type="importmap">
 { "imports": {
     "three": "/smpl_viewer/vendor/three.module.js",
