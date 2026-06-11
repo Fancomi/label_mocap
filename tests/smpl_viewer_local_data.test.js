@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
 import {
@@ -46,4 +47,10 @@ test('detectOrientation mirrors legacy diving heuristic', () => {
 test('sequenceLabel matches legacy src/name display', () => {
   assert.equal(sequenceLabel({ src: '10m', name: 'abc', n_frames: 12, portrait: true }), '10m/abc (12f, portrait)');
   assert.equal(sequenceLabel({ src: '10m', name: 'abc', n_frames: 12, portrait: false }), '10m/abc (12f)');
+});
+
+test('viewer html loads viewer module from smpl_viewer path', async () => {
+  const html = await readFile(new URL('../smpl_viewer/viewer.html', import.meta.url), 'utf8');
+  assert.match(html, /src="\/smpl_viewer\/viewer\.js"/);
+  assert.doesNotMatch(html, /src="\/viewer\.js"/);
 });
