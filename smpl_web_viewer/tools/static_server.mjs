@@ -25,6 +25,10 @@ createServer((req, res) => {
     res.writeHead(400).end('Bad request');
     return;
   }
+  if (pathname === '/favicon.ico') {
+    res.writeHead(204).end();
+    return;
+  }
   const rel = pathname === '/' ? `/${indexFile}` : pathname;
   const file = resolve(join(root, rel));
   const rootRelativePath = relative(root, file);

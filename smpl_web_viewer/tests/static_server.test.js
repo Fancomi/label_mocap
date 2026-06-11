@@ -69,6 +69,22 @@ test('serves configurable index file at root', async () => {
   }
 });
 
+test('favicon request does not produce a not-found error', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'smpl-static-'));
+  const root = join(base, 'root');
+  await mkdir(root);
+  await writeFile(join(root, 'index.html'), 'root', 'utf8');
+
+  const server = await startStaticServer(root);
+  try {
+    const response = await httpGet(server.port, '/favicon.ico');
+    assert.equal(response.statusCode, 204);
+  } finally {
+    await server.stop();
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 async function startStaticServer(root, extraArgs = []) {
   const port = await getFreePort();
   const child = spawn(process.execPath, [serverScript, '--root', root, '--port', String(port), ...extraArgs], {
