@@ -1,6 +1,8 @@
 // label_mocap/smpl_viewer/viewer.js
 import * as THREE from 'three';
 import { CameraModes } from '/smpl_viewer/camera_modes.js';
+import { chooseLocalSequence, sequenceLabel } from '/smpl_viewer/local_data.js';
+import { loadModel } from '/smpl_web_viewer/src/smpl/smpl_model.js';
 
 // Shared schema with kps3d_viewer.html
 // BONES: [child_kp_idx, parent_kp_idx, group]
@@ -163,22 +165,51 @@ let lastTickTs = 0;
 let accT = 0;
 let seqEpoch = 0;          // bumped on every selectSeq; stale loads bail
 let frameBusy = false;     // gate for tick() to avoid concurrent setFrame
+let smplModel = null;
+let smplWorker = null;
+let requestId = 0;
 
-async function loadSeqList() {
-  const resp = await fetch('/seqs');
-  const j = await resp.json();
-  const sel = $('seq-select');
-  sel.innerHTML = '';
-  j.seqs.forEach(s => {
-    const o = document.createElement('option');
-    o.value = `${s.src}/${s.name}`;
-    o.textContent = `${s.src}/${s.name} (${s.n_frames}f${s.portrait ? ', portrait' : ''})`;
-    sel.appendChild(o);
-  });
-  return j.seqs;
+async function ensureSmplWorker() {
+  if (!smplModel) {
+    smplModel = await loadModel('/smpl_web_viewer/public/models/smpl_neutral.meta.json');
+  }
+  if (!smplWorker) {
+    smplWorker = new Worker('/smpl_viewer/smpl_worker.js', { type: 'module' });
+    smplWorker.postMessage({ type: 'init', model: smplModel });
+  }
+  return smplWorker;
 }
 
-async function selectSeq(seqId) {
+function forwardFrame(frame) {
+  return new Promise(async (resolve, reject) => {
+    const worker = await ensureSmplWorker();
+    const id = ++requestId;
+    const onMessage = (event) => {
+      const msg = event.data;
+      if (msg.requestId !== id && msg.type !== 'ready') return;
+      if (msg.type === 'ready') return;
+      worker.removeEventListener('message', onMessage);
+      if (msg.type === 'error') {
+        reject(new Error(msg.message));
+        return;
+      }
+      resolve({
+        verts: new Float32Array(msg.vertices),
+        joints: new Float32Array(msg.joints),
+      });
+    };
+    worker.addEventListener('message', onMessage);
+    worker.postMessage({ type: 'frame', requestId: id, frame });
+  });
+}
+
+async function loadSeqList() {
+  const sel = $('seq-select');
+  sel.innerHTML = '';
+  return [];
+}
+
+async function selectSeq(seqOrId) {
   // Stop the play loop and bump epoch — any in-flight setFrame from prior
   // sequence will see a stale epoch and bail before mutating scene state.
   playing = false;
@@ -187,14 +218,16 @@ async function selectSeq(seqId) {
   seqEpoch++;
   const myEpoch = seqEpoch;
 
-  const [src, name] = seqId.split('/');
-  setStatus(`loading meta for ${seqId}…`);
-  const meta = await (await fetch(`/seq/${src}/${name}/meta`)).json();
+  const localSeq = typeof seqOrId === 'string' ? curSeq : seqOrId;
+  if (!localSeq) return;
+  const seqId = `${localSeq.src}/${localSeq.name}`;
+  setStatus(`loading ${seqId}…`);
+  const meta = localSeq.meta;
+  if (!smplModel) {
+    smplModel = await loadModel('/smpl_web_viewer/public/models/smpl_neutral.meta.json');
+  }
+  const faces = smplModel.faces;
   if (myEpoch !== seqEpoch) return;
-  setStatus(`forwarding SMPL (~10s on first call)…`);
-  const facesBuf = await (await fetch(meta.faces_url)).arrayBuffer();
-  if (myEpoch !== seqEpoch) return;
-  const faces = new Int32Array(facesBuf);
 
   if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); mesh = null; }
   if (bonesGroup) { scene.remove(bonesGroup); bonesGroup = null; }
@@ -206,7 +239,7 @@ async function selectSeq(seqId) {
   if (cam) { cam.controls.dispose(); cam = null; }
   frameCache.clear();
 
-  curSeq = { src, name, meta, faces };
+  curSeq = { ...localSeq, meta, faces };
   curN = meta.n_frames;
   curFrame = 0;
   dataRotCw = 0;     // reset rotation per-sequence
@@ -242,7 +275,7 @@ async function selectSeq(seqId) {
 
   // White skin + simple lighting (Lambert is cheap and looks fine here).
   const geom = new THREE.BufferGeometry();
-  geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6890 * 3), 3));
+  geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(smplModel.v_templateShape[0] * 3), 3));
   geom.setIndex(new THREE.BufferAttribute(new Uint32Array(faces), 1));
   geom.computeVertexNormals();
   mesh = new THREE.Mesh(geom, new THREE.MeshLambertMaterial({
@@ -299,25 +332,27 @@ async function loadFrame(i) {
   // Returns {verts, joints, root, tex} — fetched in parallel, cached.
   // Caller must handle epoch/staleness; this is a pure data fetch.
   if (frameCache.has(i)) return frameCache.get(i);
-  const { src, name } = curSeq;
   const myEpoch = seqEpoch;
 
-  const binP = fetch(`/seq/${src}/${name}/frame/${i}.bin`).then(r => r.arrayBuffer());
+  const frame = curSeq.frames[i];
+  const imageFile = await curSeq.images[i].getFile();
+  const imageUrl = URL.createObjectURL(imageFile);
   const texP = new Promise((resolve, reject) => {
     new THREE.TextureLoader().load(
-      `/seq/${src}/${name}/img/${i}.jpg`,
-      t => { t.colorSpace = THREE.SRGBColorSpace; resolve(t); },
-      undefined, reject);
+      imageUrl,
+      t => { URL.revokeObjectURL(imageUrl); t.colorSpace = THREE.SRGBColorSpace; resolve(t); },
+      undefined,
+      err => { URL.revokeObjectURL(imageUrl); reject(err); });
   });
-  const [buf, tex] = await Promise.all([binP, texP]);
+  const [smplOut, tex] = await Promise.all([forwardFrame(frame), texP]);
   if (myEpoch !== seqEpoch) {
     tex.dispose();
     throw new Error('stale-epoch');
   }
-  const verts = new Float32Array(buf, 0, 6890 * 3);
-  const joints = new Float32Array(buf, 6890 * 3 * 4, 24 * 3);
-  const rootPos = new Float32Array(buf, (6890 * 3 + 24 * 3) * 4, 3);
-  const rootRota = new Float32Array(buf, (6890 * 3 + 24 * 3 + 3) * 4, 3);
+  const verts = smplOut.verts;
+  const joints = smplOut.joints;
+  const rootPos = new Float32Array(frame.root_pos);
+  const rootRota = new Float32Array(frame.root_rota);
   const entry = { verts, joints, rootPos, rootRota, tex };
   frameCache.set(i, entry);
   return entry;
@@ -351,7 +386,7 @@ async function applyFrame(i) {
   // mesh verts (rotated, write into geometry buffer in place)
   const pos = mesh.geometry.attributes.position;
   const dst = pos.array;
-  for (let v = 0, vlen = 6890 * 3; v < vlen; v += 3) {
+  for (let v = 0, vlen = f.verts.length; v < vlen; v += 3) {
     const x = f.verts[v], y = f.verts[v + 1];
     const [rx, ry] = rot(x, y);
     dst[v] = rx; dst[v + 1] = ry; dst[v + 2] = f.verts[v + 2];
@@ -518,6 +553,22 @@ $('btn-k-reset').addEventListener('click', () => {
 
 // ── UI wiring ──────────────────────────────────────────────────────────────
 $('seq-select').addEventListener('change', e => selectSeq(e.target.value));
+$('btn-open-local').addEventListener('click', async () => {
+  try {
+    setStatus('select local a1 directory…');
+    const seq = await chooseLocalSequence();
+    const sel = $('seq-select');
+    sel.innerHTML = '';
+    const opt = document.createElement('option');
+    opt.value = `${seq.src}/${seq.name}`;
+    opt.textContent = sequenceLabel(seq);
+    sel.appendChild(opt);
+    sel.value = opt.value;
+    await selectSeq(seq);
+  } catch (err) {
+    setStatus(err instanceof Error ? err.message : String(err));
+  }
+});
 $('btn-mode-3d').addEventListener('click', () => { cam.switchTo('3d'); applyMode('3d'); });
 $('btn-mode-2d').addEventListener('click', () => { cam.switchTo('2d'); applyMode('2d'); });
 $('btn-play').addEventListener('click', () => {
@@ -649,21 +700,10 @@ async function tick(ts) {
   const seqs = await loadSeqList();
   resize();
   if (validate) {
-    if (validateSeq) {
-      $('seq-select').value = validateSeq;
-      await selectSeq(validateSeq);
-      // selectSeq already snaps to 2D and applies frame 0.
-      if (validateFrame !== 0) await applyFrame(validateFrame);
-      renderFrame();
-      const tag = `${validateSeq.replace('/', '_')}_f${String(validateFrame).padStart(4, '0')}`;
-      const a = document.createElement('a');
-      a.download = `viewer_${tag}.png`;
-      a.href = renderer.domElement.toDataURL('image/png');
-      a.click();
-      setStatus(`saved viewer_${tag}.png`);
-      return;
-    }
+    setStatus('validate mode requires selecting a local directory in the browser');
+    return;
   }
   if (seqs.length > 0) await selectSeq(seqs[0].src + '/' + seqs[0].name);
+  else setStatus('请选择本地 a1 目录开始');
   requestAnimationFrame(ts => { lastTickTs = ts; tick(ts); });
 })();

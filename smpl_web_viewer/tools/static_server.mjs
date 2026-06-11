@@ -5,6 +5,8 @@ import { createServer } from 'node:http';
 const args = new Map(process.argv.slice(2).map((v, i, a) => v.startsWith('--') ? [v, a[i + 1]] : []));
 const root = resolve(args.get('--root') ?? '.');
 const port = Number(args.get('--port') ?? 5174);
+const host = args.get('--host') ?? '127.0.0.1';
+const indexFile = args.get('--index') ?? 'index.html';
 const types = new Map([
   ['.html', 'text/html; charset=utf-8'],
   ['.js', 'text/javascript; charset=utf-8'],
@@ -23,7 +25,7 @@ createServer((req, res) => {
     res.writeHead(400).end('Bad request');
     return;
   }
-  const rel = pathname === '/' ? '/index.html' : pathname;
+  const rel = pathname === '/' ? `/${indexFile}` : pathname;
   const file = resolve(join(root, rel));
   const rootRelativePath = relative(root, file);
   if (rootRelativePath.startsWith('..') || isAbsolute(rootRelativePath)) {
@@ -38,6 +40,6 @@ createServer((req, res) => {
   } catch {
     res.writeHead(404).end('Not found');
   }
-}).listen(port, '127.0.0.1', () => {
-  console.log(`SMPL Web Viewer static server: http://127.0.0.1:${port}/`);
+}).listen(port, host, () => {
+  console.log(`SMPL Web Viewer static server: http://${host}:${port}/`);
 });

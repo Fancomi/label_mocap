@@ -52,9 +52,26 @@ test('malformed percent encoding returns client error without stopping server', 
   }
 });
 
-async function startStaticServer(root) {
+test('serves configurable index file at root', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'smpl-static-'));
+  const root = join(base, 'root');
+  await mkdir(join(root, 'smpl_viewer'), { recursive: true });
+  await writeFile(join(root, 'smpl_viewer', 'viewer.html'), 'viewer', 'utf8');
+
+  const server = await startStaticServer(root, ['--index', 'smpl_viewer/viewer.html']);
+  try {
+    const response = await httpGet(server.port, '/');
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body, 'viewer');
+  } finally {
+    await server.stop();
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+async function startStaticServer(root, extraArgs = []) {
   const port = await getFreePort();
-  const child = spawn(process.execPath, [serverScript, '--root', root, '--port', String(port)], {
+  const child = spawn(process.execPath, [serverScript, '--root', root, '--port', String(port), ...extraArgs], {
     stdio: ['ignore', 'pipe', 'pipe']
   });
 

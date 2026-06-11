@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一键启动 SMPL Viewer.
+# 一键启动 SMPL Viewer 静态版.
 # 用法:
 #   bash run.sh                # 默认 8901, 0.0.0.0
 #   bash run.sh 8765           # 自定义端口
@@ -9,17 +9,12 @@ set -euo pipefail
 PORT="${1:-8901}"
 HOST="${2:-0.0.0.0}"
 
-VENV="/root/paddlejob/workspace/env_run/penghaotian/envs/lidar"
-RAW_ROOT="/root/paddlejob/workspace/env_run/penghaotian/sport_project/dataset/diving/raw"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${HERE}/.." && pwd)"
 
-# shellcheck disable=SC1091
-source "${VENV}/bin/activate"
-
-# Run from repo root so `smpl_viewer.*` imports resolve.
 cd "${REPO_ROOT}"
-exec python3 -m smpl_viewer.server \
-  --raw-root "${RAW_ROOT}" \
+exec node smpl_web_viewer/tools/static_server.mjs \
+  --root "${REPO_ROOT}" \
   --port "${PORT}" \
-  --host "${HOST}"
+  --host "${HOST}" \
+  --index smpl_viewer/viewer.html
