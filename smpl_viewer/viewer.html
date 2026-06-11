@@ -76,6 +76,9 @@
   <div class="g">
     <label>序列</label>
     <button id="btn-open-local">选择本地 a1 目录</button>
+    <input id="local-dir-input" type="file" webkitdirectory directory multiple hidden>
+    <input id="local-json-input" type="file" accept=".json,application/json" hidden>
+    <input id="local-images-input" type="file" accept="image/jpeg" multiple hidden>
     <select id="seq-select"></select>
   </div>
 
@@ -163,11 +166,10 @@
 
 <script type="importmap">
 { "imports": {
-    "three": "/smpl_viewer/vendor/three.module.js",
-    "three/addons/controls/OrbitControls.js": "/smpl_viewer/vendor/OrbitControls.js",
-    "/smpl_web_viewer/": "/smpl_web_viewer/"
+    "three": "./vendor/three.module.js",
+    "three/addons/controls/OrbitControls.js": "./vendor/OrbitControls.js"
 } }
 </script>
-<script type="module" src="/smpl_viewer/viewer.js"></script>
+<script type="module" src="./viewer.js"></script>
 </body>
 </html>

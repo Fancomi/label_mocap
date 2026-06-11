@@ -19,8 +19,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(REPO_ROOT), **kwargs)
 
     def do_GET(self):
-        if self.path == "/":
-            self.path = "/smpl_viewer/viewer.html"
         return super().do_GET()
 
 

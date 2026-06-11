@@ -1,99 +1,69 @@
 # SMPL Viewer
 
-HTML observer for diving SMPL sequences. One PerspectiveCamera, slerps between 3D-orbit and 2D-aligned views. Backend runs SMPL forward in source coordinates and ships binary frame data.
+Browser-only SMPL viewer. The page loads SMPL model constants from this repo,
+then asks the user to select a local `a1` data directory in the browser. Runtime
+data stays local; there is no Python, Flask, torch, pickle, OpenCV, or network
+data API in the playback path.
 
-**Self-contained.** SMPL model files (40 MB total) are stored via Git LFS in `_data/smpl/`. The Python SMPL forward (`pysmpl.py` + `_smpl_lib/SMPL.py` + `_smpl_lib/lbs.py`) and the diving-data loader (`diving_data.py`) are vendored — no `rollout_lidar_mocap_badminton` dependency.
-
-## Setup
-
-All commands assume:
-
-```bash
-PY=/root/paddlejob/workspace/env_run/penghaotian/envs/lidar/bin/python
-cd /root/paddlejob/workspace/env_run/penghaotian/sport_project
-```
-
-## Run
+## Run Locally
 
 ```bash
-$PY label_mocap/smpl_viewer/server.py \
-  --raw-root /root/paddlejob/workspace/env_run/penghaotian/sport_project/dataset/diving/raw \
-  --port 5173
+bash smpl_viewer/run.sh
 ```
 
-Open <http://localhost:5173/>. Pick a sequence from the dropdown.
+Open <http://127.0.0.1:8902/>. The root page redirects to
+`smpl_viewer/viewer.html`.
 
-## Validate alignment
-
-The fully-automated gate is `tests/test_camera_math.py` — it proves the
-Three.js camera setup reproduces `project_src` algebraically. Run
-`$PY -m pytest tests/test_camera_math.py -v`. The browser-based visual
-check below is a future-manual sanity step.
-
-1. Generate ground truth overlays (Python projection):
-
-   ```bash
-   $PY label_mocap/smpl_viewer/alignment_check.py \
-     --raw-root /root/paddlejob/workspace/env_run/penghaotian/sport_project/dataset/diving/raw \
-     --seq 10m/TiaoShui_a_male_5500_597 \
-     --frames 0,300,596 \
-     --output /tmp/align_gt
-   ```
-
-2. In the viewer, append `?validate=1&seq=10m/TiaoShui_a_male_5500_597&frame=0` to the URL. The page auto-snaps a PNG download per the listed frames. Save them next to the GT files.
-
-3. Diff:
-
-   ```bash
-   $PY label_mocap/smpl_viewer/compare_alignment.py \
-     --gt-dir /tmp/align_gt \
-     --viewer-dir /tmp/align_viewer \
-     --max-px 2.0
-   ```
-
-   Exit 0 means mesh-edge offset < 2px on all frames.
-
-## Tests
+Optional arguments:
 
 ```bash
-$PY -m pytest
+bash smpl_viewer/run.sh 8765
+bash smpl_viewer/run.sh 8765 0.0.0.0
 ```
 
-## Troubleshooting
+## Use Data
 
-- **First frame request hangs ~10s** — first call to `/frame/0.bin` triggers a
-  whole-sequence SMPL forward in Python. Subsequent frames are <50ms (cache
-  hit). The cache lives in process memory until restart; ~50 MB per sequence.
-- **portrait sequence appears sideways in 2D mode** — this is expected. Raw
-  JPGs are unrotated (1920×1080), and the SMPL pose data is in the same
-  orientation. The algebraic alignment gate (`tests/test_camera_math.py`) is
-  still tight on the body silhouette. Future task (out of scope here): an
-  explicit display-rotate toggle so the user can flip the canvas 90° for
-  portrait sequences.
-- **`compare_alignment.py` reports > 2 px** — review the Task 5 Step 6
-  debug checklist in `docs/superpowers/plans/2026-06-09-smpl-viewer.md`.
-- **Three.js 404 in browser console** — the `/smpl_viewer/<path>` route
-  serves `vendor/three.module.js`. Confirm it returns 200 with `curl -I
-  http://localhost:5173/smpl_viewer/vendor/three.module.js`.
-- **SMPL model files missing** — `_data/smpl/*.pkl` and `*.npy` are tracked
-  via Git LFS. After cloning fresh, run `git lfs install && git lfs pull`.
-- **`pytest` cannot find `smpl_viewer` module** — `tests/conftest.py` adds
-  the repo root to `sys.path`. Run pytest from the repo root.
+Click `选择本地 a1 目录` and select a directory like:
 
-## Architecture cheat sheet
-
+```txt
+a_famale_224/a/a1
 ```
-Browser                              Flask server
-─────────                            ───────────
-viewer.html                          /                  → viewer.html
-  ├─ /viewer.js (ES module)          /viewer.js         → static
-  └─ importmap → /smpl_viewer/...    /smpl_viewer/<*>   → static
 
-viewer.js
-  ├─ fetch /seqs                     /seqs              → scan dataset
-  ├─ fetch /seq/<src>/<name>/meta    /seq/.../meta      → image dims + K
-  ├─ fetch faces.bin (one-shot)      /seq/.../faces.bin → SMPL faces (Int32)
-  ├─ fetch frame/<i>.bin (per-frame) /seq/.../frame/<i> → verts+joints+root
-  ├─ fetch img/<i>.jpg (per-frame)   /seq/.../img/<i>   → raw JPG
-  └─ camera_modes.js                 (no server side)
+The viewer reads:
+
+```txt
+json_results/player_0/player_0.json
+images/*.jpg
 ```
+
+From `player_0.json`, each annotation frame must provide:
+
+```txt
+root_pos
+root_rota
+body_pose
+betas
+frame or image_id
+```
+
+If a browser does not support directory selection, select `player_0.json` and
+the JPG frames together in the fallback file picker.
+
+## GitHub Pages
+
+The repository root `index.html` redirects to `smpl_viewer/viewer.html`, and
+the viewer uses relative module, worker, vendor, and model paths. This lets the
+same page work from a GitHub Pages project URL such as:
+
+```txt
+https://<user>.github.io/<repo>/smpl_viewer/viewer.html
+```
+
+The Web runtime model assets are stored as normal repo files under:
+
+```txt
+smpl_web_viewer/public/models/
+```
+
+Do not put these runtime model `.bin` files in Git LFS if the page is expected
+to run on GitHub Pages.

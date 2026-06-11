@@ -54,50 +54,87 @@ function isJpegName(name) {
   return /\.(jpe?g)$/i.test(name);
 }
 
-async function getFileHandle(dirHandle, pathParts) {
-  let current = dirHandle;
-  for (let i = 0; i < pathParts.length - 1; i++) {
-    current = await current.getDirectoryHandle(pathParts[i]);
-  }
-  return current.getFileHandle(pathParts[pathParts.length - 1]);
+function splitPath(path) {
+  return String(path).split('/').filter(Boolean);
 }
 
-async function readJson(fileHandle) {
-  const file = await fileHandle.getFile();
+function stripCommonA1Prefix(path) {
+  const parts = splitPath(path);
+  const jsonIdx = parts.findIndex((part, index) => (
+    part === 'json_results' && parts[index + 1] === 'player_0' && parts[index + 2] === 'player_0.json'
+  ));
+  if (jsonIdx >= 0) {
+    return parts.slice(jsonIdx).join('/');
+  }
+  const imagesIdx = parts.findIndex((part) => part === 'images');
+  if (imagesIdx >= 0) {
+    return parts.slice(imagesIdx).join('/');
+  }
+  return parts.join('/');
+}
+
+function fallbackPathForPlainFile(file) {
+  if (file.name === 'player_0.json') {
+    return 'json_results/player_0/player_0.json';
+  }
+  if (isJpegName(file.name)) {
+    return `images/${file.name}`;
+  }
+  return file.name;
+}
+
+async function readJsonFile(file) {
   return JSON.parse(await file.text());
 }
 
-async function readImageHandles(dirHandle) {
-  const imageDir = await dirHandle.getDirectoryHandle('images');
+function readImageFiles(filesByPath) {
   const entries = [];
-  for await (const [name, handle] of imageDir.entries()) {
-    if (handle.kind === 'file' && isJpegName(name)) {
-      entries.push([name, handle]);
+  for (const [path, file] of filesByPath.entries()) {
+    if (path.startsWith('images/') && isJpegName(path)) {
+      entries.push([path, file]);
     }
   }
   entries.sort(([a], [b]) => a.localeCompare(b));
-  return entries.map(([, handle]) => handle);
+  return entries.map(([, file]) => file);
 }
 
-export async function loadLocalA1Sequence(dirHandle, src = 'local') {
-  const jsonHandle = await getFileHandle(dirHandle, ['json_results', 'player_0', 'player_0.json']);
-  const data = await readJson(jsonHandle);
+function localSourceNameFromFiles(files) {
+  const first = files.find((file) => file.webkitRelativePath);
+  if (!first) {
+    return 'sequence';
+  }
+  const parts = splitPath(first.webkitRelativePath);
+  const jsonIdx = parts.findIndex((part, index) => (
+    part === 'json_results' && parts[index + 1] === 'player_0' && parts[index + 2] === 'player_0.json'
+  ));
+  if (jsonIdx > 0) {
+    return parts[jsonIdx - 1];
+  }
+  const imagesIdx = parts.findIndex((part) => part === 'images');
+  if (imagesIdx > 0) {
+    return parts[imagesIdx - 1];
+  }
+  return parts[0] ?? 'sequence';
+}
+
+function normalizeAnnotationsData(data) {
   const annotations = data.annotations ?? data.records;
   if (!Array.isArray(annotations) || !annotations.length) {
     throw new Error('player_0.json must contain non-empty annotations');
   }
+  return annotations.map((annotation, index) => normalizeAnnotationFrame(annotation, index));
+}
 
-  const frames = annotations.map((annotation, index) => normalizeAnnotationFrame(annotation, index));
-  const images = await readImageHandles(dirHandle);
-  const name = dirHandle.name || 'sequence';
+function sequenceFromFramesAndImages({ frames, images, name, src = 'local' }) {
+  const portrait = detectOrientation(frames.map((frame) => frame.root_pos));
   return {
     src,
     name,
     n_frames: frames.length,
-    portrait: detectOrientation(frames.map((frame) => frame.root_pos)),
+    portrait,
     meta: {
       n_frames: frames.length,
-      portrait: detectOrientation(frames.map((frame) => frame.root_pos)),
+      portrait,
       K: { fx: FX, fy: FY, cx: CX, cy: CY },
       image_w: 1920,
       image_h: 1080,
@@ -108,10 +145,53 @@ export async function loadLocalA1Sequence(dirHandle, src = 'local') {
   };
 }
 
-export async function chooseLocalSequence() {
-  if (!globalThis.showDirectoryPicker) {
-    throw new Error('当前浏览器不支持目录选择，请使用 Chromium 系浏览器打开本页');
+export async function loadLocalA1SequenceFromFileList(fileList, src = 'local') {
+  const files = Array.from(fileList ?? []);
+  if (!files.length) {
+    throw new Error('请选择 a1 目录');
   }
-  const dirHandle = await globalThis.showDirectoryPicker({ mode: 'read' });
-  return loadLocalA1Sequence(dirHandle);
+
+  const filesByPath = new Map();
+  for (const file of files) {
+    const rel = file.webkitRelativePath
+      ? stripCommonA1Prefix(file.webkitRelativePath)
+      : fallbackPathForPlainFile(file);
+    filesByPath.set(rel, file);
+  }
+
+  const jsonFile = filesByPath.get('json_results/player_0/player_0.json');
+  if (!jsonFile) {
+    throw new Error('未找到 json_results/player_0/player_0.json，请选择 a1 目录');
+  }
+
+  const frames = normalizeAnnotationsData(await readJsonFile(jsonFile));
+  const images = readImageFiles(filesByPath);
+  if (!images.length) {
+    throw new Error('未找到 images/*.jpg，请选择包含 images 的 a1 目录');
+  }
+  return sequenceFromFramesAndImages({
+    frames,
+    images,
+    name: localSourceNameFromFiles(files),
+    src,
+  });
+}
+
+export async function loadLocalA1SequenceFromFiles(jsonFile, imageFiles, src = 'local') {
+  if (!jsonFile) {
+    throw new Error('请选择 player_0.json');
+  }
+  const images = Array.from(imageFiles ?? [])
+    .filter((file) => isJpegName(file.name))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  if (!images.length) {
+    throw new Error('请选择 images/*.jpg');
+  }
+  const frames = normalizeAnnotationsData(await readJsonFile(jsonFile));
+  return sequenceFromFramesAndImages({
+    frames,
+    images,
+    name: 'sequence',
+    src,
+  });
 }

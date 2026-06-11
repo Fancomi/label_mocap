@@ -4,6 +4,8 @@ import { test } from 'node:test';
 
 import {
   detectOrientation,
+  loadLocalA1SequenceFromFileList,
+  loadLocalA1SequenceFromFiles,
   normalizeAnnotationFrame,
   sequenceLabel,
 } from '../smpl_viewer/local_data.js';
@@ -49,8 +51,65 @@ test('sequenceLabel matches legacy src/name display', () => {
   assert.equal(sequenceLabel({ src: '10m', name: 'abc', n_frames: 12, portrait: false }), '10m/abc (12f)');
 });
 
-test('viewer html loads viewer module from smpl_viewer path', async () => {
+test('viewer html uses relative paths for pages subdirectory hosting', async () => {
   const html = await readFile(new URL('../smpl_viewer/viewer.html', import.meta.url), 'utf8');
-  assert.match(html, /src="\/smpl_viewer\/viewer\.js"/);
+  assert.match(html, /src="\.\/viewer\.js"/);
+  assert.match(html, /"three": "\.\/vendor\/three\.module\.js"/);
   assert.doesNotMatch(html, /src="\/viewer\.js"/);
+  assert.doesNotMatch(html, /"\/smpl_viewer\//);
+  assert.doesNotMatch(html, /"\/smpl_web_viewer\//);
 });
+
+test('file-list loader reads selected a1 directory without directory handles', async () => {
+  const files = [
+    fakeFile('a1/json_results/player_0/player_0.json', JSON.stringify({
+      annotations: [validAnnotation({ image_id: 0 }), validAnnotation({ image_id: 1 })],
+    })),
+    fakeFile('a1/images/000001.jpg', 'jpg-1'),
+    fakeFile('a1/images/000002.jpg', 'jpg-2'),
+  ];
+
+  const seq = await loadLocalA1SequenceFromFileList(files);
+  assert.equal(seq.name, 'a1');
+  assert.equal(seq.n_frames, 2);
+  assert.equal(seq.images.length, 2);
+  assert.deepEqual(seq.frames.map((frame) => frame.frame), [0, 1]);
+});
+
+test('file-list loader accepts manually selected json and images', async () => {
+  const files = [
+    fakeFile('', JSON.stringify({ annotations: [validAnnotation({ image_id: 4 })] }), 'player_0.json'),
+    fakeFile('', 'jpg-1', '000001.jpg'),
+  ];
+
+  const seq = await loadLocalA1SequenceFromFileList(files);
+  assert.equal(seq.name, 'sequence');
+  assert.equal(seq.n_frames, 1);
+  assert.equal(seq.images.length, 1);
+  assert.equal(seq.frames[0].frame, 4);
+});
+
+test('separate-file loader accepts json and image selections', async () => {
+  const json = fakeFile('', JSON.stringify({ records: [validAnnotation({ image_id: 9 })] }), 'player_0.json');
+  const images = [
+    fakeFile('', 'jpg-2', '000002.jpg'),
+    fakeFile('', 'jpg-1', '000001.jpg'),
+    fakeFile('', 'ignore', 'notes.txt'),
+  ];
+
+  const seq = await loadLocalA1SequenceFromFiles(json, images);
+  assert.equal(seq.name, 'sequence');
+  assert.equal(seq.n_frames, 1);
+  assert.deepEqual(seq.images.map((file) => file.name), ['000001.jpg', '000002.jpg']);
+  assert.equal(seq.frames[0].frame, 9);
+});
+
+function fakeFile(path, text, name = path.split('/').at(-1)) {
+  return {
+    name,
+    webkitRelativePath: path,
+    async text() {
+      return text;
+    },
+  };
+}

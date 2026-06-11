@@ -69,6 +69,23 @@ test('serves configurable index file at root', async () => {
   }
 });
 
+test('serves repository index at root by default', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'smpl-static-'));
+  const root = join(base, 'root');
+  await mkdir(root);
+  await writeFile(join(root, 'index.html'), '<a href="./smpl_viewer/viewer.html">viewer</a>', 'utf8');
+
+  const server = await startStaticServer(root);
+  try {
+    const response = await httpGet(server.port, '/');
+    assert.equal(response.statusCode, 200);
+    assert.match(response.body, /smpl_viewer\/viewer\.html/);
+  } finally {
+    await server.stop();
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 test('favicon request does not produce a not-found error', async () => {
   const base = await mkdtemp(join(tmpdir(), 'smpl-static-'));
   const root = join(base, 'root');

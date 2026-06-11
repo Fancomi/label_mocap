@@ -1,8 +1,8 @@
 // label_mocap/smpl_viewer/viewer.js
 import * as THREE from 'three';
-import { CameraModes } from '/smpl_viewer/camera_modes.js';
-import { chooseLocalSequence, sequenceLabel } from '/smpl_viewer/local_data.js';
-import { loadModel } from '/smpl_web_viewer/src/smpl/smpl_model.js';
+import { CameraModes } from './camera_modes.js';
+import { loadLocalA1SequenceFromFileList, loadLocalA1SequenceFromFiles, sequenceLabel } from './local_data.js';
+import { loadModel } from '../smpl_web_viewer/src/smpl/smpl_model.js';
 
 // Shared schema with kps3d_viewer.html
 // BONES: [child_kp_idx, parent_kp_idx, group]
@@ -32,6 +32,7 @@ const validateFrame = parseInt(params.get('frame') || '0', 10);
 const $ = id => document.getElementById(id);
 const status = $('status');
 function setStatus(t) { status.textContent = t; }
+const smplModelUrl = new URL('../smpl_web_viewer/public/models/smpl_neutral.meta.json', import.meta.url);
 
 // ── Three.js skeleton ─────────────────────────────────────────────────────
 const renderer = new THREE.WebGLRenderer({
@@ -168,13 +169,15 @@ let frameBusy = false;     // gate for tick() to avoid concurrent setFrame
 let smplModel = null;
 let smplWorker = null;
 let requestId = 0;
+let fallbackJsonFile = null;
+let fallbackImageFiles = [];
 
 async function ensureSmplWorker() {
   if (!smplModel) {
-    smplModel = await loadModel('/smpl_web_viewer/public/models/smpl_neutral.meta.json');
+    smplModel = await loadModel(smplModelUrl);
   }
   if (!smplWorker) {
-    smplWorker = new Worker('/smpl_viewer/smpl_worker.js', { type: 'module' });
+    smplWorker = new Worker(new URL('./smpl_worker.js', import.meta.url), { type: 'module' });
     smplWorker.postMessage({ type: 'init', model: smplModel });
   }
   return smplWorker;
@@ -224,7 +227,7 @@ async function selectSeq(seqOrId) {
   setStatus(`loading ${seqId}…`);
   const meta = localSeq.meta;
   if (!smplModel) {
-    smplModel = await loadModel('/smpl_web_viewer/public/models/smpl_neutral.meta.json');
+    smplModel = await loadModel(smplModelUrl);
   }
   const faces = smplModel.faces;
   if (myEpoch !== seqEpoch) return;
@@ -335,7 +338,10 @@ async function loadFrame(i) {
   const myEpoch = seqEpoch;
 
   const frame = curSeq.frames[i];
-  const imageFile = await curSeq.images[i].getFile();
+  const imageFile = curSeq.images[i]?.getFile ? await curSeq.images[i].getFile() : curSeq.images[i];
+  if (!imageFile) {
+    throw new Error(`missing image for frame ${i}`);
+  }
   const imageUrl = URL.createObjectURL(imageFile);
   const texP = new Promise((resolve, reject) => {
     new THREE.TextureLoader().load(
@@ -553,10 +559,10 @@ $('btn-k-reset').addEventListener('click', () => {
 
 // ── UI wiring ──────────────────────────────────────────────────────────────
 $('seq-select').addEventListener('change', e => selectSeq(e.target.value));
-$('btn-open-local').addEventListener('click', async () => {
+async function openLocalFileList(fileList) {
   try {
-    setStatus('select local a1 directory…');
-    const seq = await chooseLocalSequence();
+    setStatus('loading local a1 directory…');
+    const seq = await loadLocalA1SequenceFromFileList(fileList);
     const sel = $('seq-select');
     sel.innerHTML = '';
     const opt = document.createElement('option');
@@ -568,6 +574,51 @@ $('btn-open-local').addEventListener('click', async () => {
   } catch (err) {
     setStatus(err instanceof Error ? err.message : String(err));
   }
+}
+
+async function openFallbackFiles() {
+  try {
+    setStatus('loading selected json and images…');
+    const seq = await loadLocalA1SequenceFromFiles(fallbackJsonFile, fallbackImageFiles);
+    const sel = $('seq-select');
+    sel.innerHTML = '';
+    const opt = document.createElement('option');
+    opt.value = `${seq.src}/${seq.name}`;
+    opt.textContent = sequenceLabel(seq);
+    sel.appendChild(opt);
+    sel.value = opt.value;
+    await selectSeq(seq);
+  } catch (err) {
+    setStatus(err instanceof Error ? err.message : String(err));
+  }
+}
+
+$('btn-open-local').addEventListener('click', () => {
+  const dirInput = $('local-dir-input');
+  const supportsDirectoryInput = 'webkitdirectory' in dirInput || 'directory' in dirInput;
+  if (supportsDirectoryInput) {
+    dirInput.value = '';
+    dirInput.click();
+    return;
+  }
+  fallbackJsonFile = null;
+  fallbackImageFiles = [];
+  $('local-json-input').value = '';
+  $('local-images-input').value = '';
+  $('local-json-input').click();
+});
+$('local-dir-input').addEventListener('change', e => {
+  openLocalFileList(e.target.files);
+});
+$('local-json-input').addEventListener('change', e => {
+  fallbackJsonFile = e.target.files?.[0] ?? null;
+  if (fallbackJsonFile) {
+    $('local-images-input').click();
+  }
+});
+$('local-images-input').addEventListener('change', e => {
+  fallbackImageFiles = Array.from(e.target.files ?? []);
+  openFallbackFiles();
 });
 $('btn-mode-3d').addEventListener('click', () => { cam.switchTo('3d'); applyMode('3d'); });
 $('btn-mode-2d').addEventListener('click', () => { cam.switchTo('2d'); applyMode('2d'); });
