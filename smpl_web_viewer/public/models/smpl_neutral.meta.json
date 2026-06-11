@@ -1,0 +1,75 @@
+{
+  "schema": "smpl-web-model-v1",
+  "arrays": {
+    "v_template": {
+      "bin": "smpl_neutral.f32.bin",
+      "offset": 0,
+      "length": 20670,
+      "shape": [
+        6890,
+        3
+      ],
+      "dtype": "float32"
+    },
+    "shapedirs": {
+      "bin": "smpl_neutral.f32.bin",
+      "offset": 82680,
+      "length": 206700,
+      "shape": [
+        6890,
+        3,
+        10
+      ],
+      "dtype": "float32"
+    },
+    "posedirs": {
+      "bin": "smpl_neutral.f32.bin",
+      "offset": 909480,
+      "length": 4278690,
+      "shape": [
+        207,
+        20670
+      ],
+      "dtype": "float32"
+    },
+    "J_regressor": {
+      "bin": "smpl_neutral.f32.bin",
+      "offset": 18024240,
+      "length": 165360,
+      "shape": [
+        24,
+        6890
+      ],
+      "dtype": "float32"
+    },
+    "weights": {
+      "bin": "smpl_neutral.f32.bin",
+      "offset": 18685680,
+      "length": 165360,
+      "shape": [
+        6890,
+        24
+      ],
+      "dtype": "float32"
+    },
+    "faces": {
+      "bin": "smpl_neutral.i32.bin",
+      "offset": 0,
+      "length": 41328,
+      "shape": [
+        13776,
+        3
+      ],
+      "dtype": "int32"
+    },
+    "parents": {
+      "bin": "smpl_neutral.i32.bin",
+      "offset": 165312,
+      "length": 24,
+      "shape": [
+        24
+      ],
+      "dtype": "int32"
+    }
+  }
+}
