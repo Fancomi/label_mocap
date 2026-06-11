@@ -35,8 +35,11 @@ function setStatus(t) { status.textContent = t; }
 const renderer = new THREE.WebGLRenderer({
   canvas: $('c'), antialias: true, preserveDrawingBuffer: true,
 });
-renderer.setPixelRatio(1);
-renderer.setClearColor(0x1a1f2a, 1);
+// devicePixelRatio so the rendered texture isn't blurry on HiDPI displays
+// (was setPixelRatio(1) → upscaled blur on retina). Capped at 2 to keep
+// fragment-shader cost sane.
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setClearColor(0x0f1216, 1);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
 
@@ -110,9 +113,16 @@ function ensureGridAxes() {
   }
 }
 
-function makeFrustum(meta) {
-  const fovY = THREE.MathUtils.degToRad(2 * Math.atan(meta.image_h / (2 * meta.K.fy)) * 180 / Math.PI);
-  const aspect = meta.image_w / meta.image_h;
+function makeFrustum(meta, rotN = 0) {
+  // Frustum mirrors what camera_modes.js does: when N is odd the new
+  // "vertical" axis is the original sensor width, so use fx; otherwise fy.
+  // Result: 3D mode's wireframe always matches the rotated 2D-aligned fov.
+  const odd = rotN % 2 === 1;
+  const newH = odd ? meta.image_w : meta.image_h;
+  const newFy = odd ? meta.K.fx : meta.K.fy;
+  const fovY = 2 * Math.atan(newH / (2 * newFy));    // radians
+  const aspect = odd ? meta.image_h / meta.image_w
+                     : meta.image_w / meta.image_h;
   const d = 2.0;
   const h = 2 * Math.tan(fovY / 2) * d;
   const w = h * aspect;
@@ -128,6 +138,18 @@ function makeFrustum(meta) {
   ];
   const geom = new THREE.BufferGeometry().setFromPoints(segs);
   return new THREE.LineSegments(geom, new THREE.LineBasicMaterial({ color: 0x66aaff }));
+}
+
+function rebuildFrustum() {
+  if (!cam || !curSeq) return;
+  if (frustum) {
+    scene.remove(frustum);
+    frustum.geometry.dispose();
+    frustum.material.dispose();
+  }
+  frustum = makeFrustum(curSeq.meta, dataRotCw);
+  frustum.frustumCulled = false;
+  scene.add(frustum);
 }
 
 // ── Sequence loading ──────────────────────────────────────────────────────
@@ -194,9 +216,10 @@ async function selectSeq(seqId) {
 
   ensureGridAxes();
   cam = new CameraModes({ canvas: renderer.domElement, meta });
-  syncIntrinsicsPanel(cam.K);
-  // Apply current canvas aspect to viewport-only state (does NOT touch K).
-  cam.setViewportAspect(renderer.domElement.clientWidth, renderer.domElement.clientHeight);
+  syncIntrinsicsPanel();
+  // CSS aspect-ratio drives canvas size; resize() reads back the resulting
+  // pixel dims and informs camera.aspect. Called after `cam` exists.
+  resize();
 
   // Two image planes share one texture. Far plane (z=-50) is the 2D-aligned
   // backdrop and stays visible in 3D too; near plane (z=-1.5) is the
@@ -253,13 +276,18 @@ async function selectSeq(seqId) {
     line.renderOrder = 11;
     bonesGroup.add(line);
   }
-  frustum = makeFrustum(meta);
+  frustum = makeFrustum(meta, dataRotCw);
   frustum.frustumCulled = false;
   scene.add(frustum);
 
   try { await applyFrame(0); }
   catch (_) { /* stale-epoch — outer return below */ }
   if (myEpoch !== seqEpoch) return;
+
+  // applyFrame called set3DFollowTarget(pelvis_0), which re-aimed the saved
+  // _pose3D quaternion to face pelvis. This is the "prime" step that prevents
+  // the first 2D→3D switch from snap-correcting on the next OrbitControls
+  // tick.
 
   // 用户偏好: 切换序列后立即跳到 2D 对齐, 让数据切换可视化.
   cam.snapTo('2d');
@@ -288,8 +316,9 @@ async function loadFrame(i) {
   }
   const verts = new Float32Array(buf, 0, 6890 * 3);
   const joints = new Float32Array(buf, 6890 * 3 * 4, 24 * 3);
-  const root = new Float32Array(buf, (6890 * 3 + 24 * 3) * 4, 3);
-  const entry = { verts, joints, root, tex };
+  const rootPos = new Float32Array(buf, (6890 * 3 + 24 * 3) * 4, 3);
+  const rootRota = new Float32Array(buf, (6890 * 3 + 24 * 3 + 3) * 4, 3);
+  const entry = { verts, joints, rootPos, rootRota, tex };
   frameCache.set(i, entry);
   return entry;
 }
@@ -356,8 +385,43 @@ async function applyFrame(i) {
   bgFar.material.needsUpdate = true;
   bgTex = f.tex;
 
+  // SMPL root pos/rota — also rotated about camera -Z, then displayed.
+  const [rpx, rpy] = rot(f.rootPos[0], f.rootPos[1]);
+  const rotatedRootPos = [rpx, rpy, f.rootPos[2]];
+  // Compose camera-out rotation onto the root axis-angle.
+  // Axis-angle (vec, magnitude=angle) → quaternion → premultiply → axis-angle.
+  const rrAngle = Math.hypot(f.rootRota[0], f.rootRota[1], f.rootRota[2]);
+  const qRoot = new THREE.Quaternion();
+  if (rrAngle > 1e-9) {
+    qRoot.setFromAxisAngle(
+      new THREE.Vector3(f.rootRota[0] / rrAngle, f.rootRota[1] / rrAngle, f.rootRota[2] / rrAngle),
+      rrAngle);
+  }
+  // CW rotation about camera-out (-Z world): rotation axis is +Z (camera out
+  // is -Z, but data rotation is CW *seen by camera*, which is +Z in the
+  // right-handed world frame), angle = -dataRotCw·π/2.
+  const qCam = new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(0, 0, 1), -dataRotCw * Math.PI / 2);
+  const qComposed = qCam.clone().multiply(qRoot);
+  // back to axis-angle for display
+  const composedAxis = new THREE.Vector3();
+  let composedAngle = 2 * Math.acos(Math.min(1, Math.max(-1, qComposed.w)));
+  const sinHalf = Math.sqrt(Math.max(0, 1 - qComposed.w * qComposed.w));
+  if (sinHalf > 1e-9) {
+    composedAxis.set(qComposed.x / sinHalf, qComposed.y / sinHalf, qComposed.z / sinHalf);
+  } else {
+    composedAxis.set(1, 0, 0);
+    composedAngle = 0;
+  }
+  const rotatedRootRota = [
+    composedAxis.x * composedAngle,
+    composedAxis.y * composedAngle,
+    composedAxis.z * composedAngle,
+  ];
+
   layoutBg();
   renderAngles(rotJ);
+  syncRootPanel(rotatedRootPos, rotatedRootRota);
 }
 
 // Old setFrame is now a thin wrapper used by UI handlers.
@@ -369,13 +433,14 @@ async function setFrame(i) {
 
 function layoutBg() {
   const p = cam.bgPlaneParams();
-  // Near plane (3D-only)
+  // Plane geometry uses NATIVE image dims; rotation is applied to the plane
+  // mesh's `rotation.z`. Texture sits in the rotated plane → pixels never get
+  // resized to a non-image aspect. With native plane + same rotation as
+  // mesh/joints, everything stays pixel-aligned through the camera matrix.
   bgNear.geometry.dispose();
   bgNear.geometry = new THREE.PlaneGeometry(p.near.w, p.near.h);
   bgNear.position.set(0, 0, p.near.z);
-  // Same N×90° CW rotation as the data, around camera -Z (= world +Z out of plane).
   bgNear.rotation.set(0, 0, -dataRotCw * Math.PI / 2);
-  // Far plane (always shown when bg flag is on)
   bgFar.geometry.dispose();
   bgFar.geometry = new THREE.PlaneGeometry(p.far.w, p.far.h);
   bgFar.position.set(0, 0, p.far.z);
@@ -404,12 +469,27 @@ function applyMode(mode) {
   layoutBg();
 }
 
-// ── Intrinsics panel ───────────────────────────────────────────────────────
-function syncIntrinsicsPanel(K) {
-  $('k-fx').value = K.fx;
-  $('k-fy').value = K.fy;
-  $('k-cx').value = K.cx;
-  $('k-cy').value = K.cy;
+// Single intrinsics panel: shows the *live* K (the one currently rendering).
+// On data rotation, K rotates too (cx↔cy swap pattern + dims) and the panel
+// reflects that automatically. User edits land directly on cam.K.
+function syncIntrinsicsPanel() {
+  if (!cam) return;
+  $('k-fx').value = cam.K.fx;
+  $('k-fy').value = cam.K.fy;
+  $('k-cx').value = cam.K.cx;
+  $('k-cy').value = cam.K.cy;
+  $('k-wh').textContent = `${cam.imageW}×${cam.imageH}`;
+}
+
+// SMPL root state panel — shows the *world-coordinate* root pos / rotation
+// for the currently-rendered frame (i.e. after dataRotN has been applied to
+// SMPL pose). This is what the camera actually sees in 3D space.
+function syncRootPanel(pos, rota) {
+  const fmt = v => v.map(x => x.toFixed(3)).join(', ');
+  const mag = Math.hypot(rota[0], rota[1], rota[2]);
+  $('r-pos').textContent = fmt(pos);
+  $('r-rot').textContent = fmt(rota);
+  $('r-rotmag').textContent = `${mag.toFixed(3)} rad / ${(mag * 180 / Math.PI).toFixed(1)}°`;
 }
 function readIntrinsicsPanel() {
   return {
@@ -423,13 +503,16 @@ function readIntrinsicsPanel() {
   $(id).addEventListener('input', () => {
     if (!cam) return;
     cam.setIntrinsics(readIntrinsicsPanel());
+    syncIntrinsicsPanel();    // mirror dims back if anything changed
+    rebuildFrustum();
     layoutBg();
   });
 });
 $('btn-k-reset').addEventListener('click', () => {
-  if (!cam || !curSeq) return;
-  cam.setIntrinsics(curSeq.meta.K);
-  syncIntrinsicsPanel(cam.K);
+  if (!cam) return;
+  cam.resetIntrinsics();      // restores meta.K rotated by current dataRotN
+  syncIntrinsicsPanel();
+  rebuildFrustum();
   layoutBg();
 });
 
@@ -452,8 +535,9 @@ function rotateData(delta) {
   dataRotCw = ((dataRotCw + delta) % 4 + 4) % 4;
   if (cam) {
     cam.setDataRotation(dataRotCw);
-    // Re-fit canvas aspect so the letterbox tracks the (now rotated) image aspect.
-    cam.setViewportAspect(renderer.domElement.clientWidth, renderer.domElement.clientHeight);
+    rebuildFrustum();
+    syncIntrinsicsPanel();    // K + dims rotated together; panel reflects live values
+    resize();
   }
   if (curN > 0) applyFrame(curFrame);
 }
@@ -498,27 +582,39 @@ flagBtns.forEach(([id, key]) => {
 
 window.addEventListener('resize', resize);
 function resize() {
-  const c = renderer.domElement;
-  const w = c.clientWidth, h = c.clientHeight;
-  renderer.setSize(w, h, false);
-  if (cam) {
-    // Lock camera aspect to image aspect; letterbox via setViewport on render.
-    cam.setViewportAspect(w, h);
+  if (!cam) return;
+  const containerEl = renderer.domElement.parentElement;
+  const cw = containerEl.clientWidth, ch = containerEl.clientHeight;
+  if (cw <= 0 || ch <= 0) return;
+
+  // Compute the largest WxH that fits inside the container while matching
+  // the rotated image aspect. Pure pixel math, no CSS aspect-ratio.
+  const targetAspect = cam.effectiveAspect();
+  const containerAspect = cw / ch;
+  let w, h;
+  if (containerAspect > targetAspect) {
+    // container wider than image → fit height, leave horizontal bars
+    h = ch;
+    w = Math.round(h * targetAspect);
+  } else {
+    // container taller than image → fit width, leave vertical bars
+    w = cw;
+    h = Math.round(w / targetAspect);
   }
+  // Set canvas CSS pixel size; centering done by absolute + translate(-50%).
+  renderer.domElement.style.width = w + 'px';
+  renderer.domElement.style.height = h + 'px';
+  renderer.setSize(w, h, false);     // backing buffer matches CSS × DPR
+  cam.camera.aspect = w / h;
+  cam.camera.updateProjectionMatrix();
 }
 
 function renderFrame() {
   if (!cam) return;
-  const cw = renderer.domElement.clientWidth;
-  const ch = renderer.domElement.clientHeight;
-  const lb = cam.letterbox(cw, ch);
-  renderer.setScissorTest(false);
-  renderer.clear();
-  renderer.setViewport(lb.x, lb.y, lb.w, lb.h);
-  renderer.setScissor(lb.x, lb.y, lb.w, lb.h);
-  renderer.setScissorTest(true);
+  // No setViewport / setScissor — canvas is sized by CSS aspect-ratio so
+  // its pixel buffer already matches the (rotated) image aspect. Renderer
+  // fills the entire backing buffer.
   renderer.render(scene, cam.camera);
-  renderer.setScissorTest(false);
 }
 
 // ── Render loop ────────────────────────────────────────────────────────────

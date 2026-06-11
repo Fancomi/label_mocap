@@ -72,11 +72,11 @@ def test_faces_bin_size_and_dtype(client):
 
 
 def test_frame_bin_layout(client):
-    """frame/<i>.bin: 6890*3 + 24*3 + 3 floats == (6890*3 + 24*3 + 3)*4 bytes."""
+    """frame/<i>.bin: 6890*3 + 24*3 + 3 + 3 floats == (6890*3 + 24*3 + 3 + 3)*4 bytes."""
     resp = client.get("/seq/10m/TiaoShui_a_male_5500_597/frame/0.bin")
     assert resp.status_code == 200
     assert resp.mimetype == "application/octet-stream"
-    expected = (6890 * 3 + 24 * 3 + 3) * 4
+    expected = (6890 * 3 + 24 * 3 + 3 + 3) * 4
     assert len(resp.data) == expected, f"got {len(resp.data)} expected {expected}"
 
 
@@ -85,11 +85,14 @@ def test_frame_bin_contents_are_finite_floats(client):
     import numpy as np
     resp = client.get("/seq/10m/TiaoShui_a_male_5500_597/frame/0.bin")
     buf = np.frombuffer(resp.data, dtype=np.float32)
-    assert buf.shape == (6890 * 3 + 24 * 3 + 3,)
+    assert buf.shape == (6890 * 3 + 24 * 3 + 3 + 3,)
     assert np.isfinite(buf).all()
     verts = buf[:6890 * 3].reshape(6890, 3)
     # all verts in front of camera in src coords (Z<0)
     assert (verts[:, 2] < 0).all()
+    # root_rota (last 3 floats): axis-angle vector, non-zero on a real seq
+    root_rota = buf[-3:]
+    assert np.linalg.norm(root_rota) > 0
 
 
 def test_frame_bin_404_out_of_range(client):

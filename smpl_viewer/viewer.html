@@ -7,8 +7,22 @@
   * { margin:0; padding:0; box-sizing:border-box; }
   html,body { height:100%; background:#1a1f2a; color:#eee; font-family:monospace; overflow:hidden; }
   body { display:flex; }
-  #canvas-container { position:relative; flex:1; }
-  canvas { display:block; width:100%; height:100%; }
+  #canvas-container {
+    position:relative; flex:1;
+    background:#0f1216;     /* letterbox bar color */
+    overflow:hidden;
+    min-width:0; min-height:0;
+  }
+  /* Canvas is positioned absolutely, centered, sized to fit the container
+     while keeping the (rotated) image aspect via JS-computed pixel dims.
+     CSS aspect-ratio + max-width/max-height didn't fill the container
+     reliably across browsers; explicit pixel sizing in resize() is robust. */
+  canvas {
+    display:block;
+    position:absolute;
+    top:50%; left:50%;
+    transform:translate(-50%, -50%);
+  }
   #status { position:absolute; top:8px; left:8px; background:rgba(0,0,0,0.55);
             padding:5px 9px; font-size:11px; color:#aaa; pointer-events:none; }
   #angle-panel { position:absolute; top:8px; right:8px; background:rgba(0,0,0,0.7);
@@ -41,6 +55,12 @@
   input[type=number]:focus { outline:none; border-color:#0088ff; }
   .kgrid { display:grid; grid-template-columns:auto 1fr; gap:3px 6px; align-items:center; }
   .kgrid > label { font-size:10px; color:#999; text-align:right; }
+  .ro {
+    background:#222; border:1px solid #333; color:#ffa;
+    padding:2px 5px; border-radius:3px;
+    font: inherit; font-size:11px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
   #frame-info { font-size:10px; color:#666; text-align:right; }
 </style>
 </head>
@@ -119,14 +139,24 @@
   </div>
 
   <div class="g">
-    <label>2D 内参 (实时)</label>
+    <label>当前内参 (实时, 渲染对齐)</label>
     <div class="kgrid">
       <label>fx</label><input type="number" id="k-fx" step="1">
       <label>fy</label><input type="number" id="k-fy" step="1">
       <label>cx</label><input type="number" id="k-cx" step="1">
       <label>cy</label><input type="number" id="k-cy" step="1">
+      <label>W×H</label><span class="ro" id="k-wh">—</span>
     </div>
-    <button id="btn-k-reset" style="font-size:10px;padding:3px 5px;margin-top:3px">重置内参</button>
+    <button id="btn-k-reset" style="font-size:10px;padding:3px 5px;margin-top:3px">重置内参 (恢复 meta.K)</button>
+  </div>
+
+  <div class="g">
+    <label>SMPL Root (世界坐标系, 当前帧)</label>
+    <div class="kgrid">
+      <label>pos</label><span class="ro" id="r-pos">—</span>
+      <label>rot</label><span class="ro" id="r-rot">—</span>
+      <label>‖rot‖</label><span class="ro" id="r-rotmag">—</span>
+    </div>
   </div>
 </div>
 
