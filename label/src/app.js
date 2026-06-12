@@ -13,6 +13,7 @@ import { Panels } from './ui/panels.js';
 import { RootHandle } from './edit/root_handle.js';
 import { PoseGizmo } from './edit/pose_gizmo.js';
 import { projectBboxFromMesh } from './edit/bbox_edit.js';
+import { BboxOverlay } from './edit/bbox_overlay.js';
 import * as THREE from 'three';
 
 const $ = (id) => document.getElementById(id);
@@ -36,6 +37,7 @@ let lastJoints = null;
 let panels = null;
 let rootHandle = null;
 let poseGizmo = null;
+let bboxOverlay = null;
 let syncTools = null;
 
 function isJpeg(name) { return /\.(jpe?g)$/i.test(name); }
@@ -99,6 +101,7 @@ function applyAnnotation() {
   scene.updateMesh(out.vertices, out.joints);
   cam.set3DFollowTarget(new THREE.Vector3(out.joints[0], out.joints[1], out.joints[2]));
   if (panels) panels.syncFromState();
+  if (bboxOverlay) bboxOverlay.render(store.current()?.bbox ?? null);
 }
 
 async function showFrame(i) {
@@ -113,6 +116,8 @@ async function showFrame(i) {
   } else {
     rotation = null;
     $('anno-state').textContent = '空帧 (可 +T-pose / +续上帧)';
+    if (panels) panels.syncFromState();
+    if (bboxOverlay) bboxOverlay.render(null);
   }
   const file = images.get(i);
   if (file) {
@@ -164,8 +169,8 @@ function boot() {
   scene.setCamera(cam);
   $('btn-open').addEventListener('click', () => $('dir-input').click());
   $('dir-input').addEventListener('change', (e) => openFiles(e.target.files).catch((err) => setStatus(String(err))));
-  $('btn-2d').addEventListener('click', () => { cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); });
-  $('btn-3d').addEventListener('click', () => { cam.switchTo('3d'); $('btn-3d').classList.add('on'); $('btn-2d').classList.remove('on'); });
+  $('btn-2d').addEventListener('click', () => { cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); if (bboxOverlay) bboxOverlay.render(store?.current()?.bbox ?? null); });
+  $('btn-3d').addEventListener('click', () => { cam.switchTo('3d'); $('btn-3d').classList.add('on'); $('btn-2d').classList.remove('on'); if (bboxOverlay) bboxOverlay.render(store?.current()?.bbox ?? null); });
   $('slider').addEventListener('input', (e) => { setPlaying(false); showFrame(+e.target.value); });
   $('btn-prev').addEventListener('click', () => { setPlaying(false); showFrame(Math.max(0, store.currentFrame() - 1)); });
   $('btn-next').addEventListener('click', () => { setPlaying(false); showFrame(Math.min(store.frameCount() - 1, store.currentFrame() + 1)); });
@@ -204,7 +209,9 @@ function boot() {
     camera: cam.camera,
     canvas: $('c'),
     controls: cam.controls,
+    getMode: () => cam.mode,
     getStore: () => store,
+    getRotation: () => rotation,
     onEdit: applyAnnotation,
   });
   poseGizmo = new PoseGizmo({
@@ -212,9 +219,18 @@ function boot() {
     camera: cam.camera,
     canvas: $('c'),
     controls: cam.controls,
+    getMode: () => cam.mode,
     getRotation: () => rotation,
     getStore: () => store,
     getJointWorldPos: (j) => scene.jointWorldPosition(j),
+    onEdit: applyAnnotation,
+  });
+  bboxOverlay = new BboxOverlay({
+    stageEl: $('stage'),
+    canvasEl: $('c'),
+    getCam: () => cam,
+    getStore: () => store,
+    getBboxVisible: () => $('t-bbox').classList.contains('on'),
     onEdit: applyAnnotation,
   });
 
@@ -238,6 +254,7 @@ function boot() {
     if (!editController) return;
     const tool = editController.tool;
     setToolBtn(tool);
+    $('root-mode-row').style.display = (tool === 'root') ? 'flex' : 'none';
     if (tool === 'root' && store && store.current()) {
       rootHandle.attach(store.current().root_pos);
       poseGizmo.detach();
@@ -253,22 +270,38 @@ function boot() {
     panels.syncFromState();
   };
 
+  // Root translate/rotate sub-mode buttons (visible only while root tool active).
+  $('root-translate').addEventListener('click', () => {
+    rootHandle.setMode('translate');
+    $('root-translate').classList.add('on');
+    $('root-rotate').classList.remove('on');
+  });
+  $('root-rotate').addEventListener('click', () => {
+    rootHandle.setMode('rotate');
+    $('root-rotate').classList.add('on');
+    $('root-translate').classList.remove('on');
+  });
+
   $('btn-bbox-auto').addEventListener('click', () => {
     if (!store || !store.current() || editController?.readOnly || !lastVertices) return;
     store.beginEdit();
     store.applyFields({ bbox: projectBboxFromMesh(lastVertices, cam.K) });
     store.commitEdit();
     panels.syncFromState();
+    if (bboxOverlay) bboxOverlay.render(store.current()?.bbox ?? null);
   });
 
-  // #t-bbox: bbox visual overlay not implemented yet — toggle .on flag only.
-  $('t-bbox').addEventListener('click', () => $('t-bbox').classList.toggle('on'));
+  // #t-bbox: toggle .on flag and re-render the bbox overlay.
+  $('t-bbox').addEventListener('click', () => {
+    $('t-bbox').classList.toggle('on');
+    if (bboxOverlay) bboxOverlay.render(store?.current()?.bbox ?? null);
+  });
 
   // Save / Reset (#btn-save / #btn-reset) — Task 10.
   $('btn-save').addEventListener('click', saveJson);
   $('btn-reset').addEventListener('click', () => resetFromDisk().catch((e) => setStatus(String(e))));
 
-  window.addEventListener('resize', () => scene.resize());
+  window.addEventListener('resize', () => { scene.resize(); if (bboxOverlay) bboxOverlay.render(store?.current()?.bbox ?? null); });
 
   function loop(now) {
     if (playing && store && store.frameCount() > 0) {

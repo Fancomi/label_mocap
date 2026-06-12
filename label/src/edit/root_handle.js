@@ -1,14 +1,17 @@
-// label/src/edit/root_handle.js — translate gizmo for the SMPL root position.
+// label/src/edit/root_handle.js — translate/rotate gizmo for the SMPL root.
 import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 
 export class RootHandle {
-  constructor({ scene, camera, canvas, controls, getStore, onEdit }) {
+  constructor({ scene, camera, canvas, controls, getMode, getStore, getRotation, onEdit }) {
     this._scene = scene;       // THREE.Scene
     this._controls = controls; // OrbitControls
+    this._getMode = getMode || (() => '3d');
     this._getStore = getStore;
+    this._getRotation = getRotation;
     this._onEdit = onEdit;
     this._attached = false;
+    this._mode = 'translate';
 
     this._proxy = new THREE.Object3D();
 
@@ -17,19 +20,37 @@ export class RootHandle {
     this._tc.attach(this._proxy);
 
     this._tc.addEventListener('dragging-changed', (e) => {
-      this._controls.enabled = !e.value;
+      this._controls.enabled = e.value ? false : (this._getMode() === '3d');
     });
     this._tc.addEventListener('mouseDown', () => this._getStore().beginEdit());
     this._tc.addEventListener('objectChange', () => {
-      const p = this._proxy.position;
-      this._getStore().applyFields({ root_pos: [p.x, p.y, p.z] });
+      if (this._mode === 'rotate') {
+        const rot = this._getRotation && this._getRotation();
+        if (!rot) return;
+        const q = this._proxy.quaternion;
+        rot.setRootQuat([q.x, q.y, q.z, q.w]);
+        this._getStore().applyFields(rot.toAxisAngle());
+      } else {
+        const p = this._proxy.position;
+        this._getStore().applyFields({ root_pos: [p.x, p.y, p.z] });
+      }
       this._onEdit();
     });
     this._tc.addEventListener('mouseUp', () => this._getStore().commitEdit());
   }
 
+  setMode(mode) {
+    this._mode = (mode === 'rotate') ? 'rotate' : 'translate';
+    this._tc.setMode(this._mode);
+  }
+
   attach(rootPos) {
     if (rootPos) this._proxy.position.set(rootPos[0], rootPos[1], rootPos[2]);
+    const rot = this._getRotation && this._getRotation();
+    if (rot) {
+      const q = rot.getRootQuat();
+      if (q) this._proxy.quaternion.set(q[0], q[1], q[2], q[3]);
+    }
     if (!this._attached) {
       this._scene.add(this._proxy);
       this._scene.add(this._tc);

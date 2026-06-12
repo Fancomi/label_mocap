@@ -12,9 +12,10 @@ import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 
 export class PoseGizmo {
-  constructor({ scene, camera, canvas, controls, getRotation, getStore, getJointWorldPos, onEdit }) {
+  constructor({ scene, camera, canvas, controls, getMode, getRotation, getStore, getJointWorldPos, onEdit }) {
     this._scene = scene;
     this._controls = controls;
+    this._getMode = getMode || (() => '3d');
     this._getRotation = getRotation;
     this._getStore = getStore;
     this._getJointWorldPos = getJointWorldPos;
@@ -29,7 +30,7 @@ export class PoseGizmo {
     this._tc.attach(this._proxy);
 
     this._tc.addEventListener('dragging-changed', (e) => {
-      this._controls.enabled = !e.value;
+      this._controls.enabled = e.value ? false : (this._getMode() === '3d');
     });
     this._tc.addEventListener('mouseDown', () => this._getStore().beginEdit());
     this._tc.addEventListener('objectChange', () => {

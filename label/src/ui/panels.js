@@ -33,6 +33,10 @@ export class Panels {
 
   _readOnly() { const ec = this._getEC(); return !!(ec && ec.readOnly); }
 
+  // Write an input's value unless it is currently focused (avoid clobbering
+  // the value a user is actively typing into).
+  _setVal(el, v) { if (el && el !== document.activeElement) el.value = v; }
+
   // ── Joint <select> ────────────────────────────────────────────────────────
   populateJointSelect() {
     const sel = $('joint-select');
@@ -66,19 +70,19 @@ export class Panels {
     const cur = store ? store.current() : null;
 
     if (!rot || !cur) {
-      for (const id of ['eul-x', 'eul-y', 'eul-z', 'pos-x', 'pos-y', 'pos-z']) $(id).value = '';
+      for (const id of ['eul-x', 'eul-y', 'eul-z', 'pos-x', 'pos-y', 'pos-z']) this._setVal($(id), '');
       $('bbox-ro').textContent = '—';
       $('angle-list').innerHTML = '';
     } else {
       const j = this._activeJoint();
       const e = j != null ? rot.getJointEuler(j) : rot.getRootEuler();
-      $('eul-x').value = (e[0] * DEG).toFixed(1);
-      $('eul-y').value = (e[1] * DEG).toFixed(1);
-      $('eul-z').value = (e[2] * DEG).toFixed(1);
+      this._setVal($('eul-x'), (e[0] * DEG).toFixed(1));
+      this._setVal($('eul-y'), (e[1] * DEG).toFixed(1));
+      this._setVal($('eul-z'), (e[2] * DEG).toFixed(1));
       const p = cur.root_pos || [0, 0, 0];
-      $('pos-x').value = (+p[0]).toFixed(3);
-      $('pos-y').value = (+p[1]).toFixed(3);
-      $('pos-z').value = (+p[2]).toFixed(3);
+      this._setVal($('pos-x'), (+p[0]).toFixed(3));
+      this._setVal($('pos-y'), (+p[1]).toFixed(3));
+      this._setVal($('pos-z'), (+p[2]).toFixed(3));
       if (cur.bbox) {
         const [x, y, w, h] = cur.bbox;
         $('bbox-ro').textContent = `${Math.round(x)}, ${Math.round(y)}, ${Math.round(w)}, ${Math.round(h)}`;
@@ -92,7 +96,7 @@ export class Panels {
         const betas = cur.betas || [];
         for (let i = 0; i < 10; i++) {
           const s = $(`beta-${i}`);
-          if (s) s.value = String(betas[i] ?? 0);
+          if (s) this._setVal(s, String(betas[i] ?? 0));
         }
       }
     }
@@ -100,10 +104,10 @@ export class Panels {
     // Intrinsics always reflect live K.
     const cam = this._getCam();
     if (cam && cam.K) {
-      $('k-fx').value = String(cam.K.fx);
-      $('k-fy').value = String(cam.K.fy);
-      $('k-cx').value = String(cam.K.cx);
-      $('k-cy').value = String(cam.K.cy);
+      this._setVal($('k-fx'), String(cam.K.fx));
+      this._setVal($('k-fy'), String(cam.K.fy));
+      this._setVal($('k-cx'), String(cam.K.cx));
+      this._setVal($('k-cy'), String(cam.K.cy));
     }
   }
 
