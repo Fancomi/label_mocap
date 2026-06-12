@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>SMPL 标注器</title>
+  <script type="importmap">
+    { "imports": {
+        "three": "../smpl_web_viewer/public/vendor/three.module.js",
+        "three/addons/controls/OrbitControls.js": "../smpl_web_viewer/public/vendor/OrbitControls.js"
+    } }
+  </script>
+  <style>
+    html,body { height:100%; margin:0; background:#1a1f2a; color:#eee; font-family:monospace; }
+    body { display:flex; }
+    #stage { position:relative; flex:1; background:#0f1216; overflow:hidden; }
+    canvas { display:block; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); }
+    #status { position:absolute; top:8px; left:8px; background:rgba(0,0,0,.6); padding:5px 9px; font-size:11px; }
+    #side { width:300px; background:#1a1a1a; border-left:1px solid #333; padding:10px; display:flex; flex-direction:column; gap:10px; overflow-y:auto; }
+    button { padding:5px 8px; background:#2a2a2a; border:1px solid #444; color:#eee; border-radius:3px; cursor:pointer; }
+    button.on { background:#0066cc; }
+    .row { display:flex; gap:5px; }
+    input[type=range] { width:100%; }
+    .warn { color:#ffb86b; }
+  </style>
+</head>
+<body>
+  <div id="stage"><canvas id="c"></canvas><div id="status">就绪</div></div>
+  <aside id="side">
+    <h2 style="font-size:13px;color:#7df">SMPL 标注器</h2>
+    <button id="btn-open">选择目录 / 文件</button>
+    <input id="dir-input" type="file" webkitdirectory directory multiple hidden>
+    <div class="row"><button id="btn-2d" class="on">2D 对齐</button><button id="btn-3d">3D 自由</button></div>
+    <div class="row"><button id="btn-prev">◀</button><button id="btn-play">▶ 播放</button><button id="btn-next">▶|</button></div>
+    <input id="slider" type="range" min="0" max="0" value="0">
+    <div id="frame-info">— / —</div>
+  </aside>
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
