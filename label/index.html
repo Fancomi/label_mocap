@@ -6,7 +6,8 @@
   <script type="importmap">
     { "imports": {
         "three": "../smpl_web_viewer/public/vendor/three.module.js",
-        "three/addons/controls/OrbitControls.js": "../smpl_web_viewer/public/vendor/OrbitControls.js"
+        "three/addons/controls/OrbitControls.js": "../smpl_web_viewer/public/vendor/OrbitControls.js",
+        "three/addons/controls/TransformControls.js": "../smpl_web_viewer/public/vendor/TransformControls.js"
     } }
   </script>
   <style>
@@ -21,6 +22,14 @@
     .row { display:flex; gap:5px; }
     input[type=range] { width:100%; }
     .warn { color:#ffb86b; }
+    .g { display:flex; flex-direction:column; gap:4px; border-top:1px solid #2a2a2a; padding-top:8px; }
+    .g > label { font-size:10px; color:#888; }
+    .kgrid { display:grid; grid-template-columns:auto 1fr; gap:3px 6px; align-items:center; }
+    .kgrid > label { font-size:10px; color:#999; text-align:right; }
+    input[type=number] { background:#222; border:1px solid #444; color:#eee; padding:2px 4px; border-radius:3px; font:inherit; font-size:11px; width:100%; }
+    .ro { background:#222; border:1px solid #333; color:#ffa; padding:2px 5px; border-radius:3px; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    select { padding:4px; background:#2a2a2a; border:1px solid #444; color:#eee; border-radius:3px; font:inherit; }
+    #side h3 { font-size:11px; color:#7df; margin:0; }
   </style>
 </head>
 <body>
@@ -29,11 +38,89 @@
     <h2 style="font-size:13px;color:#7df">SMPL 标注器</h2>
     <button id="btn-open">选择目录 / 文件</button>
     <input id="dir-input" type="file" webkitdirectory directory multiple hidden>
-    <div class="row"><button id="btn-2d" class="on">2D 对齐</button><button id="btn-3d">3D 自由</button></div>
-    <div class="row"><button id="btn-prev">◀</button><button id="btn-play">▶ 播放</button><button id="btn-next">▶|</button></div>
-    <input id="slider" type="range" min="0" max="0" value="0">
-    <div id="frame-info">— / —</div>
-    <div class="row" style="align-items:center"><span style="font-size:11px;color:#888">速度</span><input id="speed" type="range" min="1" max="60" value="24"><span id="speed-val" style="font-size:11px;color:#ffa;min-width:46px;text-align:right">24 fps</span></div>
+
+    <div class="g">
+      <label>相机模式</label>
+      <div class="row"><button id="btn-2d" class="on">2D 对齐</button><button id="btn-3d">3D 自由</button></div>
+    </div>
+
+    <div class="g">
+      <label>播放</label>
+      <div class="row"><button id="btn-prev">◀</button><button id="btn-play">▶ 播放</button><button id="btn-next">▶|</button></div>
+      <input id="slider" type="range" min="0" max="0" value="0">
+      <div id="frame-info">— / —</div>
+      <div class="row" style="align-items:center"><span style="font-size:11px;color:#888">速度</span><input id="speed" type="range" min="1" max="60" value="24"><span id="speed-val" style="font-size:11px;color:#ffa;min-width:46px;text-align:right">24 fps</span></div>
+    </div>
+
+    <div class="g">
+      <label>显示</label>
+      <div class="row"><button id="t-mesh" class="on">网格</button><button id="t-points" class="on">关键点</button><button id="t-bones" class="on">骨骼</button></div>
+      <div class="row"><button id="t-grid" class="on">底网</button><button id="t-axes">轴</button><button id="t-bg" class="on">底图</button><button id="t-bbox" class="on">框</button></div>
+      <div class="row" style="align-items:center"><span style="font-size:10px;color:#888;width:30px">范围</span><input type="number" id="grid-size" value="20" step="1" min="1"><span style="font-size:10px;color:#888;width:30px">间隔</span><input type="number" id="grid-step" value="0.5" step="0.1" min="0.1"></div>
+    </div>
+
+    <div class="g">
+      <label>标注 (本帧)</label>
+      <div id="anno-state" class="ro">—</div>
+      <div class="row"><button id="btn-add-t">+ T-pose</button><button id="btn-add-prev">+ 续上帧</button><button id="btn-del">删除</button></div>
+      <div class="row"><button id="btn-undo">↶ 撤销 (Ctrl+Z)</button></div>
+    </div>
+
+    <div class="g">
+      <label>编辑工具</label>
+      <div class="row"><button id="tool-root">Root</button><button id="tool-pose">Pose</button><button id="tool-bbox">Bbox</button></div>
+      <select id="joint-select"><option value="">选择关节…</option></select>
+    </div>
+
+    <div class="g">
+      <label>旋转 (欧拉 XYZ, 度)</label>
+      <div class="kgrid">
+        <label>X</label><input type="number" id="eul-x" step="1">
+        <label>Y</label><input type="number" id="eul-y" step="1">
+        <label>Z</label><input type="number" id="eul-z" step="1">
+      </div>
+    </div>
+
+    <div class="g">
+      <label>Root 平移</label>
+      <div class="kgrid">
+        <label>x</label><input type="number" id="pos-x" step="0.01">
+        <label>y</label><input type="number" id="pos-y" step="0.01">
+        <label>z</label><input type="number" id="pos-z" step="0.01">
+      </div>
+    </div>
+
+    <div class="g">
+      <label>Bbox <button id="btn-bbox-auto" style="font-size:10px;padding:2px 5px;flex:0">从Mesh投影</button></label>
+      <div id="bbox-ro" class="ro">—</div>
+    </div>
+
+    <div class="g">
+      <label>Beta (体型)</label>
+      <div id="beta-sliders"></div>
+      <button id="btn-beta-reset" style="font-size:10px;padding:3px 5px">归零</button>
+    </div>
+
+    <div class="g">
+      <label>内参 (实时)</label>
+      <div class="kgrid">
+        <label>fx</label><input type="number" id="k-fx" step="1">
+        <label>fy</label><input type="number" id="k-fy" step="1">
+        <label>cx</label><input type="number" id="k-cx" step="1">
+        <label>cy</label><input type="number" id="k-cy" step="1">
+      </div>
+      <button id="btn-k-reset" style="font-size:10px;padding:3px 5px">重置内参</button>
+    </div>
+
+    <div class="g">
+      <label>关节角度</label>
+      <div id="angle-list" style="font-size:11px;line-height:1.5"></div>
+    </div>
+
+    <div class="g">
+      <label>IO</label>
+      <div class="row"><button id="btn-save">保存 JSON</button><button id="btn-reset">Reset</button></div>
+    </div>
   </aside>
   <script type="module" src="./src/app.js"></script>
 </body>
