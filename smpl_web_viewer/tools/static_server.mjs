@@ -30,14 +30,19 @@ createServer((req, res) => {
     return;
   }
   const rel = pathname === '/' ? `/${indexFile}` : pathname;
-  const file = resolve(join(root, rel));
+  let file = resolve(join(root, rel));
   const rootRelativePath = relative(root, file);
   if (rootRelativePath.startsWith('..') || isAbsolute(rootRelativePath)) {
     res.writeHead(403).end('Forbidden');
     return;
   }
   try {
-    const st = statSync(file);
+    let st = statSync(file);
+    // Resolve a directory request (e.g. /label/) to its index file.
+    if (st.isDirectory()) {
+      file = resolve(join(file, indexFile));
+      st = statSync(file);
+    }
     if (!st.isFile()) throw new Error('not file');
     res.writeHead(200, { 'content-type': types.get(extname(file)) ?? 'application/octet-stream' });
     createReadStream(file).pipe(res);
