@@ -8,6 +8,10 @@ import { RotationState } from './edit/rotation_state.js';
 import { EditController } from './edit/edit_controller.js';
 import { CameraModes } from './scene/camera_modes.js';
 import { LabelScene } from './scene/scene.js';
+import { Panels } from './ui/panels.js';
+import { RootHandle } from './edit/root_handle.js';
+import { PoseGizmo } from './edit/pose_gizmo.js';
+import { projectBboxFromMesh } from './edit/bbox_edit.js';
 import * as THREE from 'three';
 
 const $ = (id) => document.getElementById(id);
@@ -27,6 +31,10 @@ let rotation = null;
 let editController = null;
 let lastVertices = null;
 let lastJoints = null;
+let panels = null;
+let rootHandle = null;
+let poseGizmo = null;
+let syncTools = null;
 
 function isJpeg(name) { return /\.(jpe?g)$/i.test(name); }
 
@@ -64,6 +72,7 @@ async function openFiles(fileList) {
 
   store = new AnnotationStore(coco);
   editController = new EditController({ readOnly });
+  if (syncTools) editController.onChange(syncTools);
   $('slider').max = String(Math.max(0, store.frameCount() - 1));
   $('slider').value = '0';
   if (!model) { model = await loadModel(MODEL_URL); scene.setTopology(model.faces); }
@@ -86,6 +95,7 @@ function applyAnnotation() {
   lastJoints = out.joints;
   scene.updateMesh(out.vertices, out.joints);
   cam.set3DFollowTarget(new THREE.Vector3(out.joints[0], out.joints[1], out.joints[2]));
+  if (panels) panels.syncFromState();
 }
 
 async function showFrame(i) {
@@ -144,8 +154,83 @@ function boot() {
   $('grid-size').addEventListener('input', () => scene.setGrid(+$('grid-size').value, +$('grid-step').value));
   $('grid-step').addEventListener('input', () => scene.setGrid(+$('grid-size').value, +$('grid-step').value));
 
-  // --- Task 8 wires panels, gizmos, tool buttons (#tool-root/pose/bbox),
-  //     #joint-select, beta sliders, intrinsics, bbox edit, save/reset here ---
+  // --- Task 8: panels, gizmos, tool buttons, joint select, bbox edit ---
+  panels = new Panels({
+    getRotation: () => rotation,
+    getStore: () => store,
+    getCam: () => cam,
+    getEditController: () => editController,
+    getLastJoints: () => lastJoints,
+    onEdit: applyAnnotation,
+  });
+  panels.populateJointSelect();
+
+  rootHandle = new RootHandle({
+    scene: scene.threeScene(),
+    camera: cam.camera,
+    canvas: $('c'),
+    controls: cam.controls,
+    getStore: () => store,
+    onEdit: applyAnnotation,
+  });
+  poseGizmo = new PoseGizmo({
+    scene: scene.threeScene(),
+    camera: cam.camera,
+    canvas: $('c'),
+    controls: cam.controls,
+    getRotation: () => rotation,
+    getStore: () => store,
+    getJointWorldPos: (j) => scene.jointWorldPosition(j),
+    onEdit: applyAnnotation,
+  });
+
+  const setToolBtn = (active) => {
+    $('tool-root').classList.toggle('on', active === 'root');
+    $('tool-pose').classList.toggle('on', active === 'pose');
+    $('tool-bbox').classList.toggle('on', active === 'bbox');
+  };
+  $('tool-root').addEventListener('click', () => editController?.setTool('root'));
+  $('tool-pose').addEventListener('click', () => editController?.setTool('pose'));
+  $('tool-bbox').addEventListener('click', () => editController?.setTool('bbox'));
+  $('joint-select').addEventListener('change', (e) => {
+    if (!editController) return;
+    const v = e.target.value;
+    if (v === 'root') editController.setTool('root');
+    else if (v !== '') editController.selectJoint(Number(v));
+  });
+
+  // editController fires onChange whenever tool/joint changes → sync gizmos + panels.
+  syncTools = () => {
+    if (!editController) return;
+    const tool = editController.tool;
+    setToolBtn(tool);
+    if (tool === 'root' && store && store.current()) {
+      rootHandle.attach(store.current().root_pos);
+      poseGizmo.detach();
+    } else if (tool === 'pose' && editController.selectedJoint != null && rotation) {
+      const j = editController.selectedJoint;
+      // body joint j corresponds to SMPL world joint j+1
+      poseGizmo.attach(j, scene.jointWorldPosition(j + 1), rotation.getJointQuat(j));
+      rootHandle.detach();
+    } else {
+      rootHandle.detach();
+      poseGizmo.detach();
+    }
+    panels.syncFromState();
+  };
+
+  $('btn-bbox-auto').addEventListener('click', () => {
+    if (!store || !store.current() || editController?.readOnly || !lastVertices) return;
+    store.beginEdit();
+    store.applyFields({ bbox: projectBboxFromMesh(lastVertices, cam.K) });
+    store.commitEdit();
+    panels.syncFromState();
+  });
+
+  // #t-bbox: bbox visual overlay not implemented yet — toggle .on flag only.
+  $('t-bbox').addEventListener('click', () => $('t-bbox').classList.toggle('on'));
+
+  // Save / Reset (#btn-save / #btn-reset) wired in Task 10.
 
   window.addEventListener('resize', () => scene.resize());
 

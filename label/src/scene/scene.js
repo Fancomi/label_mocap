@@ -39,6 +39,16 @@ export class LabelScene {
     this._gridSize = 20;
     this._gridStep = 0.5;
     this._flags = { mesh: true, points: true, bones: true, grid: true, axes: false, bg: true };
+    this._lastJoints = null;
+  }
+
+  // The underlying THREE.Scene — gizmos attach their proxy objects here.
+  threeScene() { return this._scene; }
+
+  // World position [x,y,z] of SMPL joint j from the last posed joints buffer.
+  jointWorldPosition(j) {
+    if (!this._lastJoints) return [0, 0, 0];
+    return [this._lastJoints[j * 3], this._lastJoints[j * 3 + 1], this._lastJoints[j * 3 + 2]];
   }
 
   buildFrustum(meta) {
@@ -180,6 +190,7 @@ export class LabelScene {
 
   updateMesh(vertices, joints) {
     if (!this._mesh) return;
+    this._lastJoints = joints;
 
     // Resize position buffer if needed (first call)
     const needed = vertices.length;
