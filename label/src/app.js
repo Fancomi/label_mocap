@@ -1,11 +1,14 @@
-// label/src/app.js — M1 skeleton: load, render, navigate. No editing yet.
+// label/src/app.js — M2: load, render, navigate, annotate (add/del/undo + display toggles).
 import { loadModel } from '../../smpl_core/smpl_model.js';
 import { forwardSmpl } from '../../smpl_core/lbs.js';
 import { CocoDocument } from './io/coco_document.js';
 import { buildFrames, isPortrait } from './io/source_loader.js';
 import { AnnotationStore } from './edit/annotation_store.js';
+import { RotationState } from './edit/rotation_state.js';
+import { EditController } from './edit/edit_controller.js';
 import { CameraModes } from './scene/camera_modes.js';
 import { LabelScene } from './scene/scene.js';
+import * as THREE from 'three';
 
 const $ = (id) => document.getElementById(id);
 const setStatus = (t) => { $('status').textContent = t; };
@@ -20,6 +23,10 @@ let playing = false;
 let fps = 24;
 let lastTick = 0;
 let acc = 0;
+let rotation = null;
+let editController = null;
+let lastVertices = null;
+let lastJoints = null;
 
 function isJpeg(name) { return /\.(jpe?g)$/i.test(name); }
 
@@ -56,12 +63,29 @@ async function openFiles(fileList) {
   if (readOnly) setStatus('⚠ 该数据为竖拍/旋转,标注器仅支持查看;请用其他软件转正后再标注');
 
   store = new AnnotationStore(coco);
+  editController = new EditController({ readOnly });
   $('slider').max = String(Math.max(0, store.frameCount() - 1));
   $('slider').value = '0';
   if (!model) { model = await loadModel(MODEL_URL); scene.setTopology(model.faces); }
+  scene.prepareForSequence({ K: cam.K, image_w: cam.imageW, image_h: cam.imageH });
   cam.snapTo('2d');
   scene.resize();
   await showFrame(0);
+}
+
+function buildFrame() {
+  const a = store.current();
+  const { root_rota, body_pose } = rotation.toAxisAngle();
+  return { root_pos: a.root_pos, root_rota, body_pose, betas: a.betas };
+}
+
+function applyAnnotation() {
+  if (!rotation || !store.current()) return;
+  const out = forwardSmpl(model, buildFrame());
+  lastVertices = out.vertices;
+  lastJoints = out.joints;
+  scene.updateMesh(out.vertices, out.joints);
+  cam.set3DFollowTarget(new THREE.Vector3(out.joints[0], out.joints[1], out.joints[2]));
 }
 
 async function showFrame(i) {
@@ -70,13 +94,17 @@ async function showFrame(i) {
   $('frame-info').textContent = `${i} / ${store.frameCount() - 1}`;
   const a = store.current();
   if (a) {
-    const out = forwardSmpl(model, { root_pos: a.root_pos, root_rota: a.root_rota, body_pose: a.body_pose, betas: a.betas });
-    scene.updateMesh(out.vertices, out.joints);
+    rotation = RotationState.fromAxisAngle({ root_rota: a.root_rota, body_pose: a.body_pose });
+    $('anno-state').textContent = '有数据';
+    applyAnnotation();
+  } else {
+    rotation = null;
+    $('anno-state').textContent = '空帧 (可 +T-pose / +续上帧)';
   }
   const file = images.get(i);
   if (file) {
     const url = URL.createObjectURL(file);
-    textureLoader ||= new (await import('three')).TextureLoader();
+    textureLoader ||= new THREE.TextureLoader();
     textureLoader.load(url, (tex) => {
       URL.revokeObjectURL(url);
       if (currentTexture) currentTexture.dispose();
@@ -99,6 +127,26 @@ function boot() {
   $('btn-next').addEventListener('click', () => { setPlaying(false); showFrame(Math.min(store.frameCount() - 1, store.currentFrame() + 1)); });
   $('btn-play').addEventListener('click', () => { if (store) setPlaying(!playing); });
   $('speed').addEventListener('input', (e) => { fps = +e.target.value; $('speed-val').textContent = `${fps} fps`; });
+
+  $('btn-add-t').addEventListener('click', () => { if (store && !editController?.readOnly) { store.addTpose(); showFrame(store.currentFrame()); } });
+  $('btn-add-prev').addEventListener('click', () => { if (store && !editController?.readOnly) { store.addFromPrevious(); showFrame(store.currentFrame()); } });
+  $('btn-del').addEventListener('click', () => { if (store && !editController?.readOnly) { store.deleteCurrent(); showFrame(store.currentFrame()); } });
+  $('btn-undo').addEventListener('click', () => { if (store) { store.undo(); showFrame(store.currentFrame()); } });
+  window.addEventListener('keydown', (e) => { if (store && (e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); store.undo(); showFrame(store.currentFrame()); } });
+
+  const toggle = (id, key) => $(id).addEventListener('click', () => {
+    const on = !$(id).classList.contains('on');
+    $(id).classList.toggle('on', on);
+    scene.setFlag(key, on);
+  });
+  toggle('t-mesh', 'mesh'); toggle('t-points', 'points'); toggle('t-bones', 'bones');
+  toggle('t-grid', 'grid'); toggle('t-axes', 'axes'); toggle('t-bg', 'bg');
+  $('grid-size').addEventListener('input', () => scene.setGrid(+$('grid-size').value, +$('grid-step').value));
+  $('grid-step').addEventListener('input', () => scene.setGrid(+$('grid-size').value, +$('grid-step').value));
+
+  // --- Task 8 wires panels, gizmos, tool buttons (#tool-root/pose/bbox),
+  //     #joint-select, beta sliders, intrinsics, bbox edit, save/reset here ---
+
   window.addEventListener('resize', () => scene.resize());
 
   function loop(now) {
