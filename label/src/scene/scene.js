@@ -29,8 +29,84 @@ export class LabelScene {
     this._mesh = null;
     this._jointsGroup = null;
     this._bonesGroup = null;
-    this._bgPlane = null;
     this._pendingTex = null;
+    this._frustum = null;
+    this._grid = null;
+    this._axes = null;
+    this._bgNear = null;
+    this._bgFar = null;
+    this._bgTex = null;
+    this._gridSize = 20;
+    this._gridStep = 0.5;
+    this._flags = { mesh: true, points: true, bones: true, grid: true, axes: false, bg: true };
+  }
+
+  buildFrustum(meta) {
+    if (this._frustum) {
+      this._scene.remove(this._frustum);
+      this._frustum.geometry.dispose();
+      this._frustum.material.dispose();
+    }
+    const fovY = 2 * Math.atan(meta.image_h / (2 * meta.K.fy));
+    const aspect = meta.image_w / meta.image_h;
+    const d = 2.0;
+    const h = 2 * Math.tan(fovY / 2) * d;
+    const w = h * aspect;
+    const c = [
+      new THREE.Vector3(w / 2, h / 2, -d), new THREE.Vector3(-w / 2, h / 2, -d),
+      new THREE.Vector3(-w / 2, -h / 2, -d), new THREE.Vector3(w / 2, -h / 2, -d),
+    ];
+    const O = new THREE.Vector3();
+    const segs = [O, c[0], O, c[1], O, c[2], O, c[3], c[0], c[1], c[1], c[2], c[2], c[3], c[3], c[0]];
+    const geom = new THREE.BufferGeometry().setFromPoints(segs);
+    this._frustum = new THREE.LineSegments(geom, new THREE.LineBasicMaterial({ color: 0x66aaff }));
+    this._frustum.frustumCulled = false;
+    this._scene.add(this._frustum);
+  }
+
+  buildGrid() {
+    if (this._grid) {
+      this._scene.remove(this._grid);
+      this._grid.geometry.dispose();
+      this._grid.material.dispose();
+    }
+    const divisions = Math.max(2, Math.round(this._gridSize / this._gridStep));
+    this._grid = new THREE.GridHelper(this._gridSize, divisions, 0x6695c8, 0x4a6080);
+    this._grid.position.y = -1.0;
+    this._grid.material.opacity = 0.85;
+    this._grid.material.transparent = true;
+    this._grid.material.depthWrite = false;
+    this._scene.add(this._grid);
+    if (!this._axes) {
+      this._axes = new THREE.AxesHelper(0.5);
+      this._scene.add(this._axes);
+    }
+  }
+
+  setGrid(size, step) {
+    if (Number.isFinite(size) && size > 0) this._gridSize = size;
+    if (Number.isFinite(step) && step > 0) this._gridStep = step;
+    this.buildGrid();
+    this._applyVisibility();
+  }
+
+  setFlag(key, value) { this._flags[key] = value; this._applyVisibility(); }
+
+  _applyVisibility() {
+    const is3d = this._cam && this._cam.mode === '3d';
+    if (this._mesh) this._mesh.visible = this._flags.mesh;
+    if (this._jointsGroup) this._jointsGroup.visible = this._flags.points;
+    if (this._bonesGroup) this._bonesGroup.visible = this._flags.bones;
+    if (this._grid) this._grid.visible = this._flags.grid && is3d;
+    if (this._axes) this._axes.visible = this._flags.axes && is3d;
+    if (this._bgFar) this._bgFar.visible = this._flags.bg;
+    if (this._bgNear) this._bgNear.visible = this._flags.bg && is3d;
+    if (this._frustum) this._frustum.visible = is3d;
+  }
+
+  prepareForSequence(meta) {
+    this.buildFrustum(meta);
+    this._applyVisibility();
   }
 
   setTopology(faces) {
@@ -68,6 +144,7 @@ export class LabelScene {
       this._bonesGroup.add(line);
     }
     this._scene.add(this._bonesGroup);
+    this.buildGrid();
   }
 
   setCamera(cameraModes) {
@@ -145,19 +222,26 @@ export class LabelScene {
   }
 
   _applyBgTexture(texture) {
-    if (!this._bgPlane) {
-      const mat = new THREE.MeshBasicMaterial({
-        color: 0xffffff, depthWrite: false, side: THREE.DoubleSide,
-      });
-      this._bgPlane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
-      this._bgPlane.renderOrder = -1;
-      this._scene.add(this._bgPlane);
-    }
     const p = this._cam.bgPlaneParams();
-    this._bgPlane.scale.set(p.far.w, p.far.h, 1);
-    this._bgPlane.position.set(0, 0, p.far.z);
-    this._bgPlane.material.map = texture;
-    this._bgPlane.material.needsUpdate = true;
+    if (!this._bgFar) {
+      const mk = () => new THREE.Mesh(
+        new THREE.PlaneGeometry(1, 1),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, depthWrite: false, side: THREE.DoubleSide }));
+      this._bgFar = mk(); this._bgFar.renderOrder = -1; this._scene.add(this._bgFar);
+      this._bgNear = mk(); this._bgNear.renderOrder = 0; this._scene.add(this._bgNear);
+    }
+    this._bgFar.geometry.dispose();
+    this._bgFar.geometry = new THREE.PlaneGeometry(p.far.w, p.far.h);
+    this._bgFar.position.set(0, 0, p.far.z);
+    this._bgNear.geometry.dispose();
+    this._bgNear.geometry = new THREE.PlaneGeometry(p.near.w, p.near.h);
+    this._bgNear.position.set(0, 0, p.near.z);
+    for (const plane of [this._bgFar, this._bgNear]) {
+      plane.material.map = texture;
+      plane.material.needsUpdate = true;
+    }
+    this._bgTex = texture;
+    this._applyVisibility();
   }
 
   render() {
@@ -169,6 +253,7 @@ export class LabelScene {
       this._pendingTex = null;
     }
 
+    this._applyVisibility();
     this._cam.update();
     this._renderer.render(this._scene, this._cam.camera);
   }
