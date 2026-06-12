@@ -4,6 +4,7 @@ import { forwardSmpl } from '../../smpl_core/lbs.js';
 import { CocoDocument } from './io/coco_document.js';
 import { buildFrames, isPortrait } from './io/source_loader.js';
 import { AnnotationStore } from './edit/annotation_store.js';
+import { reprojectKeypoints } from './edit/derived.js';
 import { RotationState } from './edit/rotation_state.js';
 import { EditController } from './edit/edit_controller.js';
 import { CameraModes } from './scene/camera_modes.js';
@@ -20,6 +21,7 @@ const setStatus = (t) => { $('status').textContent = t; };
 const MODEL_URL = new URL('../../smpl_web_viewer/public/models/smpl_neutral.meta.json', import.meta.url);
 let model = null, scene = null, cam = null, store = null;
 let images = new Map();      // index -> File
+let loadedJsonFile = null;   // raw json File, for Reset-from-disk
 let readOnly = false;
 let textureLoader = null;
 let currentTexture = null;
@@ -48,6 +50,7 @@ async function openFiles(fileList) {
   images = new Map();
   const files = Array.from(fileList ?? []);
   const jsonFile = files.find((f) => f.name.endsWith('.json'));
+  loadedJsonFile = jsonFile ?? null;
   const imageFiles = files.filter((f) => isJpeg(f.name)).sort((a, b) => a.name.localeCompare(b.name));
 
   let coco = null;
@@ -122,6 +125,37 @@ async function showFrame(i) {
       scene.setBackgroundTexture(tex);
     });
   }
+}
+
+function saveJson() {
+  if (!store || !model) return;
+  const doc = store.document();
+  for (const id of doc.imageIds()) {
+    const a = doc.getAnnotation(id);
+    if (!a) continue;
+    const out = forwardSmpl(model, { root_pos: a.root_pos, root_rota: a.root_rota, body_pose: a.body_pose, betas: a.betas });
+    const keypoints = reprojectKeypoints(out.joints, cam.K, 52);
+    doc.setAnnotation(id, { keypoints });
+  }
+  const json = JSON.stringify(doc.serialize(), null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url; link.download = 'player_0.json'; link.click();
+  URL.revokeObjectURL(url);
+  setStatus('已保存 player_0.json');
+}
+
+async function resetFromDisk() {
+  if (!store) return;
+  if (loadedJsonFile) {
+    const coco = new CocoDocument(JSON.parse(await loadedJsonFile.text()));
+    store = new AnnotationStore(coco);
+    editController = new EditController({ readOnly });
+    if (syncTools) editController.onChange(syncTools);
+  }
+  await showFrame(Math.min(store.currentFrame(), store.frameCount() - 1));
+  setStatus('已从硬盘重置');
 }
 
 function boot() {
@@ -230,7 +264,9 @@ function boot() {
   // #t-bbox: bbox visual overlay not implemented yet — toggle .on flag only.
   $('t-bbox').addEventListener('click', () => $('t-bbox').classList.toggle('on'));
 
-  // Save / Reset (#btn-save / #btn-reset) wired in Task 10.
+  // Save / Reset (#btn-save / #btn-reset) — Task 10.
+  $('btn-save').addEventListener('click', saveJson);
+  $('btn-reset').addEventListener('click', () => resetFromDisk().catch((e) => setStatus(String(e))));
 
   window.addEventListener('resize', () => scene.resize());
 
