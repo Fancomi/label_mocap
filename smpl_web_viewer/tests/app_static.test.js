@@ -29,3 +29,10 @@ test('scene exposes a separate reference mesh overlay', async () => {
   assert.match(scene, /setReferenceTopology/);
   assert.match(scene, /updateReferenceFrame/);
 });
+
+test('debug reference mesh is gated behind explicit query parameter', async () => {
+  const app = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
+  assert.match(app, /debugRef/);
+  assert.match(app, /params\.get\('debugRef'\) === '1'/);
+  assert.match(app, /if \(debugReferenceEnabled\)/);
+});

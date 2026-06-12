@@ -106,6 +106,17 @@ export class SmplScene {
     this.scene.add(this.referenceMesh);
   }
 
+  clearReference() {
+    if (!this.referenceMesh) {
+      return;
+    }
+
+    this.scene.remove(this.referenceMesh);
+    this.referenceMesh.geometry.dispose();
+    this.referenceMesh.material.dispose();
+    this.referenceMesh = null;
+  }
+
   updateFrame(vertices, joints) {
     if (!this.mesh || !this.points) {
       return;

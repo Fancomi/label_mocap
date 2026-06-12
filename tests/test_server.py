@@ -1,113 +1,110 @@
-"""Flask endpoint tests using app.test_client()."""
-import pytest
+"""Tests for the current static smpl_viewer server entry.
+
+The old Flask JSON/bin data API was removed. Keep this test dependency-free so
+the static server contract can be verified with stdlib unittest.
+"""
+
+import os
+import socket
+import subprocess
+import sys
+import time
+import unittest
 from pathlib import Path
-
-DATA_ROOT = Path("/root/paddlejob/workspace/env_run/penghaotian/sport_project/dataset/diving/raw")
-
-
-@pytest.fixture(scope="module")
-def app():
-    if not DATA_ROOT.exists():
-        pytest.skip(f"raw dataset missing: {DATA_ROOT}")
-    from smpl_viewer.server import create_app
-    return create_app(raw_root=DATA_ROOT)
+from urllib.error import HTTPError
+from urllib.request import urlopen
 
 
-@pytest.fixture
-def client(app):
-    return app.test_client()
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def test_index_returns_html(client):
-    """GET / serves viewer.html."""
-    resp = client.get("/")
-    assert resp.status_code == 200
-    assert resp.mimetype == "text/html"
-    assert b"<canvas" in resp.data or b"<!DOCTYPE" in resp.data
+class StaticServerTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.port = _free_port()
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        cls.server = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "smpl_viewer.server",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(cls.port),
+                "--raw-root",
+                "/path/that/is/ignored",
+            ],
+            cwd=REPO_ROOT,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        _wait_for_http(cls.port)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.terminate()
+        try:
+            cls.server.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            cls.server.kill()
+            cls.server.wait(timeout=5)
+
+    def test_root_serves_repository_index(self):
+        response = _get(self.port, "/")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("text/html", response.headers.get("content-type", ""))
+        self.assertIn(b"smpl_viewer/viewer.html", response.body)
+
+    def test_viewer_asset_served_as_static_javascript(self):
+        response = _get(self.port, "/smpl_viewer/viewer.js")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("javascript", response.headers.get("content-type", ""))
+        self.assertIn(b"loadLocalA1SequenceFromFileList", response.body)
+
+    def test_removed_data_api_is_not_exposed(self):
+        with self.assertRaises(HTTPError) as cm:
+            _get(self.port, "/seqs")
+
+        self.assertEqual(cm.exception.code, 404)
 
 
-def test_seqs_lists_validation_fixtures(client):
-    """GET /seqs returns the two fixture sequences with correct portrait flag."""
-    resp = client.get("/seqs")
-    assert resp.status_code == 200
-    j = resp.get_json()
-    assert "seqs" in j
-    seqs = {(s["src"], s["name"]): s for s in j["seqs"]}
-    assert ("10m", "TiaoShui_a_male_5500_597") in seqs
-    assert ("olympic", "a_famale_70") in seqs
-    # Both sequences are portrait=True (verified by detect_orientation pre-check)
-    assert seqs[("10m", "TiaoShui_a_male_5500_597")]["portrait"] is True
-    assert seqs[("olympic", "a_famale_70")]["portrait"] is True  # adjusted: detect_orientation returns True
-    # n_frames must be a positive int
-    for s in seqs.values():
-        assert isinstance(s["n_frames"], int) and s["n_frames"] > 0
+class Response:
+    def __init__(self, status, headers, body):
+        self.status = status
+        self.headers = headers
+        self.body = body
 
 
-def test_meta_for_portrait_seq(client):
-    """GET /seq/10m/TiaoShui_a_male_5500_597/meta returns intrinsics + image dims."""
-    resp = client.get("/seq/10m/TiaoShui_a_male_5500_597/meta")
-    assert resp.status_code == 200
-    m = resp.get_json()
-    assert m["portrait"] is True
-    assert m["n_frames"] == 597  # this fixture is 597 frames
-    assert m["K"] == {"fx": 1850.0, "fy": 1850.0, "cx": 960.0, "cy": 540.0}
-    assert m["image_w"] == 1920
-    assert m["image_h"] == 1080
-    assert m["faces_url"].endswith("/faces.bin")
-    assert m["kp_count"] == 24
+def _free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
 
-def test_meta_404_for_unknown_seq(client):
-    resp = client.get("/seq/10m/NOPE_NOT_REAL/meta")
-    assert resp.status_code == 404
+def _wait_for_http(port):
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        if StaticServerTest.server.poll() is not None:
+            stdout, stderr = StaticServerTest.server.communicate()
+            raise RuntimeError(f"server exited early\nstdout={stdout}\nstderr={stderr}")
+        try:
+            _get(port, "/")
+            return
+        except OSError:
+            time.sleep(0.05)
+    raise TimeoutError("static server did not start")
 
 
-def test_faces_bin_size_and_dtype(client):
-    """faces.bin: int32, shape (F, 3), F == 13776 for SMPL."""
-    resp = client.get("/seq/10m/TiaoShui_a_male_5500_597/faces.bin")
-    assert resp.status_code == 200
-    assert resp.mimetype == "application/octet-stream"
-    # SMPL has 13776 triangle faces × 3 verts × int32
-    assert len(resp.data) == 13776 * 3 * 4
+def _get(port, path):
+    with urlopen(f"http://127.0.0.1:{port}{path}", timeout=2) as response:
+        return Response(response.status, response.headers, response.read())
 
 
-def test_frame_bin_layout(client):
-    """frame/<i>.bin: 6890*3 + 24*3 + 3 + 3 floats == (6890*3 + 24*3 + 3 + 3)*4 bytes."""
-    resp = client.get("/seq/10m/TiaoShui_a_male_5500_597/frame/0.bin")
-    assert resp.status_code == 200
-    assert resp.mimetype == "application/octet-stream"
-    expected = (6890 * 3 + 24 * 3 + 3 + 3) * 4
-    assert len(resp.data) == expected, f"got {len(resp.data)} expected {expected}"
-
-
-def test_frame_bin_contents_are_finite_floats(client):
-    """frame/0.bin parses as float32 and contains no NaN/Inf."""
-    import numpy as np
-    resp = client.get("/seq/10m/TiaoShui_a_male_5500_597/frame/0.bin")
-    buf = np.frombuffer(resp.data, dtype=np.float32)
-    assert buf.shape == (6890 * 3 + 24 * 3 + 3 + 3,)
-    assert np.isfinite(buf).all()
-    verts = buf[:6890 * 3].reshape(6890, 3)
-    # all verts in front of camera in src coords (Z<0)
-    assert (verts[:, 2] < 0).all()
-    # root_rota (last 3 floats): axis-angle vector, non-zero on a real seq
-    root_rota = buf[-3:]
-    assert np.linalg.norm(root_rota) > 0
-
-
-def test_frame_bin_404_out_of_range(client):
-    resp = client.get("/seq/10m/TiaoShui_a_male_5500_597/frame/99999.bin")
-    assert resp.status_code == 404
-
-
-def test_image_endpoint_serves_jpeg(client):
-    resp = client.get("/seq/10m/TiaoShui_a_male_5500_597/img/0.jpg")
-    assert resp.status_code == 200
-    assert resp.mimetype == "image/jpeg"
-    # JPEG magic
-    assert resp.data[:3] == b"\xff\xd8\xff"
-
-
-def test_image_endpoint_404_out_of_range(client):
-    resp = client.get("/seq/10m/TiaoShui_a_male_5500_597/img/99999.jpg")
-    assert resp.status_code == 404
+if __name__ == "__main__":
+    unittest.main()

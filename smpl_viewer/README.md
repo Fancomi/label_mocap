@@ -46,8 +46,8 @@ betas
 frame or image_id
 ```
 
-If a browser does not support directory selection, select `player_0.json` and
-the JPG frames together in the fallback file picker.
+If a browser does not support directory selection, the fallback flow first asks
+for `player_0.json`, then opens a second picker for the JPG frames.
 
 ## GitHub Pages
 

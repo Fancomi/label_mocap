@@ -24,7 +24,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=8901)
+    ap.add_argument("--port", type=int, default=8902)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--raw-root", default=None, help="ignored; data is selected in the browser")
     args = ap.parse_args()

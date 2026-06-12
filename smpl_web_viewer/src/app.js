@@ -9,6 +9,8 @@ const slider = document.querySelector('#frameSlider');
 const playButton = document.querySelector('#playPause');
 const loadButton = document.querySelector('#loadSample');
 const viewport = document.querySelector('#viewport');
+const params = new URLSearchParams(globalThis.location.search);
+const debugReferenceEnabled = params.get('debugRef') === '1';
 
 const scene = new SmplScene(viewport);
 const worker = new Worker(new URL('./smpl/smpl_worker.js', import.meta.url), { type: 'module' });
@@ -84,17 +86,22 @@ async function loadSample() {
     pendingFrames.clear();
     const model = await loadModel('./public/models/smpl_neutral.meta.json');
     scene.setTopology(model.faces);
-    scene.setReferenceTopology(model.faces);
+    scene.clearReference();
     worker.postMessage({ type: 'init', model });
 
     setStatus('Loading sample sequence...');
     sequence = await loadSequence('./public/samples/a_famale_224/a1/sequence.json');
-    try {
-      referenceMesh = await loadReferenceMeshIfAvailable(
-        './public/debug/a_famale_224/a1/python_ref_mesh.meta.json'
-      );
-    } catch (_err) {
-      referenceMesh = null;
+    referenceMesh = null;
+    if (debugReferenceEnabled) {
+      try {
+        scene.setReferenceTopology(model.faces);
+        referenceMesh = await loadReferenceMeshIfAvailable(
+          './public/debug/a_famale_224/a1/python_ref_mesh.meta.json'
+        );
+      } catch (_err) {
+        referenceMesh = null;
+        scene.clearReference();
+      }
     }
     playback = new Playback(sequence.frames.length, sequence.fps);
     slider.max = String(Math.max(0, sequence.frames.length - 1));
