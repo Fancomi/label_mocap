@@ -74,6 +74,33 @@ export class LabelScene {
     this._cam = cameraModes;
   }
 
+  // Fit the canvas/renderer to the parent container while matching the
+  // camera's image aspect (letterboxed). Called on load and window resize.
+  resize() {
+    if (!this._cam) return;
+    const parent = this._canvas.parentElement;
+    const cw = parent.clientWidth;
+    const ch = parent.clientHeight;
+    if (cw <= 0 || ch <= 0) return;
+
+    const targetAspect = this._cam.effectiveAspect();
+    const containerAspect = cw / ch;
+    let w;
+    let h;
+    if (containerAspect > targetAspect) {
+      h = ch;
+      w = Math.round(h * targetAspect);
+    } else {
+      w = cw;
+      h = Math.round(w / targetAspect);
+    }
+    this._canvas.style.width = `${w}px`;
+    this._canvas.style.height = `${h}px`;
+    this._renderer.setSize(w, h, false);
+    this._cam.camera.aspect = w / h;
+    this._cam.camera.updateProjectionMatrix();
+  }
+
   updateMesh(vertices, joints) {
     if (!this._mesh) return;
 
