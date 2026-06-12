@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { Worker } from 'node:worker_threads';
 
 function createWorker() {
-  return new Worker(new URL('../src/smpl/smpl_worker.js', import.meta.url), { type: 'module' });
+  return new Worker(new URL('../../smpl_core/smpl_worker.js', import.meta.url), { type: 'module' });
 }
 
 function tinyModel() {

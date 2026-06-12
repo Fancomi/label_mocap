@@ -1,4 +1,4 @@
-import { forwardSmpl } from '../smpl_web_viewer/src/smpl/lbs.js';
+import { forwardSmpl } from '../smpl_core/lbs.js';
 
 let model = null;
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { arrayFromBuffer, loadModelFromFiles } from '../src/smpl/smpl_model.js';
+import { arrayFromBuffer, loadModelFromFiles } from '../../smpl_core/smpl_model.js';
 
 test('loadModelFromFiles slices arrays by meta offsets', async () => {
   const base = new URL('./fixtures/tiny_model/', import.meta.url);

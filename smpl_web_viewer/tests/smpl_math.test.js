@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { axisAngleToMat3, mat4FromRt, mat4Mul, transformPoint } from '../src/smpl/math3d.js';
+import { axisAngleToMat3, mat4FromRt, mat4Mul, transformPoint } from '../../smpl_core/math3d.js';
 
 test('axisAngleToMat3 returns identity for zero vector', () => {
   assert.deepEqual(Array.from(axisAngleToMat3([0, 0, 0])).map(x => +x.toFixed(6)), [

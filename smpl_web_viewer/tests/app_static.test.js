@@ -5,10 +5,10 @@ import { test } from 'node:test';
 test('app imports scene, worker, model loader, and sequence loader', async () => {
   const app = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
   assert.match(app, /from '\.\/viewer\/scene\.js'/);
-  assert.match(app, /from '\.\/smpl\/smpl_model\.js'/);
+  assert.match(app, /from '\.\.\/\.\.\/smpl_core\/smpl_model\.js'/);
   assert.match(app, /from '\.\/data\/sequence_loader\.js'/);
   assert.match(app, /from '\.\/debug\/reference_mesh\.js'/);
-  assert.match(app, /new Worker\(new URL\('\.\/smpl\/smpl_worker\.js'/);
+  assert.match(app, /new Worker\(new URL\('\.\.\/\.\.\/smpl_core\/smpl_worker\.js'/);
 });
 
 test('scene applies camera principal point view offsets', async () => {

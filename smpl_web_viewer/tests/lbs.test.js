@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildPoseRotations, blendShape, forwardSmpl, regressJoints } from '../src/smpl/lbs.js';
+import { buildPoseRotations, blendShape, forwardSmpl, regressJoints } from '../../smpl_core/lbs.js';
 
 function assertCloseArray(actual, expected, epsilon = 1e-6) {
   const got = Array.from(actual);

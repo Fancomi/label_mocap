@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { CameraModes } from './camera_modes.js';
 import { loadLocalA1SequenceFromFileList, loadLocalA1SequenceFromFiles, sequenceLabel } from './local_data.js';
-import { loadModel } from '../smpl_web_viewer/src/smpl/smpl_model.js';
+import { loadModel } from '../smpl_core/smpl_model.js';
 
 // Shared schema with kps3d_viewer.html
 // BONES: [child_kp_idx, parent_kp_idx, group]

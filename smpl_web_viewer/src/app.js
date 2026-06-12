@@ -1,6 +1,6 @@
 import { loadSequence } from './data/sequence_loader.js';
 import { loadReferenceMeshIfAvailable } from './debug/reference_mesh.js';
-import { loadModel } from './smpl/smpl_model.js';
+import { loadModel } from '../../smpl_core/smpl_model.js';
 import { Playback } from './viewer/playback.js';
 import { SmplScene } from './viewer/scene.js';
 
@@ -13,7 +13,7 @@ const params = new URLSearchParams(globalThis.location.search);
 const debugReferenceEnabled = params.get('debugRef') === '1';
 
 const scene = new SmplScene(viewport);
-const worker = new Worker(new URL('./smpl/smpl_worker.js', import.meta.url), { type: 'module' });
+const worker = new Worker(new URL('../../smpl_core/smpl_worker.js', import.meta.url), { type: 'module' });
 
 let playback = new Playback(0);
 let sequence = null;
