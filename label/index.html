@@ -42,6 +42,9 @@
     .tabpanel[hidden] { display:none; }
     #joint-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:3px; }
     #joint-grid button { font-size:10px; padding:4px 2px; } #joint-grid button.on { background:#0066cc; }
+    #right.disabled { opacity:.5; pointer-events:none; }
+    #pose-rot-block { display:flex; flex-direction:column; gap:6px; }
+    #pose-rot-block[hidden] { display:none; }
   </style>
 </head>
 <body>
@@ -93,10 +96,10 @@
 
   <div id="stage"><canvas id="c"></canvas><div id="status">就绪 — 请先打开数据</div></div>
 
-  <aside id="right">
+  <aside id="right" class="disabled">
     <div id="tabs">
       <button class="tab on" data-mode="pose">姿势</button>
-      <button class="tab" data-mode="root">位置</button>
+      <button class="tab" data-mode="root">整体</button>
       <button class="tab" data-mode="bbox">框</button>
       <button class="tab" data-mode="beta">体型</button>
     </div>
@@ -105,22 +108,40 @@
       <p class="hint">点击画面中的关节点,或在下方选择一个关节,然后拖动出现的旋转环。</p>
       <div id="joint-grid"></div>
       <div id="sel-joint" class="status">未选择关节</div>
-      <h3>旋转 (欧拉 XYZ, 度)</h3>
-      <div class="kgrid">
-        <label>X</label><input type="number" id="eul-x" step="1"><input type="range" id="eul-x-s" min="-180" max="180" step="1">
-        <label>Y</label><input type="number" id="eul-y" step="1"><input type="range" id="eul-y-s" min="-180" max="180" step="1">
-        <label>Z</label><input type="number" id="eul-z" step="1"><input type="range" id="eul-z-s" min="-180" max="180" step="1">
+      <div id="pose-rot-block" hidden>
+        <h3>旋转 (欧拉 XYZ, 度)</h3>
+        <div class="kgrid">
+          <label>X</label><input type="number" id="pose-eul-x" step="1"><input type="range" id="pose-eul-x-s" min="-180" max="180" step="1">
+          <label>Y</label><input type="number" id="pose-eul-y" step="1"><input type="range" id="pose-eul-y-s" min="-180" max="180" step="1">
+          <label>Z</label><input type="number" id="pose-eul-z" step="1"><input type="range" id="pose-eul-z-s" min="-180" max="180" step="1">
+        </div>
       </div>
     </section>
 
     <section class="tabpanel" data-mode="root" hidden>
-      <p class="hint">拖动箭头移动整个人体;切换到"旋转"可改朝向。</p>
+      <p class="hint">控制整个人体:拖动箭头平移、切换"旋转"改朝向,并可调整相机内参。</p>
       <div class="row"><button id="root-translate" class="on">移动</button><button id="root-rotate">旋转</button></div>
-      <h3>位置 (米)</h3>
+      <h3>整体平移 (米)</h3>
       <div class="kgrid2">
         <label>x</label><input type="number" id="pos-x" step="0.01">
         <label>y</label><input type="number" id="pos-y" step="0.01">
         <label>z</label><input type="number" id="pos-z" step="0.01">
+      </div>
+      <h3>整体旋转 (欧拉 XYZ, 度)</h3>
+      <div class="kgrid">
+        <label>X</label><input type="number" id="root-eul-x" step="1"><input type="range" id="root-eul-x-s" min="-180" max="180" step="1">
+        <label>Y</label><input type="number" id="root-eul-y" step="1"><input type="range" id="root-eul-y-s" min="-180" max="180" step="1">
+        <label>Z</label><input type="number" id="root-eul-z" step="1"><input type="range" id="root-eul-z-s" min="-180" max="180" step="1">
+      </div>
+      <div class="card">
+        <h3>相机内参 (实时)</h3>
+        <div class="kgrid2">
+          <label>fx</label><input type="number" id="k-fx" step="1">
+          <label>fy</label><input type="number" id="k-fy" step="1">
+          <label>cx</label><input type="number" id="k-cx" step="1">
+          <label>cy</label><input type="number" id="k-cy" step="1">
+        </div>
+        <button id="btn-k-reset">重置内参</button>
       </div>
     </section>
 
@@ -135,17 +156,6 @@
       <div id="beta-sliders"></div>
       <button id="btn-beta-reset">归零</button>
     </section>
-
-    <div class="card">
-      <h3>相机内参 (实时)</h3>
-      <div class="kgrid2">
-        <label>fx</label><input type="number" id="k-fx" step="1">
-        <label>fy</label><input type="number" id="k-fy" step="1">
-        <label>cx</label><input type="number" id="k-cx" step="1">
-        <label>cy</label><input type="number" id="k-cy" step="1">
-      </div>
-      <button id="btn-k-reset">重置内参</button>
-    </div>
   </aside>
   <script type="module" src="./src/app.js"></script>
 </body>

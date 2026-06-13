@@ -39,6 +39,7 @@ export class LabelScene {
     this._gridSize = 20;
     this._gridStep = 0.5;
     this._flags = { mesh: true, points: true, bones: true, grid: true, axes: false, bg: true };
+    this._personVisible = true;
     this._lastJoints = null;
   }
 
@@ -119,11 +120,15 @@ export class LabelScene {
 
   setFlag(key, value) { this._flags[key] = value; this._applyVisibility(); }
 
+  // Person-visibility gate independent of display flags. Hides the posed
+  // mesh/joints/bones for empty frames (e.g. after deleting an annotation).
+  setPersonVisible(v) { this._personVisible = v; this._applyVisibility(); }
+
   _applyVisibility() {
     const is3d = this._cam && this._cam.mode === '3d';
-    if (this._mesh) this._mesh.visible = this._flags.mesh;
-    if (this._jointsGroup) this._jointsGroup.visible = this._flags.points;
-    if (this._bonesGroup) this._bonesGroup.visible = this._flags.bones;
+    if (this._mesh) this._mesh.visible = this._flags.mesh && this._personVisible;
+    if (this._jointsGroup) this._jointsGroup.visible = this._flags.points && this._personVisible;
+    if (this._bonesGroup) this._bonesGroup.visible = this._flags.bones && this._personVisible;
     if (this._grid) this._grid.visible = this._flags.grid && is3d;
     if (this._axes) this._axes.visible = this._flags.axes && is3d;
     if (this._bgFar) this._bgFar.visible = this._flags.bg;

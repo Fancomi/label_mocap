@@ -88,6 +88,7 @@ async function openFiles(fileList) {
   if (syncUI) ui.onChange(syncUI);
   $('slider').max = String(Math.max(0, store.frameCount() - 1));
   $('slider').value = '0';
+  $('right').classList.remove('disabled');
   if (!model) { model = await loadModel(MODEL_URL); scene.setTopology(model.faces); }
   scene.prepareForSequence({ K: cam.K, image_w: cam.imageW, image_h: cam.imageH });
   cam.snapTo('2d');
@@ -138,8 +139,13 @@ async function showFrame(i) {
   if (a) {
     rotation = RotationState.fromAxisAngle({ root_rota: a.root_rota, body_pose: a.body_pose });
     applyAnnotation();
+    scene.setPersonVisible(true);
   } else {
     rotation = null;
+    lastVertices = null;
+    lastJoints = null;
+    lastWorldRot = null;
+    scene.setPersonVisible(false);
     if (panels) panels.syncFromState();
     if (bboxOverlay) bboxOverlay.render(null);
   }
@@ -301,6 +307,7 @@ function boot() {
     document.querySelectorAll('.tabpanel').forEach((p) => { p.hidden = p.dataset.mode !== ui.mode; });
     jointGridButtons.forEach((b, j) => b.classList.toggle('on', ui.mode === 'pose' && ui.selectedJoint === j));
     $('sel-joint').textContent = ui.selectedJoint == null ? '未选择关节' : `已选择: ${JOINT_NAMES[ui.selectedJoint + 1]}`;
+    const prb = $('pose-rot-block'); if (prb) prb.hidden = !(ui.mode === 'pose' && ui.selectedJoint != null);
     scene.setSelectedJoint(ui.mode === 'pose' && ui.selectedJoint != null ? ui.selectedJoint + 1 : -1);
     if (jointPicker) jointPicker.setEnabled(ui.mode === 'pose');
 

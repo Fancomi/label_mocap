@@ -37,33 +37,41 @@ export class Panels {
   // the value a user is actively typing into).
   _setVal(el, v) { if (el && el !== document.activeElement) el.value = v; }
 
-  // The euler target: a body joint index if pose mode has one selected, else root.
-  _activeJoint() {
-    const ui = this._getUI();
-    if (ui && ui.mode === 'pose' && ui.selectedJoint != null) return ui.selectedJoint;
-    return null; // root
-  }
-
   // ── Refresh all readouts from current state ───────────────────────────────
   syncFromState() {
     const rot = this._getRotation();
     const store = this._getStore();
+    const ui = this._getUI();
     const cur = store ? store.current() : null;
 
+    const clearSet = (prefix) => {
+      for (const id of [`${prefix}-eul-x`, `${prefix}-eul-y`, `${prefix}-eul-z`, `${prefix}-eul-x-s`, `${prefix}-eul-y-s`, `${prefix}-eul-z-s`]) this._setVal($(id), '');
+    };
+    const writeSet = (prefix, e) => {
+      const dx = (e[0] * DEG).toFixed(1), dy = (e[1] * DEG).toFixed(1), dz = (e[2] * DEG).toFixed(1);
+      this._setVal($(`${prefix}-eul-x`), dx);
+      this._setVal($(`${prefix}-eul-y`), dy);
+      this._setVal($(`${prefix}-eul-z`), dz);
+      this._setVal($(`${prefix}-eul-x-s`), dx);
+      this._setVal($(`${prefix}-eul-y-s`), dy);
+      this._setVal($(`${prefix}-eul-z-s`), dz);
+    };
+
     if (!rot || !cur) {
-      for (const id of ['eul-x', 'eul-y', 'eul-z', 'eul-x-s', 'eul-y-s', 'eul-z-s', 'pos-x', 'pos-y', 'pos-z']) this._setVal($(id), '');
+      clearSet('pose');
+      clearSet('root');
+      for (const id of ['pos-x', 'pos-y', 'pos-z']) this._setVal($(id), '');
       $('bbox-ro').textContent = '—';
       $('angle-list').innerHTML = '';
     } else {
-      const j = this._activeJoint();
-      const e = j != null ? rot.getJointEuler(j) : rot.getRootEuler();
-      const dx = (e[0] * DEG).toFixed(1), dy = (e[1] * DEG).toFixed(1), dz = (e[2] * DEG).toFixed(1);
-      this._setVal($('eul-x'), dx);
-      this._setVal($('eul-y'), dy);
-      this._setVal($('eul-z'), dz);
-      this._setVal($('eul-x-s'), dx);
-      this._setVal($('eul-y-s'), dy);
-      this._setVal($('eul-z-s'), dz);
+      // POSE set: only when a joint is selected in pose mode.
+      if (ui && ui.mode === 'pose' && ui.selectedJoint != null) {
+        writeSet('pose', rot.getJointEuler(ui.selectedJoint));
+      } else {
+        clearSet('pose');
+      }
+      // ROOT set: always reflect root rotation.
+      writeSet('root', rot.getRootEuler());
       const p = cur.root_pos || [0, 0, 0];
       this._setVal($('pos-x'), (+p[0]).toFixed(3));
       this._setVal($('pos-y'), (+p[1]).toFixed(3));
@@ -112,39 +120,52 @@ export class Panels {
   }
 
   // ── Euler XYZ inputs (numeric + sliders) ─────────────────────────────────
-  _commitEulerFrom(degVals) {
-    if (this._readOnly()) return;
-    const rot = this._getRotation();
-    const store = this._getStore();
-    if (!rot || !store || !store.current()) return;
-    const e = degVals.map((d) => (d || 0) * RAD);
-    const j = this._activeJoint();
-    if (j != null) rot.setJointEuler(j, e);
-    else rot.setRootEuler(e);
-    store.applyFields(rot.toAxisAngle());
-    this._onEdit();
+  // Two independent sets: 'pose' edits the selected joint, 'root' edits root.
+  _bindEulerInputs() {
+    this._bindEulerSet('pose');
+    this._bindEulerSet('root');
   }
 
-  _bindEulerInputs() {
-    // Three axes; each has a numeric input (#eul-x) and a range slider (#eul-x-s).
-    const axes = [['eul-x', 'eul-x-s'], ['eul-y', 'eul-y-s'], ['eul-z', 'eul-z-s']];
+  _bindEulerSet(prefix) {
+    const axes = [
+      [`${prefix}-eul-x`, `${prefix}-eul-x-s`],
+      [`${prefix}-eul-y`, `${prefix}-eul-y-s`],
+      [`${prefix}-eul-z`, `${prefix}-eul-z-s`],
+    ];
     const readDegs = () => axes.map(([num]) => parseFloat($(num).value) || 0);
-    const begin = () => { if (!this._readOnly()) this._getStore().beginEdit(); };
-    const commit = () => { if (!this._readOnly()) this._getStore().commitEdit(); };
+    const commitTo = (degVals) => {
+      if (this._readOnly()) return;
+      const rot = this._getRotation();
+      const store = this._getStore();
+      if (!rot || !store || !store.current()) return;
+      const e = degVals.map((d) => (d || 0) * RAD);
+      if (prefix === 'pose') {
+        const ui = this._getUI();
+        if (!ui || ui.selectedJoint == null) return;
+        rot.setJointEuler(ui.selectedJoint, e);
+      } else {
+        rot.setRootEuler(e);
+      }
+      store.applyFields(rot.toAxisAngle());
+      this._onEdit();
+    };
+    const begin = () => { if (!this._readOnly()) this._getStore()?.beginEdit(); };
+    const commit = () => { if (!this._readOnly()) this._getStore()?.commitEdit(); };
     for (const [numId, sliderId] of axes) {
       const num = $(numId);
       const slider = $(sliderId);
+      if (!num || !slider) continue;
       num.addEventListener('focus', begin);
       num.addEventListener('input', () => {
         this._setVal(slider, num.value);
-        this._commitEulerFrom(readDegs());
+        commitTo(readDegs());
       });
       num.addEventListener('change', commit);
       num.addEventListener('blur', commit);
       slider.addEventListener('pointerdown', begin);
       slider.addEventListener('input', () => {
         num.value = slider.value;
-        this._commitEulerFrom(readDegs());
+        commitTo(readDegs());
       });
       slider.addEventListener('change', commit);
       slider.addEventListener('pointerup', commit);
