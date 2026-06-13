@@ -129,7 +129,7 @@ export class LabelScene {
     geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
     geom.setIndex(new THREE.BufferAttribute(new Uint32Array(faces), 1));
     this._mesh = new THREE.Mesh(geom, new THREE.MeshLambertMaterial({
-      color: 0xf0f0f0, side: THREE.DoubleSide,
+      color: 0xf0f0f0, side: THREE.DoubleSide, transparent: true, opacity: 0.55, depthWrite: false,
     }));
     this._mesh.frustumCulled = false;
     this._mesh.renderOrder = 5;

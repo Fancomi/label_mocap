@@ -19,9 +19,6 @@ export class RootHandle {
     this._tc.setMode('translate');
     this._tc.attach(this._proxy);
 
-    this._tc.addEventListener('dragging-changed', (e) => {
-      this._controls.enabled = e.value ? false : (this._getMode() === '3d');
-    });
     this._tc.addEventListener('mouseDown', () => this._getStore().beginEdit());
     this._tc.addEventListener('objectChange', () => {
       if (this._mode === 'rotate') {
@@ -70,4 +67,6 @@ export class RootHandle {
   }
 
   update() { /* TransformControls auto-updates against the camera */ }
+
+  isEngaged() { return !!(this._tc && (this._tc.dragging || this._tc.axis != null)); }
 }

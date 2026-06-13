@@ -50,6 +50,7 @@ function isJpeg(name) { return /\.(jpe?g)$/i.test(name); }
 
 function setPlaying(on) {
   playing = on && store && store.frameCount() > 0;
+  if (playing) { poseGizmo?.detach(); rootHandle?.detach(); }
   $('btn-play').textContent = playing ? '⏸ 暂停' : '▶ 播放';
   $('btn-play').classList.toggle('on', playing);
 }
@@ -192,8 +193,8 @@ function boot() {
   scene.setCamera(cam);
   $('btn-open').addEventListener('click', () => $('dir-input').click());
   $('dir-input').addEventListener('change', (e) => openFiles(e.target.files).catch((err) => setStatus(String(err))));
-  $('btn-2d').addEventListener('click', () => { cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); if (syncUI) syncUI(); });
-  $('btn-3d').addEventListener('click', () => { cam.switchTo('3d'); $('btn-3d').classList.add('on'); $('btn-2d').classList.remove('on'); if (syncUI) syncUI(); });
+  $('btn-2d').addEventListener('click', () => { if ((poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged())) return; cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); refreshTabAvailability(); if (syncUI) syncUI(); });
+  $('btn-3d').addEventListener('click', () => { if ((poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged())) return; cam.switchTo('3d'); $('btn-3d').classList.add('on'); $('btn-2d').classList.remove('on'); if (ui && ui.mode === 'bbox') ui.setMode('pose'); refreshTabAvailability(); if (syncUI) syncUI(); });
   $('slider').addEventListener('input', (e) => { if (!store) return; setPlaying(false); showFrame(+e.target.value); });
   $('btn-prev').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.max(0, store.currentFrame() - 1)); });
   $('btn-next').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.min(store.frameCount() - 1, store.currentFrame() + 1)); });
@@ -233,7 +234,11 @@ function boot() {
   }
 
   // Tab buttons.
-  document.querySelectorAll('#tabs .tab').forEach((btn) => btn.addEventListener('click', () => ui && ui.setMode(btn.dataset.mode)));
+  document.querySelectorAll('#tabs .tab').forEach((btn) => btn.addEventListener('click', () => {
+    if (btn.disabled) return;
+    if ((poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged())) return;
+    if (ui) ui.setMode(btn.dataset.mode);
+  }));
 
   jointPicker = new JointPicker({
     canvas: $('c'),
@@ -243,6 +248,7 @@ function boot() {
       if (smpl === 0) ui.setMode('root');
       else if (smpl >= 1 && smpl <= 21) ui.selectJoint(smpl - 1);
     },
+    canPick: () => !((poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged())),
   });
 
   rootHandle = new RootHandle({
@@ -275,23 +281,32 @@ function boot() {
   });
 
   // ui.onChange fires whenever mode/joint changes → sync tabs, panels, gizmos.
+  function refreshTabAvailability() {
+    const bboxTab = document.querySelector('#tabs .tab[data-mode="bbox"]');
+    if (bboxTab) bboxTab.disabled = (cam.mode === '3d');
+  }
+
   syncUI = () => {
     if (!ui) return;
+    refreshTabAvailability();
     document.querySelectorAll('#tabs .tab').forEach((b) => b.classList.toggle('on', b.dataset.mode === ui.mode));
     document.querySelectorAll('.tabpanel').forEach((p) => { p.hidden = p.dataset.mode !== ui.mode; });
     jointGridButtons.forEach((b, j) => b.classList.toggle('on', ui.mode === 'pose' && ui.selectedJoint === j));
     $('sel-joint').textContent = ui.selectedJoint == null ? '未选择关节' : `已选择: ${JOINT_NAMES[ui.selectedJoint + 1]}`;
     if (jointPicker) jointPicker.setEnabled(ui.mode === 'pose');
 
+    // Starting an edit (gizmo attach) pauses playback.
+    if ((ui.mode === 'pose' && ui.selectedJoint != null) || ui.mode === 'root') setPlaying(false);
+
     // Exactly one interaction at a time.
-    if (ui.mode === 'pose' && ui.selectedJoint != null && rotation && lastWorldRot) {
+    if (!playing && ui.mode === 'pose' && ui.selectedJoint != null && rotation && lastWorldRot) {
       const j = ui.selectedJoint;
       const smplJ = j + 1;
       const parent = model.parents[smplJ];
       const qParentWorld = mat3ToQuat(lastWorldRot.slice(parent * 9, parent * 9 + 9));
       poseGizmo.attach(j, scene.jointWorldPosition(smplJ), qParentWorld);
       rootHandle.detach();
-    } else if (ui.mode === 'root' && store && store.current()) {
+    } else if (!playing && ui.mode === 'root' && store && store.current()) {
       rootHandle.attach(store.current().root_pos);
       poseGizmo.detach();
     } else {
@@ -341,6 +356,8 @@ function boot() {
       }
     }
     lastTick = now;
+    const gizmoBusy = (poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged());
+    if (cam) cam.controls.enabled = (cam.mode === '3d') && !gizmoBusy;
     scene.render();   // scene.render() calls cam.update() internally
     requestAnimationFrame(loop);
   }

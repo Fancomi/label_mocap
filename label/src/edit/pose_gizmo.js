@@ -21,7 +21,6 @@ export class PoseGizmo {
     this._tc.setMode('rotate');
     this._tc.setSpace('local');
     this._tc.addEventListener('dragging-changed', (e) => {
-      controls.enabled = e.value ? false : (getMode() === '3d');
       if (e.value) this._getStore().beginEdit();
       else this._getStore().commitEdit();
     });
@@ -48,6 +47,8 @@ export class PoseGizmo {
     this._setVisible(false);
     this._jointBody = null;
   }
+
+  isEngaged() { return !!(this._tc && (this._tc.dragging || this._tc.axis != null)); }
 
   _setVisible(v) {
     const helper = this._tc.getHelper ? this._tc.getHelper() : this._tc;
