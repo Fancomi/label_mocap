@@ -6,6 +6,7 @@ import { CocoDocument } from './io/coco_document.js';
 import { buildFrames, isPortrait } from './io/source_loader.js';
 import { AnnotationStore } from './edit/annotation_store.js';
 import { reprojectKeypoints } from './edit/derived.js';
+import { computeOcclusion } from './edit/occlusion_raycast.js';
 import { RotationState } from './edit/rotation_state.js';
 import { UIController } from './ui/ui_controller.js';
 import { JointPicker } from './ui/joint_picker.js';
@@ -164,7 +165,13 @@ function saveJson() {
     if (!a) continue;
     const out = forwardSmpl(model, { root_pos: a.root_pos, root_rota: a.root_rota, body_pose: a.body_pose, betas: a.betas });
     const keypoints = reprojectKeypoints(out.joints, cam.K, 52);
-    doc.setAnnotation(id, { keypoints });
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(out.vertices, 3));
+    g.setIndex(new THREE.BufferAttribute(new Uint32Array(model.faces), 1));
+    const tmpMesh = new THREE.Mesh(g);
+    const occ = computeOcclusion(out.joints, tmpMesh, cam.camera, 52);
+    g.dispose();
+    doc.setAnnotation(id, { keypoints, occlution_joint: occ });
   }
   const json = JSON.stringify(doc.serialize(), null, 2);
   const blob = new Blob([json], { type: 'application/json' });
@@ -248,6 +255,7 @@ function boot() {
       if (smpl === 0) ui.setMode('root');
       else if (smpl >= 1 && smpl <= 21) ui.selectJoint(smpl - 1);
     },
+    onMiss: () => { if (ui && ui.mode === 'pose') ui.clearSelection(); },
     canPick: () => !((poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged())),
   });
 
@@ -293,6 +301,7 @@ function boot() {
     document.querySelectorAll('.tabpanel').forEach((p) => { p.hidden = p.dataset.mode !== ui.mode; });
     jointGridButtons.forEach((b, j) => b.classList.toggle('on', ui.mode === 'pose' && ui.selectedJoint === j));
     $('sel-joint').textContent = ui.selectedJoint == null ? '未选择关节' : `已选择: ${JOINT_NAMES[ui.selectedJoint + 1]}`;
+    scene.setSelectedJoint(ui.mode === 'pose' && ui.selectedJoint != null ? ui.selectedJoint + 1 : -1);
     if (jointPicker) jointPicker.setEnabled(ui.mode === 'pose');
 
     // Starting an edit (gizmo attach) pauses playback.

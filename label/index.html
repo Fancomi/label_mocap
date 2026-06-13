@@ -33,10 +33,13 @@
     input[type=range] { width:100%; } input[type=number] { background:#222; border:1px solid #444; color:#eee; padding:3px 4px; border-radius:3px; font:inherit; width:100%; }
     .kgrid { display:grid; grid-template-columns:auto 70px 1fr; gap:4px 6px; align-items:center; }
     .kgrid > label { font-size:11px; color:#9ab; text-align:right; }
+    .kgrid2 { display:grid; grid-template-columns:auto 1fr; gap:4px 6px; align-items:center; }
+    .kgrid2 > label { font-size:11px; color:#9ab; text-align:right; }
     .mono { font-size:11px; line-height:1.6; }
     #tabs { display:flex; gap:3px; } #tabs .tab { flex:1; border-radius:4px 4px 0 0; }
     #tabs .tab:disabled { opacity:.4; cursor:not-allowed; }
     .tabpanel { border:1px solid #333; border-radius:0 0 4px 4px; padding:8px; display:flex; flex-direction:column; gap:6px; }
+    .tabpanel[hidden] { display:none; }
     #joint-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:3px; }
     #joint-grid button { font-size:10px; padding:4px 2px; } #joint-grid button.on { background:#0066cc; }
   </style>
@@ -114,7 +117,7 @@
       <p class="hint">拖动箭头移动整个人体;切换到"旋转"可改朝向。</p>
       <div class="row"><button id="root-translate" class="on">移动</button><button id="root-rotate">旋转</button></div>
       <h3>位置 (米)</h3>
-      <div class="kgrid">
+      <div class="kgrid2">
         <label>x</label><input type="number" id="pos-x" step="0.01">
         <label>y</label><input type="number" id="pos-y" step="0.01">
         <label>z</label><input type="number" id="pos-z" step="0.01">
@@ -135,7 +138,7 @@
 
     <div class="card">
       <h3>相机内参 (实时)</h3>
-      <div class="kgrid">
+      <div class="kgrid2">
         <label>fx</label><input type="number" id="k-fx" step="1">
         <label>fy</label><input type="number" id="k-fy" step="1">
         <label>cx</label><input type="number" id="k-cx" step="1">

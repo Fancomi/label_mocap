@@ -55,6 +55,19 @@ export class LabelScene {
     return [this._lastJoints[j * 3], this._lastJoints[j * 3 + 1], this._lastJoints[j * 3 + 2]];
   }
 
+  // The posed mesh object (THREE.Mesh) for raycasting/occlusion, or null.
+  meshObject() { return this._mesh; }
+
+  // Highlight the selected joint sphere (SMPL index). Pass -1 to clear.
+  setSelectedJoint(smplIndex) {
+    if (!this._jointsGroup) return;
+    this._jointsGroup.children.forEach((s, i) => {
+      const sel = (i === smplIndex);
+      s.material.color.set(sel ? 0x33ff88 : 0xffffff);
+      s.scale.setScalar(sel ? 1.8 : 1.0);
+    });
+  }
+
   buildFrustum(meta) {
     if (this._frustum) {
       this._scene.remove(this._frustum);
@@ -129,7 +142,7 @@ export class LabelScene {
     geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
     geom.setIndex(new THREE.BufferAttribute(new Uint32Array(faces), 1));
     this._mesh = new THREE.Mesh(geom, new THREE.MeshLambertMaterial({
-      color: 0xf0f0f0, side: THREE.DoubleSide, transparent: true, opacity: 0.55, depthWrite: false,
+      color: 0xf0f0f0, side: THREE.DoubleSide, transparent: false, opacity: 1, depthWrite: true,
     }));
     this._mesh.frustumCulled = false;
     this._mesh.renderOrder = 5;
@@ -144,6 +157,7 @@ export class LabelScene {
         new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, depthWrite: false }));
       s.userData.jointIndex = i;
       s.frustumCulled = false;
+      s.renderOrder = 11;
       this._jointsGroup.add(s);
     }
     this._scene.add(this._jointsGroup);
@@ -156,6 +170,7 @@ export class LabelScene {
         new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
         new THREE.LineBasicMaterial({ color: BONE_COLORS[g], depthTest: false }));
       line.frustumCulled = false;
+      line.renderOrder = 11;
       this._bonesGroup.add(line);
     }
     this._scene.add(this._bonesGroup);

@@ -4,11 +4,12 @@ import * as THREE from 'three';
 // Raycast a pointer event against the scene's joint spheres.
 // Returns the SMPL joint index (0..23) or null. onPick(smplIndex) is called on hit.
 export class JointPicker {
-  constructor({ canvas, camera, getJointMeshes, onPick, canPick }) {
+  constructor({ canvas, camera, getJointMeshes, onPick, onMiss, canPick }) {
     this._canvas = canvas;
     this._camera = camera;
     this._getJointMeshes = getJointMeshes;
     this._onPick = onPick;
+    this._onMiss = onMiss;
     this._canPick = canPick || (() => true);
     this._ray = new THREE.Raycaster();
     this._enabled = false;
@@ -32,6 +33,8 @@ export class JointPicker {
     if (hits.length) {
       const idx = hits[0].object.userData.jointIndex;
       if (typeof idx === 'number') this._onPick(idx);
+    } else {
+      this._onMiss && this._onMiss();
     }
   }
 
