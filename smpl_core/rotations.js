@@ -66,3 +66,28 @@ export function quatMultiply([ax, ay, az, aw], [bx, by, bz, bw]) {
     aw * bw - ax * bx - ay * by - az * bz,
   ];
 }
+
+// Quaternion conjugate (= inverse for unit quaternions).
+export function quatConjugate([x, y, z, w]) {
+  return [-x, -y, -z, w];
+}
+
+// Rotation matrix (row-major length-9) → quaternion [x,y,z,w].
+export function mat3ToQuat(m) {
+  const t = m[0] + m[4] + m[8];
+  let x; let y; let z; let w;
+  if (t > 0) {
+    const s = Math.sqrt(t + 1) * 2;
+    w = 0.25 * s; x = (m[7] - m[5]) / s; y = (m[2] - m[6]) / s; z = (m[3] - m[1]) / s;
+  } else if (m[0] > m[4] && m[0] > m[8]) {
+    const s = Math.sqrt(1 + m[0] - m[4] - m[8]) * 2;
+    w = (m[7] - m[5]) / s; x = 0.25 * s; y = (m[1] + m[3]) / s; z = (m[2] + m[6]) / s;
+  } else if (m[4] > m[8]) {
+    const s = Math.sqrt(1 + m[4] - m[0] - m[8]) * 2;
+    w = (m[2] - m[6]) / s; x = (m[1] + m[3]) / s; y = 0.25 * s; z = (m[5] + m[7]) / s;
+  } else {
+    const s = Math.sqrt(1 + m[8] - m[0] - m[4]) * 2;
+    w = (m[3] - m[1]) / s; x = (m[2] + m[6]) / s; y = (m[5] + m[7]) / s; z = 0.25 * s;
+  }
+  return [x, y, z, w];
+}
