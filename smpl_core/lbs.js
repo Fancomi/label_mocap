@@ -104,7 +104,7 @@ function transformVector(m, p) {
   ]);
 }
 
-export function forwardSmpl(model, frame) {
+export function forwardSmpl(model, frame, options = {}) {
   const verts = vertexCount(model);
   const jointsN = jointCount(model);
   const vShaped = blendShape(model, frame.betas);
@@ -174,5 +174,16 @@ export function forwardSmpl(model, frame) {
     outJoints[j * 3 + 2] = transforms[j][11] - rootOffset[2] + frame.root_pos[2];
   }
 
-  return { vertices: outVerts, joints: outJoints };
+  let worldRot;
+  if (options.worldRot) {
+    worldRot = new Float32Array(jointsN * 9);
+    for (let j = 0; j < jointsN; j++) {
+      const T = transforms[j];
+      const o = j * 9;
+      worldRot[o + 0] = T[0]; worldRot[o + 1] = T[1]; worldRot[o + 2] = T[2];
+      worldRot[o + 3] = T[4]; worldRot[o + 4] = T[5]; worldRot[o + 5] = T[6];
+      worldRot[o + 6] = T[8]; worldRot[o + 7] = T[9]; worldRot[o + 8] = T[10];
+    }
+  }
+  return options.worldRot ? { vertices: outVerts, joints: outJoints, worldRot } : { vertices: outVerts, joints: outJoints };
 }
