@@ -210,8 +210,6 @@ function boot() {
   });
   toggle('t-mesh', 'mesh'); toggle('t-points', 'points'); toggle('t-bones', 'bones');
   toggle('t-grid', 'grid'); toggle('t-axes', 'axes'); toggle('t-bg', 'bg');
-  $('grid-size').addEventListener('input', () => scene.setGrid(+$('grid-size').value, +$('grid-step').value));
-  $('grid-step').addEventListener('input', () => scene.setGrid(+$('grid-size').value, +$('grid-step').value));
 
   // --- Task 8: panels, gizmos, tabs, joint grid, canvas picking ---
   panels = new Panels({
