@@ -1,6 +1,7 @@
 // label/src/app.js — M2: load, render, navigate, annotate (add/del/undo + display toggles).
 import { loadModel } from '../../smpl_core/smpl_model.js';
 import { forwardSmpl } from '../../smpl_core/lbs.js';
+import { mat3ToQuat } from '../../smpl_core/rotations.js';
 import { CocoDocument } from './io/coco_document.js';
 import { buildFrames, isPortrait } from './io/source_loader.js';
 import { AnnotationStore } from './edit/annotation_store.js';
@@ -34,6 +35,7 @@ let rotation = null;
 let editController = null;
 let lastVertices = null;
 let lastJoints = null;
+let lastWorldRot = null;
 let panels = null;
 let rootHandle = null;
 let poseGizmo = null;
@@ -95,9 +97,10 @@ function buildFrame() {
 
 function applyAnnotation() {
   if (!rotation || !store.current()) return;
-  const out = forwardSmpl(model, buildFrame());
+  const out = forwardSmpl(model, buildFrame(), { worldRot: true });
   lastVertices = out.vertices;
   lastJoints = out.joints;
+  lastWorldRot = out.worldRot;
   scene.updateMesh(out.vertices, out.joints);
   cam.set3DFollowTarget(new THREE.Vector3(out.joints[0], out.joints[1], out.joints[2]));
   if (panels) panels.syncFromState();
@@ -222,7 +225,6 @@ function boot() {
     getMode: () => cam.mode,
     getRotation: () => rotation,
     getStore: () => store,
-    getJointWorldPos: (j) => scene.jointWorldPosition(j),
     onEdit: applyAnnotation,
   });
   bboxOverlay = new BboxOverlay({
@@ -258,10 +260,14 @@ function boot() {
     if (tool === 'root' && store && store.current()) {
       rootHandle.attach(store.current().root_pos);
       poseGizmo.detach();
-    } else if (tool === 'pose' && editController.selectedJoint != null && rotation) {
+    } else if (tool === 'pose' && editController.selectedJoint != null && rotation && lastWorldRot) {
       const j = editController.selectedJoint;
       // body joint j corresponds to SMPL world joint j+1
-      poseGizmo.attach(j, scene.jointWorldPosition(j + 1), rotation.getJointQuat(j));
+      const smplJ = j + 1;
+      const parent = model.parents[smplJ];
+      const pm = lastWorldRot.slice(parent * 9, parent * 9 + 9);
+      const qParentWorld = mat3ToQuat(pm);
+      poseGizmo.attach(j, scene.jointWorldPosition(smplJ), qParentWorld);
       rootHandle.detach();
     } else {
       rootHandle.detach();

@@ -1,71 +1,67 @@
-// label/src/edit/pose_gizmo.js — rotation gizmo for a single SMPL body joint.
-//
-// FIDELITY NOTE: a true local-frame edit would require the parent chain's
-// world orientation to convert a world-space gizmo delta into the joint's
-// local frame. That parent orientation is not cheaply available here, so this
-// gizmo uses DIRECT-QUATERNION mapping: the proxy is initialized to the
-// joint's current LOCAL quaternion and whatever quaternion the gizmo produces
-// is written straight back as the new local quaternion. Edits are therefore
-// expressed in the joint's own frame (usable, but the gizmo's on-screen axes
-// do not align with the joint's posed world orientation).
+// label/src/edit/pose_gizmo.js
 import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { worldGizmoFromLocal, localFromWorldGizmo } from './gizmo_frame.js';
 
+// Per-joint rotation gizmo. Displays at the joint's WORLD orientation and maps
+// drags back to the joint LOCAL quaternion using the parent world rotation, so
+// the on-screen rings align with what the user sees and edits don't jump.
 export class PoseGizmo {
-  constructor({ scene, camera, canvas, controls, getMode, getRotation, getStore, getJointWorldPos, onEdit }) {
+  constructor({ scene, camera, canvas, controls, getMode, getRotation, getStore, onEdit }) {
     this._scene = scene;
-    this._controls = controls;
-    this._getMode = getMode || (() => '3d');
+    this._getMode = getMode;
     this._getRotation = getRotation;
     this._getStore = getStore;
-    this._getJointWorldPos = getJointWorldPos;
     this._onEdit = onEdit;
-    this._attached = false;
-    this._jointIndex = null;
-
+    this._jointBody = null;       // body-pose index (0..20)
+    this._qParentWorld = [0, 0, 0, 1];
     this._proxy = new THREE.Object3D();
-
+    this._scene.add(this._proxy);
     this._tc = new TransformControls(camera, canvas);
     this._tc.setMode('rotate');
-    this._tc.attach(this._proxy);
-
+    this._tc.setSpace('local');
     this._tc.addEventListener('dragging-changed', (e) => {
-      this._controls.enabled = e.value ? false : (this._getMode() === '3d');
+      controls.enabled = e.value ? false : (getMode() === '3d');
+      if (e.value) this._getStore().beginEdit();
+      else this._getStore().commitEdit();
     });
-    this._tc.addEventListener('mouseDown', () => this._getStore().beginEdit());
-    this._tc.addEventListener('objectChange', () => {
-      if (this._jointIndex == null) return;
-      const q = this._proxy.quaternion;
-      const rot = this._getRotation();
-      rot.setJointQuat(this._jointIndex, [q.x, q.y, q.z, q.w]);
-      this._getStore().applyFields(rot.toAxisAngle());
-      this._onEdit();
-    });
-    this._tc.addEventListener('mouseUp', () => this._getStore().commitEdit());
+    this._tc.addEventListener('objectChange', () => this._onDrag());
+    this._scene.add(this._tc.getHelper ? this._tc.getHelper() : this._tc);
+    this.detach();
   }
 
-  attach(jointIndex, worldPos, quat) {
-    this._jointIndex = jointIndex;
-    if (worldPos) this._proxy.position.set(worldPos[0], worldPos[1], worldPos[2]);
-    if (quat) this._proxy.quaternion.set(quat[0], quat[1], quat[2], quat[3]);
-    if (!this._attached) {
-      this._scene.add(this._proxy);
-      this._scene.add(this._tc);
-      this._attached = true;
-    }
-    this._tc.visible = true;
-    this._tc.enabled = true;
+  // qParentWorld: [x,y,z,w] parent joint world rotation. worldPos: [x,y,z].
+  attach(jointBody, worldPos, qParentWorld) {
+    this._jointBody = jointBody;
+    this._qParentWorld = qParentWorld;
+    const qLocal = this._getRotation().getJointQuat(jointBody);
+    const qWorld = worldGizmoFromLocal(qParentWorld, qLocal);
+    this._proxy.position.set(worldPos[0], worldPos[1], worldPos[2]);
+    this._proxy.quaternion.set(qWorld[0], qWorld[1], qWorld[2], qWorld[3]);
+    this._proxy.updateMatrixWorld(true);
+    this._tc.attach(this._proxy);
+    this._setVisible(true);
   }
 
   detach() {
-    if (!this._attached) return;
-    this._tc.visible = false;
-    this._tc.enabled = false;
-    this._scene.remove(this._tc);
-    this._scene.remove(this._proxy);
-    this._attached = false;
-    this._jointIndex = null;
+    if (this._tc.object) this._tc.detach();
+    this._setVisible(false);
+    this._jointBody = null;
   }
 
-  update() { /* TransformControls auto-updates against the camera */ }
+  _setVisible(v) {
+    const helper = this._tc.getHelper ? this._tc.getHelper() : this._tc;
+    helper.visible = v;
+    if (this._tc.enabled !== undefined) this._tc.enabled = v;
+  }
+
+  _onDrag() {
+    if (this._jointBody === null) return;
+    const q = this._proxy.quaternion;
+    const qWorld = [q.x, q.y, q.z, q.w];
+    const qLocal = localFromWorldGizmo(this._qParentWorld, qWorld);
+    this._getRotation().setJointQuat(this._jointBody, qLocal);
+    this._getStore().applyFields(this._getRotation().toAxisAngle());
+    this._onEdit();
+  }
 }
