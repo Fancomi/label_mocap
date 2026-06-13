@@ -11,116 +11,136 @@
     } }
   </script>
   <style>
-    html,body { height:100%; margin:0; background:#1a1f2a; color:#eee; font-family:monospace; }
+    html,body { height:100%; margin:0; background:#1a1f2a; color:#eee; font-family:system-ui,monospace; font-size:12px; }
     body { display:flex; }
-    #stage { position:relative; flex:1; background:#0f1216; overflow:hidden; }
+    #left, #right { width:280px; background:#1a1a1a; padding:10px; display:flex; flex-direction:column; gap:8px; overflow-y:auto; }
+    #left { border-right:1px solid #333; } #right { border-left:1px solid #333; }
+    #stage { position:relative; flex:1; background:#0f1216; overflow:hidden; min-width:0; }
     canvas { display:block; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); }
-    #status { position:absolute; top:8px; left:8px; background:rgba(0,0,0,.6); padding:5px 9px; font-size:11px; }
-    #side { width:300px; background:#1a1a1a; border-left:1px solid #333; padding:10px; display:flex; flex-direction:column; gap:10px; overflow-y:auto; }
-    button { padding:5px 8px; background:#2a2a2a; border:1px solid #444; color:#eee; border-radius:3px; cursor:pointer; }
-    button.on { background:#0066cc; }
-    .row { display:flex; gap:5px; }
-    input[type=range] { width:100%; }
-    .warn { color:#ffb86b; }
-    .g { display:flex; flex-direction:column; gap:4px; border-top:1px solid #2a2a2a; padding-top:8px; }
-    .g > label { font-size:10px; color:#888; }
-    .kgrid { display:grid; grid-template-columns:auto 1fr; gap:3px 6px; align-items:center; }
-    .kgrid > label { font-size:10px; color:#999; text-align:right; }
-    input[type=number] { background:#222; border:1px solid #444; color:#eee; padding:2px 4px; border-radius:3px; font:inherit; font-size:11px; width:100%; }
-    .ro { background:#222; border:1px solid #333; color:#ffa; padding:2px 5px; border-radius:3px; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    select { padding:4px; background:#2a2a2a; border:1px solid #444; color:#eee; border-radius:3px; font:inherit; }
-    #side h3 { font-size:11px; color:#7df; margin:0; }
+    #status { position:absolute; top:8px; left:8px; background:rgba(0,0,0,.6); padding:5px 9px; border-radius:3px; }
+    h2 { font-size:14px; color:#7df; margin:0 0 4px; }
+    h3 { font-size:11px; color:#8ab; margin:0 0 2px; }
+    .card { border-top:1px solid #2a2a2a; padding-top:8px; display:flex; flex-direction:column; gap:5px; }
+    button { padding:6px 8px; background:#2a2a2a; border:1px solid #444; color:#eee; border-radius:4px; cursor:pointer; font:inherit; }
+    button:hover { background:#3a3a3a; }
+    button.on { background:#0066cc; border-color:#3399ff; }
+    button.primary { background:#1f6f43; border-color:#2e9e60; }
+    .row { display:flex; gap:5px; } .row.wrap { flex-wrap:wrap; } .row > * { flex:1; }
+    .row.small { align-items:center; color:#888; } .row.small span { flex:0 0 auto; }
+    .big { font-size:16px; color:#ffa; text-align:center; }
+    .status { background:#222; border:1px solid #333; color:#ffa; padding:4px 6px; border-radius:3px; min-height:16px; }
+    .hint { color:#9ab; font-size:11px; line-height:1.5; margin:0 0 4px; background:#222b33; padding:6px 8px; border-radius:4px; }
+    input[type=range] { width:100%; } input[type=number] { background:#222; border:1px solid #444; color:#eee; padding:3px 4px; border-radius:3px; font:inherit; width:100%; }
+    .kgrid { display:grid; grid-template-columns:auto 70px 1fr; gap:4px 6px; align-items:center; }
+    .kgrid > label { font-size:11px; color:#9ab; text-align:right; }
+    .mono { font-size:11px; line-height:1.6; }
+    #tabs { display:flex; gap:3px; } #tabs .tab { flex:1; border-radius:4px 4px 0 0; }
+    .tabpanel { border:1px solid #333; border-radius:0 0 4px 4px; padding:8px; display:flex; flex-direction:column; gap:6px; }
+    #joint-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:3px; }
+    #joint-grid button { font-size:10px; padding:4px 2px; } #joint-grid button.on { background:#0066cc; }
   </style>
 </head>
 <body>
-  <div id="stage"><canvas id="c"></canvas><div id="status">就绪</div></div>
-  <aside id="side">
-    <h2 style="font-size:13px;color:#7df">SMPL 标注器</h2>
-    <button id="btn-open">选择目录 / 文件</button>
+  <aside id="left">
+    <h2>SMPL 标注器</h2>
+    <button id="btn-open" class="primary">📂 打开数据(目录 / 文件)</button>
     <input id="dir-input" type="file" webkitdirectory directory multiple hidden>
 
-    <div class="g">
-      <label>相机模式</label>
-      <div class="row"><button id="btn-2d" class="on">2D 对齐</button><button id="btn-3d">3D 自由</button></div>
-    </div>
-
-    <div class="g">
-      <label>播放</label>
-      <div class="row"><button id="btn-prev">◀</button><button id="btn-play">▶ 播放</button><button id="btn-next">▶|</button></div>
+    <div class="card">
+      <h3>当前帧</h3>
+      <div id="frame-info" class="big">— / —</div>
       <input id="slider" type="range" min="0" max="0" value="0">
-      <div id="frame-info">— / —</div>
-      <div class="row" style="align-items:center"><span style="font-size:11px;color:#888">速度</span><input id="speed" type="range" min="1" max="60" value="24"><span id="speed-val" style="font-size:11px;color:#ffa;min-width:46px;text-align:right">24 fps</span></div>
+      <div class="row">
+        <button id="btn-prev" title="上一帧">◀</button>
+        <button id="btn-play" title="播放/暂停">▶ 播放</button>
+        <button id="btn-next" title="下一帧">▶|</button>
+      </div>
+      <div class="row small"><span>速度</span><input id="speed" type="range" min="1" max="60" value="24"><span id="speed-val">24 fps</span></div>
     </div>
 
-    <div class="g">
-      <label>显示</label>
-      <div class="row"><button id="t-mesh" class="on">网格</button><button id="t-points" class="on">关键点</button><button id="t-bones" class="on">骨骼</button></div>
-      <div class="row"><button id="t-grid" class="on">底网</button><button id="t-axes">轴</button><button id="t-bg" class="on">底图</button><button id="t-bbox" class="on">框</button></div>
-      <div class="row" style="align-items:center"><span style="font-size:10px;color:#888;width:30px">范围</span><input type="number" id="grid-size" value="20" step="1" min="1"><span style="font-size:10px;color:#888;width:30px">间隔</span><input type="number" id="grid-step" value="0.5" step="0.1" min="0.1"></div>
+    <div class="card">
+      <h3>本帧标注状态</h3>
+      <div id="anno-state" class="status">—</div>
+      <div id="anno-actions"></div>
     </div>
 
-    <div class="g">
-      <label>标注 (本帧)</label>
-      <div id="anno-state" class="ro">—</div>
-      <div class="row"><button id="btn-add-t">+ T-pose</button><button id="btn-add-prev">+ 续上帧</button><button id="btn-del">删除</button></div>
-      <div class="row"><button id="btn-undo">↶ 撤销 (Ctrl+Z)</button></div>
-    </div>
-
-    <div class="g">
-      <label>编辑工具</label>
-      <div class="row"><button id="tool-root">Root</button><button id="tool-pose">Pose</button><button id="tool-bbox">Bbox</button></div>
-      <div class="row" id="root-mode-row" style="display:none"><button id="root-translate" class="on">移动</button><button id="root-rotate">旋转</button></div>
-      <select id="joint-select"><option value="">选择关节…</option></select>
-    </div>
-
-    <div class="g">
-      <label>旋转 (欧拉 XYZ, 度)</label>
-      <div class="kgrid">
-        <label>X</label><input type="number" id="eul-x" step="1">
-        <label>Y</label><input type="number" id="eul-y" step="1">
-        <label>Z</label><input type="number" id="eul-z" step="1">
+    <div class="card">
+      <h3>视角</h3>
+      <div class="row"><button id="btn-2d" class="on">2D 对齐</button><button id="btn-3d">3D 自由</button></div>
+      <h3 style="margin-top:8px">显示</h3>
+      <div class="row wrap">
+        <button id="t-mesh" class="on">网格</button><button id="t-points" class="on">关键点</button>
+        <button id="t-bones" class="on">骨骼</button><button id="t-grid" class="on">底网</button>
+        <button id="t-axes">轴</button><button id="t-bg" class="on">底图</button>
       </div>
     </div>
 
-    <div class="g">
-      <label>Root 平移</label>
+    <div class="card">
+      <h3>关节角度 (只读)</h3>
+      <div id="angle-list" class="mono"></div>
+    </div>
+
+    <div class="card">
+      <h3>读写</h3>
+      <div class="row"><button id="btn-save" class="primary">💾 保存 JSON</button><button id="btn-reset">↺ 重置</button></div>
+      <div class="row"><button id="btn-undo">↶ 撤销 (Ctrl+Z)</button></div>
+    </div>
+  </aside>
+
+  <div id="stage"><canvas id="c"></canvas><div id="status">就绪 — 请先打开数据</div></div>
+
+  <aside id="right">
+    <div id="tabs">
+      <button class="tab on" data-mode="pose">姿势</button>
+      <button class="tab" data-mode="root">位置</button>
+      <button class="tab" data-mode="bbox">框</button>
+      <button class="tab" data-mode="beta">体型</button>
+    </div>
+
+    <section class="tabpanel" data-mode="pose">
+      <p class="hint">点击画面中的关节点,或在下方选择一个关节,然后拖动出现的旋转环。</p>
+      <div id="joint-grid"></div>
+      <div id="sel-joint" class="status">未选择关节</div>
+      <h3>旋转 (欧拉 XYZ, 度)</h3>
+      <div class="kgrid">
+        <label>X</label><input type="number" id="eul-x" step="1"><input type="range" id="eul-x-s" min="-180" max="180" step="1">
+        <label>Y</label><input type="number" id="eul-y" step="1"><input type="range" id="eul-y-s" min="-180" max="180" step="1">
+        <label>Z</label><input type="number" id="eul-z" step="1"><input type="range" id="eul-z-s" min="-180" max="180" step="1">
+      </div>
+    </section>
+
+    <section class="tabpanel" data-mode="root" hidden>
+      <p class="hint">拖动箭头移动整个人体;切换到"旋转"可改朝向。</p>
+      <div class="row"><button id="root-translate" class="on">移动</button><button id="root-rotate">旋转</button></div>
+      <h3>位置 (米)</h3>
       <div class="kgrid">
         <label>x</label><input type="number" id="pos-x" step="0.01">
         <label>y</label><input type="number" id="pos-y" step="0.01">
         <label>z</label><input type="number" id="pos-z" step="0.01">
       </div>
-    </div>
+    </section>
 
-    <div class="g">
-      <label>Bbox <button id="btn-bbox-auto" style="font-size:10px;padding:2px 5px;flex:0">从Mesh投影</button></label>
-      <div id="bbox-ro" class="ro">—</div>
-    </div>
+    <section class="tabpanel" data-mode="bbox" hidden>
+      <p class="hint">在 2D 对齐视角下,拖动方框四角调整;或一键从人体投影。</p>
+      <button id="btn-bbox-auto">⌖ 从人体投影生成框</button>
+      <div id="bbox-ro" class="status">—</div>
+    </section>
 
-    <div class="g">
-      <label>Beta (体型)</label>
+    <section class="tabpanel" data-mode="beta" hidden>
+      <p class="hint">调整体型参数,实时改变胖瘦高矮。</p>
       <div id="beta-sliders"></div>
-      <button id="btn-beta-reset" style="font-size:10px;padding:3px 5px">归零</button>
-    </div>
+      <button id="btn-beta-reset">归零</button>
+    </section>
 
-    <div class="g">
-      <label>内参 (实时)</label>
+    <div class="card">
+      <h3>相机内参 (实时)</h3>
       <div class="kgrid">
         <label>fx</label><input type="number" id="k-fx" step="1">
         <label>fy</label><input type="number" id="k-fy" step="1">
         <label>cx</label><input type="number" id="k-cx" step="1">
         <label>cy</label><input type="number" id="k-cy" step="1">
       </div>
-      <button id="btn-k-reset" style="font-size:10px;padding:3px 5px">重置内参</button>
-    </div>
-
-    <div class="g">
-      <label>关节角度</label>
-      <div id="angle-list" style="font-size:11px;line-height:1.5"></div>
-    </div>
-
-    <div class="g">
-      <label>IO</label>
-      <div class="row"><button id="btn-save">保存 JSON</button><button id="btn-reset">Reset</button></div>
+      <button id="btn-k-reset">重置内参</button>
     </div>
   </aside>
   <script type="module" src="./src/app.js"></script>
