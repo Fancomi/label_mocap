@@ -17,11 +17,11 @@ const ANGLES = [
 ];
 
 export class Panels {
-  constructor({ getRotation, getStore, getCam, getEditController, getLastJoints, onEdit }) {
+  constructor({ getRotation, getStore, getCam, getUI, getLastJoints, onEdit }) {
     this._getRotation = getRotation;
     this._getStore = getStore;
     this._getCam = getCam;
-    this._getEC = getEditController;
+    this._getUI = getUI;
     this._getLastJoints = getLastJoints;
     this._onEdit = onEdit;
     this._betaEditing = false;
@@ -31,35 +31,16 @@ export class Panels {
     this._bindIntrinsicsInputs();
   }
 
-  _readOnly() { const ec = this._getEC(); return !!(ec && ec.readOnly); }
+  _readOnly() { const ui = this._getUI(); return !!(ui && ui.readOnly); }
 
   // Write an input's value unless it is currently focused (avoid clobbering
   // the value a user is actively typing into).
   _setVal(el, v) { if (el && el !== document.activeElement) el.value = v; }
 
-  // ── Joint <select> ────────────────────────────────────────────────────────
-  populateJointSelect() {
-    const sel = $('joint-select');
-    sel.innerHTML = '';
-    const blank = document.createElement('option');
-    blank.value = ''; blank.textContent = '选择关节…';
-    sel.appendChild(blank);
-    // index 0 = root (pelvis), then 21 body joints (SMPL joints 1..21).
-    const rootOpt = document.createElement('option');
-    rootOpt.value = 'root'; rootOpt.textContent = `0 ${JOINT_NAMES[0]} (root)`;
-    sel.appendChild(rootOpt);
-    for (let j = 0; j < 21; j++) {
-      const opt = document.createElement('option');
-      opt.value = String(j);
-      opt.textContent = `${j + 1} ${JOINT_NAMES[j + 1]}`;
-      sel.appendChild(opt);
-    }
-  }
-
-  // The euler target: a body joint index if pose-tool has one selected, else root.
+  // The euler target: a body joint index if pose mode has one selected, else root.
   _activeJoint() {
-    const ec = this._getEC();
-    if (ec && ec.tool === 'pose' && ec.selectedJoint != null) return ec.selectedJoint;
+    const ui = this._getUI();
+    if (ui && ui.mode === 'pose' && ui.selectedJoint != null) return ui.selectedJoint;
     return null; // root
   }
 
@@ -70,15 +51,19 @@ export class Panels {
     const cur = store ? store.current() : null;
 
     if (!rot || !cur) {
-      for (const id of ['eul-x', 'eul-y', 'eul-z', 'pos-x', 'pos-y', 'pos-z']) this._setVal($(id), '');
+      for (const id of ['eul-x', 'eul-y', 'eul-z', 'eul-x-s', 'eul-y-s', 'eul-z-s', 'pos-x', 'pos-y', 'pos-z']) this._setVal($(id), '');
       $('bbox-ro').textContent = '—';
       $('angle-list').innerHTML = '';
     } else {
       const j = this._activeJoint();
       const e = j != null ? rot.getJointEuler(j) : rot.getRootEuler();
-      this._setVal($('eul-x'), (e[0] * DEG).toFixed(1));
-      this._setVal($('eul-y'), (e[1] * DEG).toFixed(1));
-      this._setVal($('eul-z'), (e[2] * DEG).toFixed(1));
+      const dx = (e[0] * DEG).toFixed(1), dy = (e[1] * DEG).toFixed(1), dz = (e[2] * DEG).toFixed(1);
+      this._setVal($('eul-x'), dx);
+      this._setVal($('eul-y'), dy);
+      this._setVal($('eul-z'), dz);
+      this._setVal($('eul-x-s'), dx);
+      this._setVal($('eul-y-s'), dy);
+      this._setVal($('eul-z-s'), dz);
       const p = cur.root_pos || [0, 0, 0];
       this._setVal($('pos-x'), (+p[0]).toFixed(3));
       this._setVal($('pos-y'), (+p[1]).toFixed(3));
@@ -126,28 +111,43 @@ export class Panels {
     $('angle-list').innerHTML = html;
   }
 
-  // ── Euler XYZ inputs ──────────────────────────────────────────────────────
+  // ── Euler XYZ inputs (numeric + sliders) ─────────────────────────────────
+  _commitEulerFrom(degVals) {
+    if (this._readOnly()) return;
+    const rot = this._getRotation();
+    const store = this._getStore();
+    if (!rot || !store || !store.current()) return;
+    const e = degVals.map((d) => (d || 0) * RAD);
+    const j = this._activeJoint();
+    if (j != null) rot.setJointEuler(j, e);
+    else rot.setRootEuler(e);
+    store.applyFields(rot.toAxisAngle());
+    this._onEdit();
+  }
+
   _bindEulerInputs() {
-    const ids = ['eul-x', 'eul-y', 'eul-z'];
-    const readE = () => ids.map((id) => (parseFloat($(id).value) || 0) * RAD);
-    for (const id of ids) {
-      const el = $(id);
-      el.addEventListener('focus', () => { if (!this._readOnly()) this._getStore().beginEdit(); });
-      el.addEventListener('input', () => {
-        if (this._readOnly()) return;
-        const rot = this._getRotation();
-        const store = this._getStore();
-        if (!rot || !store || !store.current()) return;
-        const e = readE();
-        const j = this._activeJoint();
-        if (j != null) rot.setJointEuler(j, e);
-        else rot.setRootEuler(e);
-        store.applyFields(rot.toAxisAngle());
-        this._onEdit();
+    // Three axes; each has a numeric input (#eul-x) and a range slider (#eul-x-s).
+    const axes = [['eul-x', 'eul-x-s'], ['eul-y', 'eul-y-s'], ['eul-z', 'eul-z-s']];
+    const readDegs = () => axes.map(([num]) => parseFloat($(num).value) || 0);
+    const begin = () => { if (!this._readOnly()) this._getStore().beginEdit(); };
+    const commit = () => { if (!this._readOnly()) this._getStore().commitEdit(); };
+    for (const [numId, sliderId] of axes) {
+      const num = $(numId);
+      const slider = $(sliderId);
+      num.addEventListener('focus', begin);
+      num.addEventListener('input', () => {
+        this._setVal(slider, num.value);
+        this._commitEulerFrom(readDegs());
       });
-      const commit = () => { if (!this._readOnly()) this._getStore().commitEdit(); };
-      el.addEventListener('change', commit);
-      el.addEventListener('blur', commit);
+      num.addEventListener('change', commit);
+      num.addEventListener('blur', commit);
+      slider.addEventListener('pointerdown', begin);
+      slider.addEventListener('input', () => {
+        num.value = slider.value;
+        this._commitEulerFrom(readDegs());
+      });
+      slider.addEventListener('change', commit);
+      slider.addEventListener('pointerup', commit);
     }
   }
 
