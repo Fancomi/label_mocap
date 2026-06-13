@@ -194,9 +194,9 @@ function boot() {
   $('dir-input').addEventListener('change', (e) => openFiles(e.target.files).catch((err) => setStatus(String(err))));
   $('btn-2d').addEventListener('click', () => { cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); if (syncUI) syncUI(); });
   $('btn-3d').addEventListener('click', () => { cam.switchTo('3d'); $('btn-3d').classList.add('on'); $('btn-2d').classList.remove('on'); if (syncUI) syncUI(); });
-  $('slider').addEventListener('input', (e) => { setPlaying(false); showFrame(+e.target.value); });
-  $('btn-prev').addEventListener('click', () => { setPlaying(false); showFrame(Math.max(0, store.currentFrame() - 1)); });
-  $('btn-next').addEventListener('click', () => { setPlaying(false); showFrame(Math.min(store.frameCount() - 1, store.currentFrame() + 1)); });
+  $('slider').addEventListener('input', (e) => { if (!store) return; setPlaying(false); showFrame(+e.target.value); });
+  $('btn-prev').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.max(0, store.currentFrame() - 1)); });
+  $('btn-next').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.min(store.frameCount() - 1, store.currentFrame() + 1)); });
   $('btn-play').addEventListener('click', () => { if (store) setPlaying(!playing); });
   $('speed').addEventListener('input', (e) => { fps = +e.target.value; $('speed-val').textContent = `${fps} fps`; });
 
@@ -341,8 +341,7 @@ function boot() {
       }
     }
     lastTick = now;
-    cam.update();
-    scene.render();
+    scene.render();   // scene.render() calls cam.update() internally
     requestAnimationFrame(loop);
   }
   requestAnimationFrame((now) => { lastTick = now; loop(now); });
