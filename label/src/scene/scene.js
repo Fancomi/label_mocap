@@ -46,6 +46,10 @@ export class LabelScene {
   threeScene() { return this._scene; }
 
   // World position [x,y,z] of SMPL joint j from the last posed joints buffer.
+  jointMeshes() {
+    return this._jointsGroup ? this._jointsGroup.children : [];
+  }
+
   jointWorldPosition(j) {
     if (!this._lastJoints) return [0, 0, 0];
     return [this._lastJoints[j * 3], this._lastJoints[j * 3 + 1], this._lastJoints[j * 3 + 2]];
@@ -138,6 +142,7 @@ export class LabelScene {
       const s = new THREE.Mesh(
         new THREE.SphereGeometry(0.025, 8, 6),
         new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, depthWrite: false }));
+      s.userData.jointIndex = i;
       s.frustumCulled = false;
       this._jointsGroup.add(s);
     }
