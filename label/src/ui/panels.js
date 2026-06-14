@@ -84,13 +84,13 @@ export class Panels {
       }
       const lj = this._getLastJoints();
       if (lj) this.renderAngles(lj);
-      // beta sliders reflect current betas (skip while user is dragging)
-      if (!this._betaEditing) {
-        const betas = cur.betas || [];
-        for (let i = 0; i < 10; i++) {
-          const s = $(`beta-${i}`);
-          if (s) this._setVal(s, String(betas[i] ?? 0));
-        }
+      // beta sliders reflect current betas. _setVal skips the slider that is
+      // currently focused (i.e. being dragged), so an active drag is never
+      // clobbered while post-undo / frame-nav refreshes all others.
+      const betas = cur.betas || [];
+      for (let i = 0; i < 10; i++) {
+        const s = $(`beta-${i}`);
+        if (s) this._setVal(s, String(betas[i] ?? 0));
       }
     }
 

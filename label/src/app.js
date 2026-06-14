@@ -161,6 +161,11 @@ async function showFrame(i) {
       scene.setBackgroundTexture(tex);
     });
   }
+  // Re-sync ALL visuals (gizmos, panels, bbox, highlight, anno-actions) to the
+  // restored state. This is the single source of truth for visual sync and is
+  // what makes Undo / frame navigation move the editing primitives, not just
+  // the mesh. State-driven only — does NOT pause playback (see syncUI).
+  if (syncUI) syncUI();
 }
 
 function saveJson() {
@@ -241,7 +246,7 @@ function boot() {
   for (let j = 0; j < 21; j++) {
     const b = document.createElement('button');
     b.textContent = JOINT_NAMES[j + 1];
-    b.addEventListener('click', () => ui && ui.selectJoint(j));
+    b.addEventListener('click', () => { setPlaying(false); ui && ui.selectJoint(j); });
     grid.appendChild(b);
     jointGridButtons.push(b);
   }
@@ -250,6 +255,8 @@ function boot() {
   document.querySelectorAll('#tabs .tab').forEach((btn) => btn.addEventListener('click', () => {
     if (btn.disabled) return;
     if ((poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged())) return;
+    // Switching into an editing tab pauses playback (user-initiated edit entry).
+    if (btn.dataset.mode === 'root' || btn.dataset.mode === 'pose') setPlaying(false);
     if (ui) ui.setMode(btn.dataset.mode);
   }));
 
@@ -258,6 +265,7 @@ function boot() {
     camera: cam.camera,
     getJointMeshes: () => scene.jointMeshes(),
     onPick: (smpl) => {
+      setPlaying(false);
       if (smpl === 0) ui.setMode('root');
       else if (smpl >= 1 && smpl <= 21) ui.selectJoint(smpl - 1);
     },
@@ -311,10 +319,10 @@ function boot() {
     scene.setSelectedJoint(ui.mode === 'pose' && ui.selectedJoint != null ? ui.selectedJoint + 1 : -1);
     if (jointPicker) jointPicker.setEnabled(ui.mode === 'pose');
 
-    // Starting an edit (gizmo attach) pauses playback.
-    if ((ui.mode === 'pose' && ui.selectedJoint != null) || ui.mode === 'root') setPlaying(false);
-
-    // Exactly one interaction at a time.
+    // Exactly one interaction at a time. Gizmo attach is STATE-DRIVEN and safe
+    // to run every frame (incl. undo/showFrame): it never pauses playback.
+    // Pausing playback on edit-entry is handled by user-action handlers
+    // (joint grid / picker / tab / root sub-mode), not here.
     if (!playing && ui.mode === 'pose' && ui.selectedJoint != null && rotation && lastWorldRot) {
       const j = ui.selectedJoint;
       const smplJ = j + 1;
@@ -336,14 +344,18 @@ function boot() {
 
   // Root translate/rotate sub-mode buttons (inside the root tabpanel).
   $('root-translate').addEventListener('click', () => {
+    setPlaying(false);
     rootHandle.setMode('translate');
     $('root-translate').classList.add('on');
     $('root-rotate').classList.remove('on');
+    if (syncUI) syncUI();
   });
   $('root-rotate').addEventListener('click', () => {
+    setPlaying(false);
     rootHandle.setMode('rotate');
     $('root-rotate').classList.add('on');
     $('root-translate').classList.remove('on');
+    if (syncUI) syncUI();
   });
 
   $('btn-bbox-auto').addEventListener('click', () => {
