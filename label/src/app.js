@@ -17,7 +17,7 @@ import { RootHandle } from './edit/root_handle.js';
 import { PoseGizmo } from './edit/pose_gizmo.js';
 import { projectBboxFromMesh } from './edit/bbox_edit.js';
 import { BboxOverlay } from './edit/bbox_overlay.js';
-import { fsAccessSupported, pickDirectory, DirSource } from './io/dir_source.js';
+import { fsAccessSupported, pickDirectory, DirSource, videoOpenSupported, pickVideoFile } from './io/dir_source.js';
 import { VideoSource } from './io/video_source.js';
 import * as THREE from 'three';
 
@@ -31,6 +31,7 @@ let images = new Map();      // index -> File
 let loadedJsonFile = null;   // raw json File, for Reset-from-disk
 let dirSource = null;
 let videoSource = null;
+let pendingVideoFile = null;
 let readOnly = false;
 let textureLoader = null;
 let currentTexture = null;
@@ -62,6 +63,7 @@ function setPlaying(on) {
 
 async function openFiles(fileList) {
   dirSource = null;
+  pendingVideoFile = null;
   videoSource?.dispose();
   videoSource = null;
   images = new Map();
@@ -106,6 +108,7 @@ async function openFiles(fileList) {
 
 async function openFromDirSource() {
   loadedJsonFile = null;
+  pendingVideoFile = null;
   images = new Map();
   if (videoSource) { videoSource.dispose(); videoSource = null; }
   const cls = dirSource.classification;
@@ -150,6 +153,33 @@ async function openFromDirSource() {
   scene.resize();
   await showFrame(0);
   if (syncUI) syncUI();
+}
+
+async function openVideoFileFlow() {
+  const file = await pickVideoFile();           // may throw AbortError if cancelled
+  dirSource = null;                              // not bound to a dataset dir yet
+  loadedJsonFile = null;
+  if (videoSource) { videoSource.dispose(); videoSource = null; }
+  images = new Map();
+  pendingVideoFile = file;
+  videoSource = await new VideoSource(file, { fps }).ready();
+  const bgCount = videoSource.frameCount();
+  const coco = new CocoDocument({ images: Array.from({ length: bgCount }, (_, i) => ({ id: i })), annotations: [], categories: [] });
+  buildFrames({ background: { kind: 'video', count: bgCount }, dataFrameIndices: [] });
+  readOnly = false;
+  store = new AnnotationStore(coco);
+  ui = new UIController({ readOnly });
+  if (syncUI) ui.onChange(syncUI);
+  $('slider').max = String(Math.max(0, store.frameCount() - 1));
+  $('slider').value = '0';
+  $('right').classList.remove('disabled');
+  if (!model) { model = await loadModel(MODEL_URL); scene.setTopology(model.faces); }
+  scene.prepareForSequence({ K: cam.K, image_w: cam.imageW, image_h: cam.imageH });
+  cam.snapTo('2d');
+  scene.resize();
+  await showFrame(0);
+  if (syncUI) syncUI();
+  setStatus(`已打开视频 ${file.name}(首次保存时将选择目录并建立数据集)`);
 }
 
 function buildFrame() {
@@ -230,6 +260,30 @@ async function showFrame(i) {
 
 async function saveJson() {
   if (!store || !model) return;
+  let justBuilt = false;
+  if (!dirSource && pendingVideoFile) {
+    if (fsAccessSupported()) {
+      let handle;
+      try {
+        handle = await pickDirectory(); // user picks target dir
+      } catch (err) {
+        if (err?.name === 'AbortError') { setStatus('已取消保存'); return; }
+        throw err;
+      }
+      dirSource = new DirSource(handle);
+      await dirSource.scan();
+      // copy the video into the dataset dir (root, original name) if not already there
+      const vname = pendingVideoFile.name;
+      const already = dirSource.classification.videoPath;
+      if (!already) {
+        await dirSource.writeFile(vname, pendingVideoFile);
+        // re-scan so classification picks up the copied video + (about-to-be-written) json
+        await dirSource.scan();
+        justBuilt = true;
+      }
+    }
+    // if FS Access unsupported, fall through to the download path below
+  }
   const doc = store.document();
   for (const id of doc.imageIds()) {
     const a = doc.getAnnotation(id);
@@ -247,7 +301,7 @@ async function saveJson() {
   const obj = doc.serialize();
   if (dirSource) {
     const path = await dirSource.saveJson(obj);
-    setStatus(`已原地保存 ${path}`);
+    setStatus(justBuilt ? `已建立数据集并拷贝视频 + 原地保存 ${path}` : `已原地保存 ${path}`);
   } else {
     const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -294,6 +348,13 @@ function boot() {
     }
   });
   $('dir-input').addEventListener('change', (e) => openFiles(e.target.files).catch((err) => setStatus(String(err))));
+  $('btn-open-video').addEventListener('click', () => {
+    if (videoOpenSupported()) {
+      openVideoFileFlow().catch((err) => { if (err?.name !== 'AbortError') setStatus(String(err)); });
+    } else {
+      setStatus('当前浏览器不支持直接打开视频文件,请用 Chrome/Edge');
+    }
+  });
   $('btn-2d').addEventListener('click', () => { if ((poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged())) return; cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); refreshTabAvailability(); if (syncUI) syncUI(); });
   $('btn-3d').addEventListener('click', () => { if ((poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged())) return; cam.switchTo('3d'); $('btn-3d').classList.add('on'); $('btn-2d').classList.remove('on'); if (ui && ui.mode === 'bbox') ui.setMode('pose'); refreshTabAvailability(); if (syncUI) syncUI(); });
   $('slider').addEventListener('input', (e) => { if (!store) return; setPlaying(false); showFrame(+e.target.value); });

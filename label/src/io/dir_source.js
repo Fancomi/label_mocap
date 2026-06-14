@@ -12,6 +12,18 @@ export async function pickDirectory() {
   return window.showDirectoryPicker({ mode: 'readwrite' });
 }
 
+export function videoOpenSupported() {
+  return typeof window !== 'undefined' && typeof window.showOpenFilePicker === 'function';
+}
+
+export async function pickVideoFile() {
+  const [handle] = await window.showOpenFilePicker({
+    types: [{ description: 'Video', accept: { 'video/*': ['.mp4', '.webm', '.mov', '.m4v'] } }],
+    multiple: false,
+  });
+  return handle.getFile(); // File object
+}
+
 async function walk(dirHandle, prefix, out) {
   for await (const [name, handle] of dirHandle.entries()) {
     const rel = prefix ? `${prefix}/${name}` : name;
@@ -77,5 +89,12 @@ export class DirSource {
     await w.close();
     if (this._cls) this._cls.jsonPath = target;
     return target;
+  }
+
+  async writeFile(relPath, blob) {
+    const w = await writableAt(this._dir, relPath);
+    await w.write(blob);
+    await w.close();
+    return relPath;
   }
 }
