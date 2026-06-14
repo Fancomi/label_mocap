@@ -17,6 +17,8 @@ import { RootHandle } from './edit/root_handle.js';
 import { PoseGizmo } from './edit/pose_gizmo.js';
 import { projectBboxFromMesh } from './edit/bbox_edit.js';
 import { BboxOverlay } from './edit/bbox_overlay.js';
+import { fsAccessSupported, pickDirectory, DirSource } from './io/dir_source.js';
+import { VideoSource } from './io/video_source.js';
 import * as THREE from 'three';
 
 const $ = (id) => document.getElementById(id);
@@ -27,6 +29,8 @@ const JOINT_NAMES = ['Pelvis', 'L_Hip', 'R_Hip', 'Spine1', 'L_Knee', 'R_Knee', '
 let model = null, scene = null, cam = null, store = null;
 let images = new Map();      // index -> File
 let loadedJsonFile = null;   // raw json File, for Reset-from-disk
+let dirSource = null;
+let videoSource = null;
 let readOnly = false;
 let textureLoader = null;
 let currentTexture = null;
@@ -57,6 +61,9 @@ function setPlaying(on) {
 }
 
 async function openFiles(fileList) {
+  dirSource = null;
+  videoSource?.dispose();
+  videoSource = null;
   images = new Map();
   const files = Array.from(fileList ?? []);
   const jsonFile = files.find((f) => f.name.endsWith('.json'));
@@ -79,6 +86,54 @@ async function openFiles(fileList) {
   imageFiles.forEach((f, i) => images.set(i, f));
 
   // portrait gate
+  const info = coco.imageInfo(coco.imageIds()[0]);
+  readOnly = info ? isPortrait(info) : false;
+  if (readOnly) setStatus('⚠ 该数据为竖拍/旋转,标注器仅支持查看;请用其他软件转正后再标注');
+
+  store = new AnnotationStore(coco);
+  ui = new UIController({ readOnly });
+  if (syncUI) ui.onChange(syncUI);
+  $('slider').max = String(Math.max(0, store.frameCount() - 1));
+  $('slider').value = '0';
+  $('right').classList.remove('disabled');
+  if (!model) { model = await loadModel(MODEL_URL); scene.setTopology(model.faces); }
+  scene.prepareForSequence({ K: cam.K, image_w: cam.imageW, image_h: cam.imageH });
+  cam.snapTo('2d');
+  scene.resize();
+  await showFrame(0);
+  if (syncUI) syncUI();
+}
+
+async function openFromDirSource() {
+  loadedJsonFile = null;
+  images = new Map();
+  if (videoSource) { videoSource.dispose(); videoSource = null; }
+  const cls = dirSource.classification;
+
+  let coco = null;
+  const rawJson = await dirSource.readJson();
+  if (rawJson) coco = new CocoDocument(rawJson);
+
+  let bgCount = cls.imagePaths.length;
+  if (cls.imagePaths.length) {
+    for (let i = 0; i < cls.imagePaths.length; i++) images.set(i, await dirSource.imageFile(i));
+  } else if (cls.videoPath) {
+    const vf = await dirSource.videoFile();
+    videoSource = await new VideoSource(vf, { fps }).ready();
+    bgCount = videoSource.frameCount();
+  }
+  const background = bgCount
+    ? { kind: (cls.videoPath && !cls.imagePaths.length) ? 'video' : 'image_sequence', count: bgCount }
+    : null;
+
+  if (!coco) {
+    coco = new CocoDocument({ images: Array.from({ length: bgCount }, (_, i) => ({ id: i })), annotations: [], categories: [] });
+  }
+
+  const ids = coco.imageIds();
+  const dataFrameIndices = ids.map((id, idx) => (coco.getAnnotation(id) ? idx : -1)).filter((x) => x >= 0);
+  buildFrames({ background, dataFrameIndices });
+
   const info = coco.imageInfo(coco.imageIds()[0]);
   readOnly = info ? isPortrait(info) : false;
   if (readOnly) setStatus('⚠ 该数据为竖拍/旋转,标注器仅支持查看;请用其他软件转正后再标注');
@@ -150,16 +205,21 @@ async function showFrame(i) {
     if (bboxOverlay) bboxOverlay.render(null);
   }
   renderAnnoActions();
-  const file = images.get(i);
-  if (file) {
-    const url = URL.createObjectURL(file);
-    textureLoader ||= new THREE.TextureLoader();
-    textureLoader.load(url, (tex) => {
-      URL.revokeObjectURL(url);
-      if (currentTexture) currentTexture.dispose();
-      currentTexture = tex;
-      scene.setBackgroundTexture(tex);
-    });
+  if (videoSource) {
+    await videoSource.seek(i);
+    scene.setBackgroundTexture(videoSource.texture);
+  } else {
+    const file = images.get(i);
+    if (file) {
+      const url = URL.createObjectURL(file);
+      textureLoader ||= new THREE.TextureLoader();
+      textureLoader.load(url, (tex) => {
+        URL.revokeObjectURL(url);
+        if (currentTexture) currentTexture.dispose();
+        currentTexture = tex;
+        scene.setBackgroundTexture(tex);
+      });
+    }
   }
   // Re-sync ALL visuals (gizmos, panels, bbox, highlight, anno-actions) to the
   // restored state. This is the single source of truth for visual sync and is
@@ -168,7 +228,7 @@ async function showFrame(i) {
   if (syncUI) syncUI();
 }
 
-function saveJson() {
+async function saveJson() {
   if (!store || !model) return;
   const doc = store.document();
   for (const id of doc.imageIds()) {
@@ -184,32 +244,55 @@ function saveJson() {
     g.dispose();
     doc.setAnnotation(id, { keypoints, occlution_joint: occ });
   }
-  const json = JSON.stringify(doc.serialize(), null, 2);
-  const blob = new Blob([json], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url; link.download = 'player_0.json'; link.click();
-  URL.revokeObjectURL(url);
-  setStatus('已保存 player_0.json');
+  const obj = doc.serialize();
+  if (dirSource) {
+    const path = await dirSource.saveJson(obj);
+    setStatus(`已原地保存 ${path}`);
+  } else {
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url; link.download = 'player_0.json'; link.click();
+    URL.revokeObjectURL(url);
+    setStatus('已下载 player_0.json(浏览器不支持原地保存)');
+  }
 }
 
 async function resetFromDisk() {
   if (!store) return;
-  if (loadedJsonFile) {
+  if (dirSource) {
+    const raw = await dirSource.readJson();
+    if (raw) {
+      store = new AnnotationStore(new CocoDocument(raw));
+      ui = new UIController({ readOnly });
+      if (syncUI) ui.onChange(syncUI);
+    }
+  } else if (loadedJsonFile) {
     const coco = new CocoDocument(JSON.parse(await loadedJsonFile.text()));
     store = new AnnotationStore(coco);
     ui = new UIController({ readOnly });
     if (syncUI) ui.onChange(syncUI);
   }
   await showFrame(Math.min(store.currentFrame(), store.frameCount() - 1));
-  setStatus('已从硬盘重置');
+  setStatus('已重置');
 }
 
 function boot() {
   scene = new LabelScene($('c'));
   cam = new CameraModes({ canvas: $('c'), meta: { K: { fx: 1850, fy: 1850, cx: 960, cy: 540 }, image_w: 1920, image_h: 1080 } });
   scene.setCamera(cam);
-  $('btn-open').addEventListener('click', () => $('dir-input').click());
+  $('btn-open').addEventListener('click', async () => {
+    if (fsAccessSupported()) {
+      try {
+        const handle = await pickDirectory();
+        dirSource = new DirSource(handle);
+        await dirSource.scan();
+        await openFromDirSource();
+      } catch (err) { if (err?.name !== 'AbortError') setStatus(String(err)); }
+    } else {
+      $('dir-input').click();
+    }
+  });
   $('dir-input').addEventListener('change', (e) => openFiles(e.target.files).catch((err) => setStatus(String(err))));
   $('btn-2d').addEventListener('click', () => { if ((poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged())) return; cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); refreshTabAvailability(); if (syncUI) syncUI(); });
   $('btn-3d').addEventListener('click', () => { if ((poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged())) return; cam.switchTo('3d'); $('btn-3d').classList.add('on'); $('btn-2d').classList.remove('on'); if (ui && ui.mode === 'bbox') ui.setMode('pose'); refreshTabAvailability(); if (syncUI) syncUI(); });
@@ -368,7 +451,7 @@ function boot() {
   });
 
   // Save / Reset (#btn-save / #btn-reset) — Task 10.
-  $('btn-save').addEventListener('click', saveJson);
+  $('btn-save').addEventListener('click', () => saveJson().catch((e) => setStatus(String(e))));
   $('btn-reset').addEventListener('click', () => resetFromDisk().catch((e) => setStatus(String(e))));
 
   window.addEventListener('resize', () => { scene.resize(); if (bboxOverlay) bboxOverlay.render(ui?.mode === 'bbox' ? (store?.current()?.bbox ?? null) : null); });
