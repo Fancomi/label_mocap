@@ -25,6 +25,7 @@ export class Panels {
     this._getLastJoints = getLastJoints;
     this._onEdit = onEdit;
     this._betaEditing = false;
+    this._activeDragEl = null;   // element currently being dragged (slider)
     this._bindEulerInputs();
     this._buildBetaSliders();
     this._bindPosInputs();
@@ -33,9 +34,17 @@ export class Panels {
 
   _readOnly() { const ui = this._getUI(); return !!(ui && ui.readOnly); }
 
-  // Write an input's value unless it is currently focused (avoid clobbering
-  // the value a user is actively typing into).
-  _setVal(el, v) { if (el && el !== document.activeElement) el.value = v; }
+  // Write an input's value unless the user is actively editing it. A range
+  // slider STAYS document.activeElement after pointerup, so relying on focus
+  // alone makes post-undo refresh skip a just-released slider forever (until it
+  // blurs). We therefore skip only: (a) the element currently being dragged
+  // (tracked explicitly), or (b) a focused text/number input being typed into.
+  _setVal(el, v) {
+    if (!el) return;
+    if (el === this._activeDragEl) return;
+    if (el === document.activeElement && el.type !== 'range') return;
+    el.value = v;
+  }
 
   // ── Refresh all readouts from current state ───────────────────────────────
   syncFromState() {
@@ -162,13 +171,15 @@ export class Panels {
       });
       num.addEventListener('change', commit);
       num.addEventListener('blur', commit);
-      slider.addEventListener('pointerdown', begin);
+      slider.addEventListener('pointerdown', () => { this._activeDragEl = slider; begin(); });
       slider.addEventListener('input', () => {
         num.value = slider.value;
         commitTo(readDegs());
       });
-      slider.addEventListener('change', commit);
-      slider.addEventListener('pointerup', commit);
+      const endSlider = () => { this._activeDragEl = null; commit(); };
+      slider.addEventListener('change', endSlider);
+      slider.addEventListener('pointerup', endSlider);
+      slider.addEventListener('pointercancel', endSlider);
     }
   }
 
@@ -195,6 +206,7 @@ export class Panels {
     };
     for (let i = 0; i < 10; i++) {
       const s = $(`beta-${i}`);
+      s.addEventListener('pointerdown', () => { this._activeDragEl = s; });
       s.addEventListener('input', () => {
         if (this._readOnly()) return;
         const store = this._getStore();
@@ -203,11 +215,19 @@ export class Panels {
         store.applyFields({ betas: readBetas() });
         this._onEdit();
       });
-      s.addEventListener('change', () => {
+      // Commit on release. 'change' alone is unreliable (it may not fire before
+      // the user clicks elsewhere); pointerup/pointercancel guarantee the undo
+      // unit is closed the moment the drag ends, so an immediate Ctrl+Z reverts
+      // this beta edit (was the bug: release→undo left sliders un-reverted).
+      const endDrag = () => {
+        this._activeDragEl = null;
         if (this._readOnly() || !this._betaEditing) return;
         this._getStore().commitEdit();
         this._betaEditing = false;
-      });
+      };
+      s.addEventListener('pointerup', endDrag);
+      s.addEventListener('pointercancel', endDrag);
+      s.addEventListener('change', endDrag);
     }
     $('btn-beta-reset').addEventListener('click', () => {
       if (this._readOnly()) return;
