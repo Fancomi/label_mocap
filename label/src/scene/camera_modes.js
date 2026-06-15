@@ -174,12 +174,16 @@ export class CameraModes {
 
   switchTo(mode) {
     if (mode !== '2d' && mode !== '3d') throw new Error(`bad mode: ${mode}`);
-    if (this.mode === mode || this._tween) return;
+    // Already settled in the target mode → nothing to do.
+    if (this.mode === mode && !this._tween) return;
 
-    // Save the pose we're leaving.
-    this._capturePose('auto');
+    // Only capture the pose we're leaving when starting from a SETTLED state.
+    // Mid-tween the camera is at an interpolated pose that isn't a real resting
+    // slot — capturing it would corrupt the saved 2D/3D poses. Skipping capture
+    // lets a press during the animation simply RE-TARGET (later press wins).
+    if (!this._tween) this._capturePose('auto');
 
-    // Lock controls during the tween (we re-enable after if landing in 3d).
+    // Lock controls during the tween (re-enabled after if landing in 3d).
     this.controls.enabled = false;
 
     const from = {

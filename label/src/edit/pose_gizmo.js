@@ -49,6 +49,7 @@ export class PoseGizmo {
   }
 
   isEngaged() { return !!(this._tc && (this._tc.dragging || this._tc.axis != null)); }
+  isDragging() { return !!(this._tc && this._tc.dragging); }
 
   _setVisible(v) {
     const helper = this._tc.getHelper ? this._tc.getHelper() : this._tc;

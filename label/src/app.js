@@ -334,8 +334,8 @@ function boot() {
     openVideoData().catch((e) => { if (e?.name !== 'AbortError') setStatus(String(e)); });
   });
   $('dir-input').addEventListener('change', (e) => openFiles(e.target.files).catch((err) => setStatus(String(err))));
-  $('btn-2d').addEventListener('click', () => { if ((poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged())) return; cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); refreshTabAvailability(); if (syncUI) syncUI(); });
-  $('btn-3d').addEventListener('click', () => { if ((poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged())) return; cam.switchTo('3d'); $('btn-3d').classList.add('on'); $('btn-2d').classList.remove('on'); if (ui && ui.mode === 'bbox') ui.setMode('pose'); refreshTabAvailability(); if (syncUI) syncUI(); });
+  $('btn-2d').addEventListener('click', () => { if ((poseGizmo && poseGizmo.isDragging()) || (rootHandle && rootHandle.isDragging())) return; cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); refreshTabAvailability(); if (syncUI) syncUI(); });
+  $('btn-3d').addEventListener('click', () => { if ((poseGizmo && poseGizmo.isDragging()) || (rootHandle && rootHandle.isDragging())) return; cam.switchTo('3d'); $('btn-3d').classList.add('on'); $('btn-2d').classList.remove('on'); if (ui && ui.mode === 'bbox') ui.setMode('pose'); refreshTabAvailability(); if (syncUI) syncUI(); });
   $('slider').addEventListener('input', (e) => { if (!store) return; setPlaying(false); showFrame(+e.target.value); });
   $('btn-prev').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.max(0, store.currentFrame() - 1)); });
   $('btn-next').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.min(store.frameCount() - 1, store.currentFrame() + 1)); });
@@ -377,7 +377,7 @@ function boot() {
   // Tab buttons.
   document.querySelectorAll('#tabs .tab').forEach((btn) => btn.addEventListener('click', () => {
     if (btn.disabled) return;
-    if ((poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged())) return;
+    if ((poseGizmo && poseGizmo.isDragging()) || (rootHandle && rootHandle.isDragging())) return;
     // Switching into an editing tab pauses playback (user-initiated edit entry).
     if (btn.dataset.mode === 'root' || btn.dataset.mode === 'pose') setPlaying(false);
     if (ui) ui.setMode(btn.dataset.mode);

@@ -17,6 +17,7 @@ export class RootHandle {
 
     this._tc = new TransformControls(camera, canvas);
     this._tc.setMode('translate');
+    this._tc.size = 1.3; // slightly larger so handles aren't lost behind the body
     this._tc.attach(this._proxy);
 
     this._tc.addEventListener('mouseDown', () => this._getStore().beginEdit());
@@ -55,6 +56,22 @@ export class RootHandle {
     }
     this._tc.visible = true;
     this._tc.enabled = true;
+    this._renderOnTop();
+  }
+
+  // Draw the gizmo over everything (no depth test) so the depth/Z arrow isn't
+  // hidden behind the body mesh or its own centre planes — the depth handle was
+  // getting occluded when the root sat near the view centre. Doesn't affect the
+  // body or any picking; purely a draw-order tweak on the gizmo's own meshes.
+  _renderOnTop() {
+    const helper = this._tc.getHelper ? this._tc.getHelper() : this._tc;
+    helper.traverse((o) => {
+      if (o.material) {
+        o.material.depthTest = false;
+        o.material.depthWrite = false;
+        o.renderOrder = 999;
+      }
+    });
   }
 
   detach() {
@@ -68,5 +85,10 @@ export class RootHandle {
 
   update() { /* TransformControls auto-updates against the camera */ }
 
+  // isEngaged: hover OR drag — used by the render loop to lock orbit early.
+  // isDragging: real drag only — used to block mode/tab switches. `axis` (hover)
+  // can stick if a pointerleave is missed; `dragging` is toggled by down/up so
+  // it never wedges, preventing a stuck hover from blocking camera switches.
   isEngaged() { return !!(this._tc && (this._tc.dragging || this._tc.axis != null)); }
+  isDragging() { return !!(this._tc && this._tc.dragging); }
 }
