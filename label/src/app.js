@@ -4,6 +4,7 @@ import { forwardSmpl } from '../../smpl_core/lbs.js';
 import { mat3ToQuat } from '../../smpl_core/rotations.js';
 import { CocoDocument } from './io/coco_document.js';
 import { buildFrames, isPortrait } from './io/source_loader.js';
+import { orderedImageNames, basename } from './io/image_order.js';
 import { AnnotationStore } from './edit/annotation_store.js';
 import { reprojectKeypoints } from './edit/derived.js';
 import { computeOcclusion } from './edit/occlusion_raycast.js';
@@ -70,22 +71,34 @@ async function openFiles(fileList) {
   const files = Array.from(fileList ?? []);
   const jsonFile = files.find((f) => f.name.endsWith('.json'));
   loadedJsonFile = jsonFile ?? null;
-  const imageFiles = files.filter((f) => isJpeg(f.name)).sort((a, b) => a.name.localeCompare(b.name));
+  const imageFiles = files.filter((f) => isJpeg(f.name));
+  // basename -> File lookup (no positional ordering; ordering comes from
+  // orderedImageNames so the background follows the json's images[] order).
+  const byName = new Map(imageFiles.map((f) => [basename(f.name), f]));
+  const availableNames = imageFiles.map((f) => f.name);
 
   let coco = null;
   if (jsonFile) {
     coco = new CocoDocument(JSON.parse(await jsonFile.text()));
   }
-  const background = imageFiles.length ? { kind: 'image_sequence', count: imageFiles.length } : null;
   if (!coco) {
-    // data-less: synthesize an images list from the image files
-    coco = new CocoDocument({ images: imageFiles.map((_, i) => ({ id: i })), annotations: [], categories: [] });
+    // data-less: synthesize images[] from a NUMERIC sort of the image files so
+    // imageIds()/positions line up with the background ordering below.
+    const names = orderedImageNames({ cocoImages: [], availableNames });
+    coco = new CocoDocument({ images: names.map((nm, i) => ({ id: i, file_name: nm })), annotations: [], categories: [] });
   }
+
+  // Authoritative frame ordering: follows json images[] when file_names exist,
+  // else the numeric-sorted synthesized order. Match each frame's background by
+  // basename rather than by sorted position.
+  const names = orderedImageNames({ cocoImages: coco.images(), availableNames });
+  names.forEach((nm, i) => images.set(i, byName.get(basename(nm)) ?? null));
+  const bgCount = names.length;
+  const background = bgCount ? { kind: 'image_sequence', count: bgCount } : null;
 
   const ids = coco.imageIds();
   const dataFrameIndices = ids.map((id, idx) => (coco.getAnnotation(id) ? idx : -1)).filter((x) => x >= 0);
-  const frames = buildFrames({ background, dataFrameIndices });
-  imageFiles.forEach((f, i) => images.set(i, f));
+  buildFrames({ background, dataFrameIndices });
 
   // portrait gate
   const info = coco.imageInfo(coco.imageIds()[0]);
@@ -117,17 +130,28 @@ async function openFromDirSource() {
   const rawJson = await dirSource.readJson();
   if (rawJson) coco = new CocoDocument(rawJson);
 
-  let bgCount = cls.imagePaths.length;
-  if (cls.imagePaths.length) {
-    for (let i = 0; i < cls.imagePaths.length; i++) images.set(i, await dirSource.imageFile(i));
+  const availableNames = cls.imagePaths ?? [];
+  let bgCount = 0;
+  let backgroundKind = 'image_sequence';
+  let names = [];
+  if (availableNames.length) {
+    if (!coco) {
+      // data-less: synthesize images[] from a NUMERIC sort so positions line up.
+      const synth = orderedImageNames({ cocoImages: [], availableNames });
+      coco = new CocoDocument({ images: synth.map((nm, i) => ({ id: i, file_name: nm })), annotations: [], categories: [] });
+    }
+    // Authoritative ordering: json images[] when file_names exist, else numeric
+    // sort. Match each frame's background file by basename, not by position.
+    names = orderedImageNames({ cocoImages: coco.images(), availableNames });
+    for (let i = 0; i < names.length; i++) images.set(i, await dirSource.imageFileByName(names[i]));
+    bgCount = names.length;
   } else if (cls.videoPath) {
     const vf = await dirSource.videoFile();
     videoSource = await new VideoSource(vf, { fps }).ready();
     bgCount = videoSource.frameCount();
+    backgroundKind = 'video';
   }
-  const background = bgCount
-    ? { kind: (cls.videoPath && !cls.imagePaths.length) ? 'video' : 'image_sequence', count: bgCount }
-    : null;
+  const background = bgCount ? { kind: backgroundKind, count: bgCount } : null;
 
   if (!coco) {
     coco = new CocoDocument({ images: Array.from({ length: bgCount }, (_, i) => ({ id: i })), annotations: [], categories: [] });

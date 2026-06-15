@@ -3,6 +3,8 @@
 // JSON write to the same directory tree (read path == write path).
 import { classifyEntries } from './dataset_paths.js';
 
+const basename = (p) => String(p).split('/').pop();
+
 export function fsAccessSupported() {
   return typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function';
 }
@@ -73,6 +75,15 @@ export class DirSource {
 
   async imageFile(index) {
     const p = this._cls?.imagePaths?.[index];
+    return p ? fileAt(this._dir, p) : null;
+  }
+
+  // Match by file basename (not by sorted position): the COCO json's images[]
+  // order is authoritative, so frame i's background is the file whose basename
+  // equals the json entry's file_name basename. Returns null if not on disk.
+  async imageFileByName(name) {
+    const want = basename(name);
+    const p = (this._cls?.imagePaths ?? []).find((rel) => basename(rel) === want);
     return p ? fileAt(this._dir, p) : null;
   }
 

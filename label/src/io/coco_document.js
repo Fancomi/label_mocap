@@ -29,6 +29,7 @@ export class CocoDocument {
   }
 
   imageIds() { return (this._raw.images ?? []).map((im) => im.id); }
+  images() { return this._raw.images ?? []; }
   imageInfo(id) { return (this._raw.images ?? []).find((im) => im.id === id) ?? null; }
   getAnnotation(imageId) { return this._byImageId.get(imageId) ?? null; }
 
