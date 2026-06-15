@@ -490,6 +490,28 @@ function boot() {
     if (bboxOverlay) bboxOverlay.render(store.current()?.bbox ?? null);
   });
 
+  // Wheel = depth (root_pos.z) in 2D-aligned root/translate mode. In 2D the
+  // view axis is the depth axis, so an on-canvas Z handle projects to a point
+  // and is impossible to grab — the wheel sidesteps that geometry entirely.
+  // OrbitControls is disabled in 2D so the wheel is free here; in 3D the wheel
+  // stays with OrbitControls zoom (we don't intercept it). One continuous
+  // scroll = one undo unit, committed ~250ms after it stops.
+  let wheelTimer = null;
+  $('c').addEventListener('wheel', (e) => {
+    if (!store || !store.current() || ui?.readOnly) return;
+    if (!(ui.mode === 'root' && cam.mode === '2d' && $('root-translate').classList.contains('on'))) return;
+    e.preventDefault();
+    const a = store.current();
+    const pos = (a.root_pos || [0, 0, 0]).slice();
+    pos[2] += (e.deltaY > 0 ? 1 : -1) * 0.05; // push away / pull near along view
+    if (wheelTimer === null) store.beginEdit();
+    store.applyFields({ root_pos: pos });
+    applyAnnotation();
+    if (rootHandle) rootHandle.attach(pos); // keep the gizmo centred on the body
+    clearTimeout(wheelTimer);
+    wheelTimer = setTimeout(() => { store.commitEdit(); wheelTimer = null; }, 250);
+  }, { passive: false });
+
   // Save / Reset (#btn-save / #btn-reset) — Task 10.
   $('btn-save').addEventListener('click', () => saveJson().catch((e) => setStatus(String(e))));
   $('btn-reset').addEventListener('click', () => resetFromDisk().catch((e) => setStatus(String(e))));
