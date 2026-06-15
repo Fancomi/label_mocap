@@ -50,9 +50,12 @@
 <body>
   <aside id="left">
     <h2>SMPL 标注器</h2>
-    <button id="btn-open" class="primary">📂 打开数据目录</button>
+    <button id="btn-open" class="primary">📂 选择数据</button>
+    <div id="open-menu" hidden style="display:flex;flex-direction:column;gap:4px;margin-top:-4px">
+      <button id="open-dir">📁 图像/标注目录</button>
+      <button id="open-video">🎬 视频文件</button>
+    </div>
     <input id="dir-input" type="file" webkitdirectory directory multiple hidden>
-    <button id="btn-open-video">🎬 打开视频文件</button>
     <div class="hint" id="open-hint">Chrome/Edge 可原地保存;其他浏览器为下载模式</div>
 
     <div class="card">

@@ -32,7 +32,6 @@ let images = new Map();      // index -> File
 let loadedJsonFile = null;   // raw json File, for Reset-from-disk
 let dirSource = null;
 let videoSource = null;
-let pendingVideoFile = null;
 let readOnly = false;
 let textureLoader = null;
 let currentTexture = null;
@@ -64,7 +63,6 @@ function setPlaying(on) {
 
 async function openFiles(fileList) {
   dirSource = null;
-  pendingVideoFile = null;
   videoSource?.dispose();
   videoSource = null;
   images = new Map();
@@ -119,9 +117,8 @@ async function openFiles(fileList) {
   if (syncUI) syncUI();
 }
 
-async function openFromDirSource() {
+async function openFromDirSource(opts = {}) {
   loadedJsonFile = null;
-  pendingVideoFile = null;
   images = new Map();
   if (videoSource) { videoSource.dispose(); videoSource = null; }
   const cls = dirSource.classification;
@@ -146,9 +143,12 @@ async function openFromDirSource() {
     for (let i = 0; i < names.length; i++) images.set(i, await dirSource.imageFileByName(names[i]));
     bgCount = names.length;
   } else if (cls.videoPath) {
-    const vf = await dirSource.videoFile();
-    videoSource = await new VideoSource(vf, { fps }).ready();
-    bgCount = videoSource.frameCount();
+    let videoFile = await dirSource.videoFile();
+    if (!videoFile && opts.videoFileOverride) videoFile = opts.videoFileOverride;
+    if (videoFile) {
+      videoSource = await new VideoSource(videoFile, { fps }).ready();
+      bgCount = videoSource.frameCount();
+    }
     backgroundKind = 'video';
   }
   const background = bgCount ? { kind: backgroundKind, count: bgCount } : null;
@@ -179,31 +179,20 @@ async function openFromDirSource() {
   if (syncUI) syncUI();
 }
 
-async function openVideoFileFlow() {
-  const file = await pickVideoFile();           // may throw AbortError if cancelled
-  dirSource = null;                              // not bound to a dataset dir yet
-  loadedJsonFile = null;
-  if (videoSource) { videoSource.dispose(); videoSource = null; }
-  images = new Map();
-  pendingVideoFile = file;
-  videoSource = await new VideoSource(file, { fps }).ready();
-  const bgCount = videoSource.frameCount();
-  const coco = new CocoDocument({ images: Array.from({ length: bgCount }, (_, i) => ({ id: i })), annotations: [], categories: [] });
-  buildFrames({ background: { kind: 'video', count: bgCount }, dataFrameIndices: [] });
-  readOnly = false;
-  store = new AnnotationStore(coco);
-  ui = new UIController({ readOnly });
-  if (syncUI) ui.onChange(syncUI);
-  $('slider').max = String(Math.max(0, store.frameCount() - 1));
-  $('slider').value = '0';
-  $('right').classList.remove('disabled');
-  if (!model) { model = await loadModel(MODEL_URL); scene.setTopology(model.faces); }
-  scene.prepareForSequence({ K: cam.K, image_w: cam.imageW, image_h: cam.imageH });
-  cam.snapTo('2d');
-  scene.resize();
-  await showFrame(0);
-  if (syncUI) syncUI();
-  setStatus(`已打开视频 ${file.name}(首次保存时将选择目录并建立数据集)`);
+async function openDirectoryData() {
+  const h = await pickDirectory();
+  dirSource = new DirSource(h);
+  await dirSource.scan();
+  await openFromDirSource();
+}
+
+async function openVideoData() {
+  const v = await pickVideoFile();
+  setStatus('请选择该视频所在的文件夹(用于读写标注)');
+  const parent = await pickDirectory();
+  dirSource = new DirSource(parent);
+  await dirSource.scan({ videoName: v.name });
+  await openFromDirSource({ videoFileOverride: v });
 }
 
 function buildFrame() {
@@ -284,30 +273,6 @@ async function showFrame(i) {
 
 async function saveJson() {
   if (!store || !model) return;
-  let justBuilt = false;
-  if (!dirSource && pendingVideoFile) {
-    if (fsAccessSupported()) {
-      let handle;
-      try {
-        handle = await pickDirectory(); // user picks target dir
-      } catch (err) {
-        if (err?.name === 'AbortError') { setStatus('已取消保存'); return; }
-        throw err;
-      }
-      dirSource = new DirSource(handle);
-      await dirSource.scan();
-      // copy the video into the dataset dir (root, original name) if not already there
-      const vname = pendingVideoFile.name;
-      const already = dirSource.classification.videoPath;
-      if (!already) {
-        await dirSource.writeFile(vname, pendingVideoFile);
-        // re-scan so classification picks up the copied video + (about-to-be-written) json
-        await dirSource.scan();
-        justBuilt = true;
-      }
-    }
-    // if FS Access unsupported, fall through to the download path below
-  }
   const doc = store.document();
   for (const id of doc.imageIds()) {
     const a = doc.getAnnotation(id);
@@ -326,7 +291,7 @@ async function saveJson() {
   const obj = doc.serialize();
   if (dirSource) {
     const path = await dirSource.saveJson(obj);
-    setStatus(justBuilt ? `已建立数据集并拷贝视频 + 原地保存 ${path}` : `已原地保存 ${path}`);
+    setStatus(`已保存 ${path}`);
   } else {
     const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -360,26 +325,20 @@ function boot() {
   scene = new LabelScene($('c'));
   cam = new CameraModes({ canvas: $('c'), meta: { K: { fx: 1850, fy: 1850, cx: 960, cy: 540 }, image_w: 1920, image_h: 1080 } });
   scene.setCamera(cam);
-  $('btn-open').addEventListener('click', async () => {
-    if (fsAccessSupported()) {
-      try {
-        const handle = await pickDirectory();
-        dirSource = new DirSource(handle);
-        await dirSource.scan();
-        await openFromDirSource();
-      } catch (err) { if (err?.name !== 'AbortError') setStatus(String(err)); }
-    } else {
-      $('dir-input').click();
-    }
+  $('btn-open').addEventListener('click', () => {
+    if (!fsAccessSupported()) { $('dir-input').click(); return; }
+    const m = $('open-menu'); m.hidden = !m.hidden;
+  });
+  $('open-dir').addEventListener('click', () => {
+    $('open-menu').hidden = true;
+    openDirectoryData().catch((e) => { if (e?.name !== 'AbortError') setStatus(String(e)); });
+  });
+  $('open-video').addEventListener('click', () => {
+    $('open-menu').hidden = true;
+    if (!videoOpenSupported()) { setStatus('当前浏览器不支持打开视频文件,请用 Chrome/Edge'); return; }
+    openVideoData().catch((e) => { if (e?.name !== 'AbortError') setStatus(String(e)); });
   });
   $('dir-input').addEventListener('change', (e) => openFiles(e.target.files).catch((err) => setStatus(String(err))));
-  $('btn-open-video').addEventListener('click', () => {
-    if (videoOpenSupported()) {
-      openVideoFileFlow().catch((err) => { if (err?.name !== 'AbortError') setStatus(String(err)); });
-    } else {
-      setStatus('当前浏览器不支持直接打开视频文件,请用 Chrome/Edge');
-    }
-  });
   $('btn-2d').addEventListener('click', () => { if ((poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged())) return; cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); refreshTabAvailability(); if (syncUI) syncUI(); });
   $('btn-3d').addEventListener('click', () => { if ((poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged())) return; cam.switchTo('3d'); $('btn-3d').classList.add('on'); $('btn-2d').classList.remove('on'); if (ui && ui.mode === 'bbox') ui.setMode('pose'); refreshTabAvailability(); if (syncUI) syncUI(); });
   $('slider').addEventListener('input', (e) => { if (!store) return; setPlaying(false); showFrame(+e.target.value); });

@@ -58,10 +58,13 @@ export class DirSource {
     this._cls = null;
   }
 
-  async scan() {
+  async scan(opts = {}) {
     const paths = [];
     await walk(this._dir, '', paths);
-    this._cls = classifyEntries(paths);
+    // rootName = the picked directory's own name, so a loose-images / fallback
+    // dataset writes <rootName>.json at the parent root. videoName lets the
+    // explicit video-file flow name the json after the picked mp4.
+    this._cls = classifyEntries(paths, { rootName: this._dir.name, ...opts });
     return this._cls;
   }
 
@@ -91,8 +94,9 @@ export class DirSource {
     return this._cls?.videoPath ? fileAt(this._dir, this._cls.videoPath) : null;
   }
 
-  // In-place save: writes to jsonPath if it existed, else the canonical
-  // writeJsonPath (creating json_results/player_0/). Returns the path written.
+  // In-place save: writes to jsonPath if it existed, else writeJsonPath (the
+  // sibling <dataItemName>.json at the parent root, or the diving path). Returns
+  // the path written, and pins jsonPath so the next save is in place.
   async saveJson(obj) {
     const target = this._cls?.jsonPath ?? this._cls?.writeJsonPath;
     const w = await writableAt(this._dir, target);
