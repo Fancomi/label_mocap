@@ -2,13 +2,41 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="refresh" content="0; url=./smpl_viewer/viewer.html">
-<title>SMPL Viewer</title>
-<script>
-  location.replace(new URL('./smpl_viewer/viewer.html', location.href));
-</script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMPL 工具集 · SMPL Tools</title>
+<style>
+  html,body { height:100%; margin:0; background:#1a1f2a; color:#eee;
+    font-family:system-ui,-apple-system,"PingFang SC",monospace; }
+  .wrap { min-height:100%; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:18px; padding:24px; box-sizing:border-box; }
+  h1 { font-size:20px; color:#7df; margin:0 0 4px; }
+  .sub { color:#8ab; font-size:13px; margin:0 0 12px; text-align:center; line-height:1.6; }
+  .cards { display:flex; gap:16px; flex-wrap:wrap; justify-content:center; }
+  a.card { display:block; width:260px; text-decoration:none; color:#eee;
+    background:#232a33; border:1px solid #3a4150; border-radius:10px; padding:18px 20px;
+    transition:border-color .15s, transform .15s; }
+  a.card:hover { border-color:#3399ff; transform:translateY(-2px); }
+  a.card h2 { font-size:15px; margin:0 0 8px; color:#9ecbff; }
+  a.card p { font-size:12px; color:#9ab; margin:0; line-height:1.6; }
+  .note { color:#667; font-size:11px; max-width:560px; text-align:center; line-height:1.7; }
+</style>
 </head>
 <body>
-<a href="./smpl_viewer/viewer.html">Open SMPL Viewer</a>
+  <div class="wrap">
+    <h1>SMPL 工具集</h1>
+    <p class="sub">浏览器内运行 · 数据全程留在本地,不上传 · 多人同时使用互不影响</p>
+    <div class="cards">
+      <a class="card" href="./label/">
+        <h2>🏷 标注器 Annotator</h2>
+        <p>增删改 SMPL 姿态 / 位置 / 体型 / 2D 框,支持图像序列与视频,原地保存 JSON。建议用 Chrome / Edge。</p>
+      </a>
+      <a class="card" href="./smpl_viewer/viewer.html">
+        <h2>👁 查看器 Viewer</h2>
+        <p>只读播放 SMPL 数据,2D 对齐 / 3D 自由视角。可加载标注器产出的 JSON。</p>
+      </a>
+    </div>
+    <p class="note">标注器原地保存的 player_0.json 与查看器读取的格式一致 —— 标完即可在查看器中加载查看。
+      原地保存(写回所选目录)需要 Chrome / Edge 的文件系统访问能力;其他浏览器为下载模式。</p>
+  </div>
 </body>
 </html>
