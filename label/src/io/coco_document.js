@@ -15,8 +15,17 @@ export class CocoDocument {
   constructor(raw) {
     this._raw = raw;
     this._byImageId = new Map();
-    // v1 single-person: one annotation per image_id (last wins). Multi-person would key by annotation id.
-    for (const a of raw.annotations ?? []) this._byImageId.set(a.image_id, structuredClone(a));
+    // v1 single-person: one annotation per image_id (last wins). Multi-person
+    // would key by annotation id. Surface the lossy case rather than silently
+    // dropping extra people, so a multi-person dataset isn't quietly corrupted.
+    let collisions = 0;
+    for (const a of raw.annotations ?? []) {
+      if (this._byImageId.has(a.image_id)) collisions++;
+      this._byImageId.set(a.image_id, structuredClone(a));
+    }
+    if (collisions > 0 && typeof console !== 'undefined') {
+      console.warn(`CocoDocument: ${collisions} annotation(s) dropped — v1 supports one person per image_id (last wins).`);
+    }
   }
 
   imageIds() { return (this._raw.images ?? []).map((im) => im.id); }

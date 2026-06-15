@@ -296,6 +296,7 @@ async function saveJson() {
     const tmpMesh = new THREE.Mesh(g);
     const occ = computeOcclusion(out.joints, tmpMesh, cam.camera, 52);
     g.dispose();
+    tmpMesh.material.dispose();
     doc.setAnnotation(id, { keypoints, occlution_joint: occ });
   }
   const obj = doc.serialize();

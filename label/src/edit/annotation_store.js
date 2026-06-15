@@ -8,7 +8,7 @@ export class AnnotationStore {
     this._frame = 0;
     this._undo = [];
     this._listeners = new Set();
-    this._pendingBefore = null;
+    this._pendingBefore = undefined; // undefined = no open drag transaction
   }
 
   onChange(fn) { this._listeners.add(fn); return () => this._listeners.delete(fn); }
@@ -62,11 +62,16 @@ export class AnnotationStore {
   deleteCurrent() { this._txn((id) => this._doc.deleteAnnotation(id)); }
 
   // Drag transaction: begin → applyFields* → commit (one undo unit).
-  beginEdit() { this._pendingBefore = this._snapshot(); }
+  // _pendingBefore is undefined when no transaction is open; a captured
+  // snapshot is either an annotation object or null (null = "no annotation").
+  // We use `undefined` (not null) as the "no open transaction" sentinel so a
+  // legitimately-null before-state is never confused with "nothing to commit".
+  beginEdit() { if (this._pendingBefore === undefined) this._pendingBefore = this._snapshot(); }
   applyFields(fields) { this._doc.setAnnotation(this.currentImageId(), fields); this._notify(); }
   commitEdit() {
+    if (this._pendingBefore === undefined) return; // no open transaction → ignore double-commit
     this._pushUndo(this.currentImageId(), this._pendingBefore);
-    this._pendingBefore = null;
+    this._pendingBefore = undefined;
   }
 
   undo() {

@@ -14,7 +14,9 @@ export function classifyEntries(paths) {
   const jsonPath = paths.includes(DATA_JSON_PATH) ? DATA_JSON_PATH
     : (paths.find((p) => p.endsWith('player_0.json')) ?? null);
 
-  const imagePaths = paths.filter(isJpeg).sort((a, b) => a.localeCompare(b));
+  // Numeric-aware sort so 2.jpg < 10.jpg (lexicographic would order 10 before 2
+  // and silently misalign every frame for non-zero-padded filenames).
+  const imagePaths = paths.filter(isJpeg).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
   let videoPath = null;
   let bestRank = Infinity;

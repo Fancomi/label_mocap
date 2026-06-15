@@ -38,3 +38,8 @@ test('prefers mp4 over other video extensions, ignores non-media', () => {
   const r = classifyEntries(['a.mp4', 'notes.txt', 'b.webm']);
   assert.equal(r.videoPath, 'a.mp4');
 });
+
+test('images sort numerically, not lexicographically (2 before 10)', () => {
+  const r = classifyEntries(['images/10.jpg', 'images/2.jpg', 'images/1.jpg']);
+  assert.deepEqual(r.imagePaths, ['images/1.jpg', 'images/2.jpg', 'images/10.jpg']);
+});

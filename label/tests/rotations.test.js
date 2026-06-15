@@ -54,3 +54,33 @@ test('quatConjugate of a unit quat is its inverse (q * q* = identity)', () => {
   assert.ok(Math.abs(p[0]) < 1e-6 && Math.abs(p[1]) < 1e-6 && Math.abs(p[2]) < 1e-6);
   assert.ok(Math.abs(p[3] - 1) < 1e-6);
 });
+
+test('euler XYZ round-trips at the gimbal-lock pole (ry = +90deg)', () => {
+  // ry=PI/2 is the singular branch of quatToEulerXYZ. Round-trip via quat must
+  // reproduce the SAME orientation (compare quaternions, not raw euler triples,
+  // since euler is non-unique at the pole).
+  const e = [0.5, Math.PI / 2, -0.3];
+  const q = eulerXYZToQuat(e);
+  const back = eulerXYZToQuat(quatToEulerXYZ(q));
+  const dot = Math.abs(q[0] * back[0] + q[1] * back[1] + q[2] * back[2] + q[3] * back[3]);
+  close(dot, 1, 1e-5);
+});
+
+test('euler XYZ round-trips at the negative pole (ry = -90deg)', () => {
+  const e = [-0.4, -Math.PI / 2, 0.7];
+  const q = eulerXYZToQuat(e);
+  const back = eulerXYZToQuat(quatToEulerXYZ(q));
+  const dot = Math.abs(q[0] * back[0] + q[1] * back[1] + q[2] * back[2] + q[3] * back[3]);
+  close(dot, 1, 1e-5);
+});
+
+test('mat3ToQuat handles ~180deg rotations (negative-trace branches)', () => {
+  // 180deg about each principal axis exercises the three else-branches of the
+  // Shepperd method (trace <= 0), where the dominant-diagonal pick matters.
+  for (const axis of [[Math.PI, 0, 0], [0, Math.PI, 0], [0, 0, Math.PI]]) {
+    const q = quatNormalize(axisAngleToQuat(axis));
+    const back = mat3ToQuat(quatToMat3(q));
+    const dot = Math.abs(q[0] * back[0] + q[1] * back[1] + q[2] * back[2] + q[3] * back[3]);
+    close(dot, 1, 1e-5);
+  }
+});

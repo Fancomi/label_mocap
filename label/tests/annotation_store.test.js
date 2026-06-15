@@ -70,6 +70,19 @@ test('undo after delete restores the full annotation, not just editable fields',
   assert.equal(a.right_hand_pose[0], 0.3);
 });
 
+test('double commitEdit does not push a spurious before:null undo (no data loss)', () => {
+  const s = new AnnotationStore(doc());
+  s.setFrame(0);
+  s.beginEdit();
+  s.applyFields({ bbox: [9, 9, 9, 9] });
+  s.commitEdit();
+  s.commitEdit();              // stray second commit (e.g. pointerup + change both fire)
+  assert.deepEqual(s.current().bbox, [9, 9, 9, 9]);
+  s.undo();                    // must revert the edit, NOT delete the annotation
+  assert.equal(s.hasData(), true);
+  assert.deepEqual(s.current().bbox, [1, 1, 1, 1]);
+});
+
 test('change listeners fire on mutation', () => {
   const s = new AnnotationStore(doc());
   let n = 0; s.onChange(() => { n++; });

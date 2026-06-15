@@ -3,7 +3,7 @@
   "type": "module",
   "scripts": {
     "test": "npm run test:web && npm run test:tools && npm run test:server",
-    "test:web": "node --test smpl_web_viewer/tests/*.test.js tests/smpl_viewer_local_data.test.js",
+    "test:web": "node --test smpl_web_viewer/tests/*.test.js label/tests/*.test.js tests/smpl_viewer_local_data.test.js",
     "test:tools": "PYTHONPATH=smpl_web_viewer python3 -m unittest discover -s smpl_web_viewer/tests -p 'test_*.py'",
     "test:server": "python3 -m unittest tests.test_server",
     "serve": "bash smpl_viewer/run.sh",

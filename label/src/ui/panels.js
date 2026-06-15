@@ -158,14 +158,21 @@ export class Panels {
       store.applyFields(rot.toAxisAngle());
       this._onEdit();
     };
-    const begin = () => { if (!this._readOnly()) this._getStore()?.beginEdit(); };
-    const commit = () => { if (!this._readOnly()) this._getStore()?.commitEdit(); };
+    // One editing session = one undo unit. begin() only opens a transaction
+    // once; commit() only closes one that is open. Without this guard a single
+    // release fires both pointerup+change (slider) or change+blur (number),
+    // committing twice — the 2nd commit would push a before:null undo record
+    // and a later Ctrl+Z would DELETE the annotation (data loss).
+    let editing = false;
+    const begin = () => { if (this._readOnly() || editing) return; const s = this._getStore(); if (s && s.current()) { s.beginEdit(); editing = true; } };
+    const commit = () => { if (this._readOnly() || !editing) return; this._getStore().commitEdit(); editing = false; };
     for (const [numId, sliderId] of axes) {
       const num = $(numId);
       const slider = $(sliderId);
       if (!num || !slider) continue;
       num.addEventListener('focus', begin);
       num.addEventListener('input', () => {
+        begin();
         this._setVal(slider, num.value);
         commitTo(readDegs());
       });
@@ -173,6 +180,7 @@ export class Panels {
       num.addEventListener('blur', commit);
       slider.addEventListener('pointerdown', () => { this._activeDragEl = slider; begin(); });
       slider.addEventListener('input', () => {
+        begin();
         num.value = slider.value;
         commitTo(readDegs());
       });
