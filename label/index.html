@@ -45,15 +45,23 @@
     #right.disabled { opacity:.5; pointer-events:none; }
     #pose-rot-block { display:flex; flex-direction:column; gap:6px; }
     #pose-rot-block[hidden] { display:none; }
+    .menu-anchor { position:relative; }
+    #open-menu { position:absolute; top:100%; left:0; right:0; z-index:20; margin-top:4px;
+      display:flex; flex-direction:column; gap:4px; padding:5px;
+      background:#262b33; border:1px solid #3a4150; border-radius:6px;
+      box-shadow:0 6px 18px rgba(0,0,0,.5); }
+    #open-menu[hidden] { display:none; }
   </style>
 </head>
 <body>
   <aside id="left">
     <h2>SMPL 标注器</h2>
-    <button id="btn-open" class="primary">📂 选择数据</button>
-    <div id="open-menu" hidden style="display:flex;flex-direction:column;gap:4px;margin-top:-4px">
-      <button id="open-dir">📁 图像/标注目录</button>
-      <button id="open-video">🎬 视频文件</button>
+    <div class="menu-anchor">
+      <button id="btn-open" class="primary" style="width:100%">📂 选择数据 ▾</button>
+      <div id="open-menu" hidden>
+        <button id="open-dir">📁 图像/标注目录</button>
+        <button id="open-video">🎬 视频文件</button>
+      </div>
     </div>
     <input id="dir-input" type="file" webkitdirectory directory multiple hidden>
     <div class="hint" id="open-hint">Chrome/Edge 可原地保存;其他浏览器为下载模式</div>

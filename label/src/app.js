@@ -325,10 +325,18 @@ function boot() {
   scene = new LabelScene($('c'));
   cam = new CameraModes({ canvas: $('c'), meta: { K: { fx: 1850, fy: 1850, cx: 960, cy: 540 }, image_w: 1920, image_h: 1080 } });
   scene.setCamera(cam);
-  $('btn-open').addEventListener('click', () => {
+  $('btn-open').addEventListener('click', (e) => {
     if (!fsAccessSupported()) { $('dir-input').click(); return; }
+    e.stopPropagation();
     const m = $('open-menu'); m.hidden = !m.hidden;
   });
+  // Click anywhere outside closes the popup menu.
+  document.addEventListener('click', (e) => {
+    const m = $('open-menu');
+    if (!m || m.hidden) return;
+    if (!e.target.closest('.menu-anchor')) m.hidden = true;
+  });
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { const m = $('open-menu'); if (m) m.hidden = true; } });
   $('open-dir').addEventListener('click', () => {
     $('open-menu').hidden = true;
     openDirectoryData().catch((e) => { if (e?.name !== 'AbortError') setStatus(String(e)); });
