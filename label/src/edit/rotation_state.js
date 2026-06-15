@@ -11,7 +11,6 @@ export class RotationState {
     this._rootQ = rootQ;
     this._jointQ = jointQ;            // length 21, each [x,y,z,w]
     this._draftEuler = new Map();     // index (-1=root) -> [rx,ry,rz]
-    this._listeners = new Set();
   }
 
   static fromAxisAngle({ root_rota, body_pose }) {
@@ -25,14 +24,12 @@ export class RotationState {
   }
 
   get jointCount() { return JOINTS; }
-  onChange(fn) { this._listeners.add(fn); return () => this._listeners.delete(fn); }
-  _notify() { for (const fn of this._listeners) fn(); }
 
   getJointQuat(j) { return this._jointQ[j]; }
   getRootQuat() { return this._rootQ; }
 
-  setJointQuat(j, q) { this._jointQ[j] = q; this._invalidateExcept(j); this._notify(); }
-  setRootQuat(q) { this._rootQ = q; this._invalidateExcept(-1); this._notify(); }
+  setJointQuat(j, q) { this._jointQ[j] = q; this._invalidateExcept(j); }
+  setRootQuat(q) { this._rootQ = q; this._invalidateExcept(-1); }
 
   getJointEuler(j) {
     if (this._draftEuler.has(j)) return this._draftEuler.get(j);
@@ -47,13 +44,11 @@ export class RotationState {
     this._jointQ[j] = eulerXYZToQuat(e);
     this._invalidateExcept(j);
     this._draftEuler.set(j, e.slice());
-    this._notify();
   }
   setRootEuler(e) {
     this._rootQ = eulerXYZToQuat(e);
     this._invalidateExcept(-1);
     this._draftEuler.set(-1, e.slice());
-    this._notify();
   }
 
   _invalidateExcept(keep) {

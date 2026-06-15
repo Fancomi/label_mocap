@@ -2,8 +2,9 @@
 import { loadModel } from '../../smpl_core/smpl_model.js';
 import { forwardSmpl } from '../../smpl_core/lbs.js';
 import { mat3ToQuat } from '../../smpl_core/rotations.js';
+import { JOINT_NAMES } from '../../smpl_core/joint_names.js';
 import { CocoDocument } from './io/coco_document.js';
-import { buildFrames, isPortrait } from './io/source_loader.js';
+import { assertHasContent, isPortrait } from './io/source_loader.js';
 import { orderedImageNames, basename } from './io/image_order.js';
 import { AnnotationStore } from './edit/annotation_store.js';
 import { reprojectKeypoints } from './edit/derived.js';
@@ -26,7 +27,6 @@ const $ = (id) => document.getElementById(id);
 const setStatus = (t) => { $('status').textContent = t; };
 
 const MODEL_URL = new URL('../../smpl_web_viewer/public/models/smpl_neutral.meta.json', import.meta.url);
-const JOINT_NAMES = ['Pelvis', 'L_Hip', 'R_Hip', 'Spine1', 'L_Knee', 'R_Knee', 'Spine2', 'L_Ankle', 'R_Ankle', 'Spine3', 'L_Foot', 'R_Foot', 'Neck', 'L_Collar', 'R_Collar', 'Head', 'L_Shoulder', 'R_Shoulder', 'L_Elbow', 'R_Elbow', 'L_Wrist', 'R_Wrist', 'L_Hand', 'R_Hand'];
 let model = null, scene = null, cam = null, store = null;
 let images = new Map();      // index -> File
 let loadedJsonFile = null;   // raw json File, for Reset-from-disk
@@ -59,6 +59,30 @@ function setPlaying(on) {
   if (playing) { poseGizmo?.detach(); rootHandle?.detach(); }
   $('btn-play').textContent = playing ? '⏸ 暂停' : '▶ 播放';
   $('btn-play').classList.toggle('on', playing);
+}
+
+// 两条 open 路径(目录/视频 与 本地文件)的公共尾段:校验内容、竖拍 gate、装配
+// store/ui/slider/right/model/scene,并显示首帧。调用方各自先准备好 coco/background
+// 以及 images(Map)或 videoSource(模块级变量),mountDataset 不触碰它们。
+async function mountDataset({ coco, background }) {
+  const ids = coco.imageIds();
+  const dataFrameIndices = ids.map((id, idx) => (coco.getAnnotation(id) ? idx : -1)).filter((x) => x >= 0);
+  assertHasContent({ bgCount: background ? background.count : 0, dataFrameIndices });
+  const info = coco.imageInfo(ids[0]);
+  readOnly = info ? isPortrait(info) : false;
+  if (readOnly) setStatus('⚠ 该数据为竖拍/旋转,标注器仅支持查看;请用其他软件转正后再标注');
+  store = new AnnotationStore(coco);
+  ui = new UIController({ readOnly });
+  if (syncUI) ui.onChange(syncUI);
+  $('slider').max = String(Math.max(0, store.frameCount() - 1));
+  $('slider').value = '0';
+  $('right').classList.remove('disabled');
+  if (!model) { model = await loadModel(MODEL_URL); scene.setTopology(model.faces); }
+  scene.prepareForSequence({ K: cam.K, image_w: cam.imageW, image_h: cam.imageH });
+  cam.snapTo('2d');
+  scene.resize();
+  await showFrame(0);
+  if (syncUI) syncUI();
 }
 
 async function openFiles(fileList) {
@@ -94,27 +118,7 @@ async function openFiles(fileList) {
   const bgCount = names.length;
   const background = bgCount ? { kind: 'image_sequence', count: bgCount } : null;
 
-  const ids = coco.imageIds();
-  const dataFrameIndices = ids.map((id, idx) => (coco.getAnnotation(id) ? idx : -1)).filter((x) => x >= 0);
-  buildFrames({ background, dataFrameIndices });
-
-  // portrait gate
-  const info = coco.imageInfo(coco.imageIds()[0]);
-  readOnly = info ? isPortrait(info) : false;
-  if (readOnly) setStatus('⚠ 该数据为竖拍/旋转,标注器仅支持查看;请用其他软件转正后再标注');
-
-  store = new AnnotationStore(coco);
-  ui = new UIController({ readOnly });
-  if (syncUI) ui.onChange(syncUI);
-  $('slider').max = String(Math.max(0, store.frameCount() - 1));
-  $('slider').value = '0';
-  $('right').classList.remove('disabled');
-  if (!model) { model = await loadModel(MODEL_URL); scene.setTopology(model.faces); }
-  scene.prepareForSequence({ K: cam.K, image_w: cam.imageW, image_h: cam.imageH });
-  cam.snapTo('2d');
-  scene.resize();
-  await showFrame(0);
-  if (syncUI) syncUI();
+  await mountDataset({ coco, background });
 }
 
 async function openFromDirSource(opts = {}) {
@@ -157,26 +161,7 @@ async function openFromDirSource(opts = {}) {
     coco = new CocoDocument({ images: Array.from({ length: bgCount }, (_, i) => ({ id: i })), annotations: [], categories: [] });
   }
 
-  const ids = coco.imageIds();
-  const dataFrameIndices = ids.map((id, idx) => (coco.getAnnotation(id) ? idx : -1)).filter((x) => x >= 0);
-  buildFrames({ background, dataFrameIndices });
-
-  const info = coco.imageInfo(coco.imageIds()[0]);
-  readOnly = info ? isPortrait(info) : false;
-  if (readOnly) setStatus('⚠ 该数据为竖拍/旋转,标注器仅支持查看;请用其他软件转正后再标注');
-
-  store = new AnnotationStore(coco);
-  ui = new UIController({ readOnly });
-  if (syncUI) ui.onChange(syncUI);
-  $('slider').max = String(Math.max(0, store.frameCount() - 1));
-  $('slider').value = '0';
-  $('right').classList.remove('disabled');
-  if (!model) { model = await loadModel(MODEL_URL); scene.setTopology(model.faces); }
-  scene.prepareForSequence({ K: cam.K, image_w: cam.imageW, image_h: cam.imageH });
-  cam.snapTo('2d');
-  scene.resize();
-  await showFrame(0);
-  if (syncUI) syncUI();
+  await mountDataset({ coco, background });
 }
 
 async function openDirectoryData() {
@@ -303,6 +288,8 @@ async function saveJson() {
 }
 
 async function resetFromDisk() {
+  // 不复用 mountDataset:本函数语义是"重读同源并保留当前帧",不应重置相机
+  // (snapTo/resize/prepareForSequence)或跳回第 0 帧,故保留独立装配。
   if (!store) return;
   if (dirSource) {
     const raw = await dirSource.readJson();

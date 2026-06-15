@@ -1,12 +1,13 @@
 // label/src/ui/panels.js — numeric/slider readout + edit panels.
 // Pure DOM glue; mutates RotationState / AnnotationStore / CameraModes via
 // the provided getter callbacks (no app singletons imported).
+import { JOINT_NAMES } from '../../../smpl_core/joint_names.js';
 
 const $ = (id) => document.getElementById(id);
 const RAD = Math.PI / 180;
 const DEG = 180 / Math.PI;
 
-const JOINT_NAMES = ['Pelvis', 'L_Hip', 'R_Hip', 'Spine1', 'L_Knee', 'R_Knee', 'Spine2', 'L_Ankle', 'R_Ankle', 'Spine3', 'L_Foot', 'R_Foot', 'Neck', 'L_Collar', 'R_Collar', 'Head', 'L_Shoulder', 'R_Shoulder', 'L_Elbow', 'R_Elbow', 'L_Wrist', 'R_Wrist', 'L_Hand', 'R_Hand'];
+
 
 const ANGLES = [
   ['R-Elbow', 16, 18, 20], ['L-Elbow', 17, 19, 21],

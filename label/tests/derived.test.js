@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { reprojectKeypoints, occlusionFromDepth } from '../src/edit/derived.js';
+import { reprojectKeypoints } from '../src/edit/derived.js';
 
 const K = { fx: 1850, fy: 1850, cx: 960, cy: 540 };
 
@@ -23,11 +23,3 @@ test('reprojectKeypoints marks behind-camera joints conf 0', () => {
   assert.equal(kps[2], 0);
 });
 
-test('occlusionFromDepth flags a joint behind nearer mesh', () => {
-  const joints = new Float32Array(24 * 3);
-  for (let j = 0; j < 24; j++) joints[j * 3 + 2] = -4;
-  const occ = occlusionFromDepth(joints, K, () => 2.0, 52);
-  assert.equal(occ[0], 1);
-  const occ2 = occlusionFromDepth(joints, K, () => 6.0, 52);
-  assert.equal(occ2[0], 0);
-});

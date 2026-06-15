@@ -83,9 +83,8 @@ test('double commitEdit does not push a spurious before:null undo (no data loss)
   assert.deepEqual(s.current().bbox, [1, 1, 1, 1]);
 });
 
-test('change listeners fire on mutation', () => {
+test('mutation updates state', () => {
   const s = new AnnotationStore(doc());
-  let n = 0; s.onChange(() => { n++; });
   s.setFrame(1); s.addTpose();
-  assert.ok(n >= 1);
+  assert.equal(s.hasData(), true);
 });

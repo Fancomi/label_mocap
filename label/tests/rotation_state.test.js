@@ -20,12 +20,9 @@ test('toAxisAngle round-trips root_rota and body_pose', () => {
   arrClose(out.body_pose, body);
 });
 
-test('setJointEuler updates the quaternion source and notifies', () => {
+test('setJointEuler updates the quaternion source', () => {
   const s = RotationState.fromAxisAngle({ root_rota: [0, 0, 0], body_pose: Array(63).fill(0) });
-  let fired = 0;
-  s.onChange(() => { fired++; });
   s.setJointEuler(2, [0, Math.PI / 2, 0]);
-  fired === 0 && assert.fail('change listener not called');
   arrClose(quatToAxisAngle(s.getJointQuat(2)), [0, Math.PI / 2, 0]);
 });
 

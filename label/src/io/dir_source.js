@@ -2,8 +2,7 @@
 // Wraps a FileSystemDirectoryHandle: recursive walk, file reads, and in-place
 // JSON write to the same directory tree (read path == write path).
 import { classifyEntries } from './dataset_paths.js';
-
-const basename = (p) => String(p).split('/').pop();
+import { basename } from './image_order.js';
 
 export function fsAccessSupported() {
   return typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function';

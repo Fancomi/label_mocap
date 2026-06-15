@@ -4,9 +4,12 @@
 // existing compliant json is found (then save in place to it).
 export const DATA_JSON_PATH = 'json_results/player_0/player_0.json';
 
+// basename 的唯一定义在 image_order.js;此处 re-export 以兼容既有调用方与测试。
+export { basename } from './image_order.js';
+import { basename } from './image_order.js';
+
 const isJpeg = (p) => /\.(jpe?g)$/i.test(p);
 const VIDEO_EXT = ['.mp4', '.webm', '.mov', '.m4v'];
-export function basename(p) { return String(p).split('/').pop(); }
 function stripExt(name) { return name.replace(/\.[^.]+$/, ''); }
 function topSegment(p) { const i = p.indexOf('/'); return i < 0 ? '' : p.slice(0, i); }
 

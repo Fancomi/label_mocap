@@ -1,45 +1,20 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildFrames, isPortrait } from '../src/io/source_loader.js';
+import { assertHasContent, isPortrait } from '../src/io/source_loader.js';
 
-test('union: image-seq + full data → one frame per image, all with annotations', () => {
-  const frames = buildFrames({
-    background: { kind: 'image_sequence', count: 3 },
-    dataFrameIndices: [0, 1, 2],
-  });
-  assert.equal(frames.length, 3);
-  assert.deepEqual(frames.map((f) => f.hasData), [true, true, true]);
-  assert.deepEqual(frames.map((f) => f.hasBackground), [true, true, true]);
+test('有背景无数据 → 通过校验', () => {
+  assert.doesNotThrow(() => assertHasContent({ bgCount: 2, dataFrameIndices: [] }));
 });
 
-test('image-seq + no data → frames exist, all empty', () => {
-  const frames = buildFrames({ background: { kind: 'image_sequence', count: 2 }, dataFrameIndices: [] });
-  assert.equal(frames.length, 2);
-  assert.deepEqual(frames.map((f) => f.hasData), [false, false]);
+test('有数据无背景 → 通过校验', () => {
+  assert.doesNotThrow(() => assertHasContent({ bgCount: 0, dataFrameIndices: [0, 2] }));
 });
 
-test('no background + data → frame count from max data id + 1', () => {
-  const frames = buildFrames({ background: null, dataFrameIndices: [0, 2] });
-  assert.equal(frames.length, 3);
-  assert.deepEqual(frames.map((f) => f.hasBackground), [false, false, false]);
-  assert.deepEqual(frames.map((f) => f.hasData), [true, false, true]);
-});
-
-test('partial data over image-seq marks only annotated indices', () => {
-  const frames = buildFrames({ background: { kind: 'image_sequence', count: 4 }, dataFrameIndices: [1, 3] });
-  assert.deepEqual(frames.map((f) => f.hasData), [false, true, false, true]);
-});
-
-test('neither background nor data throws', () => {
-  assert.throws(() => buildFrames({ background: null, dataFrameIndices: [] }), /no content/i);
+test('既无背景也无数据 → 抛错', () => {
+  assert.throws(() => assertHasContent({ bgCount: 0, dataFrameIndices: [] }), /no content/i);
 });
 
 test('isPortrait true when image height > width', () => {
   assert.equal(isPortrait({ width: 1080, height: 1920 }), true);
   assert.equal(isPortrait({ width: 1920, height: 1080 }), false);
-});
-
-test('frame axis is position-based, not image-id value', () => {
-  const frames = buildFrames({ background: { kind: 'image_sequence', count: 3 }, dataFrameIndices: [2] });
-  assert.deepEqual(frames.map((f) => f.hasData), [false, false, true]);
 });

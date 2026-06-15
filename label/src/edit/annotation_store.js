@@ -7,15 +7,11 @@ export class AnnotationStore {
     this._ids = cocoDoc.imageIds();
     this._frame = 0;
     this._undo = [];
-    this._listeners = new Set();
     this._pendingBefore = undefined; // undefined = no open drag transaction
   }
 
-  onChange(fn) { this._listeners.add(fn); return () => this._listeners.delete(fn); }
-  _notify() { for (const fn of this._listeners) fn(); }
-
   frameCount() { return this._ids.length; }
-  setFrame(i) { this._frame = i; this._notify(); }
+  setFrame(i) { this._frame = i; }
   currentFrame() { return this._frame; }
   currentImageId() { return this._ids[this._frame]; }
   current() { return this._doc.getAnnotation(this.currentImageId()); }
@@ -36,7 +32,6 @@ export class AnnotationStore {
     const before = this._snapshot();
     fn(imageId);
     this._pushUndo(imageId, before);
-    this._notify();
   }
 
   addTpose() {
@@ -67,7 +62,7 @@ export class AnnotationStore {
   // We use `undefined` (not null) as the "no open transaction" sentinel so a
   // legitimately-null before-state is never confused with "nothing to commit".
   beginEdit() { if (this._pendingBefore === undefined) this._pendingBefore = this._snapshot(); }
-  applyFields(fields) { this._doc.setAnnotation(this.currentImageId(), fields); this._notify(); }
+  applyFields(fields) { this._doc.setAnnotation(this.currentImageId(), fields); }
   commitEdit() {
     if (this._pendingBefore === undefined) return; // no open transaction → ignore double-commit
     this._pushUndo(this.currentImageId(), this._pendingBefore);
@@ -78,7 +73,6 @@ export class AnnotationStore {
     const u = this._undo.pop();
     if (!u) return;
     this._restore(u.imageId, u.before);
-    this._notify();
   }
 
   document() { return this._doc; }
