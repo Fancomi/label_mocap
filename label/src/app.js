@@ -26,6 +26,29 @@ import * as THREE from 'three';
 const $ = (id) => document.getElementById(id);
 const setStatus = (t) => { $('status').textContent = t; };
 
+// Load the SMPL model once, showing a download progress bar (the .bin is ~19MB,
+// so first load over the network is noticeable). The overlay hides on finish.
+async function loadModelWithProgress() {
+  const box = $('loading'); const bar = $('loading-bar'); const txt = $('loading-text');
+  if (box) box.hidden = false;
+  try {
+    return await loadModel(MODEL_URL, {
+      onProgress: ({ loaded, total }) => {
+        if (!bar) return;
+        if (total > 0) {
+          const pct = Math.min(100, Math.round((loaded / total) * 100));
+          bar.style.width = `${pct}%`;
+          if (txt) txt.textContent = `加载模型… ${pct}%`;
+        } else if (txt) {
+          txt.textContent = `加载模型… ${(loaded / 1048576).toFixed(1)} MB`;
+        }
+      },
+    });
+  } finally {
+    if (box) box.hidden = true;
+  }
+}
+
 const MODEL_URL = new URL('../../smpl_web_viewer/public/models/smpl_neutral.meta.json', import.meta.url);
 let model = null, scene = null, cam = null, store = null;
 let images = new Map();      // index -> File
@@ -77,7 +100,7 @@ async function mountDataset({ coco, background }) {
   $('slider').max = String(Math.max(0, store.frameCount() - 1));
   $('slider').value = '0';
   $('right').classList.remove('disabled');
-  if (!model) { model = await loadModel(MODEL_URL); scene.setTopology(model.faces); }
+  if (!model) { model = await loadModelWithProgress(); scene.setTopology(model.faces); }
   scene.prepareForSequence({ K: cam.K, image_w: cam.imageW, image_h: cam.imageH });
   cam.snapTo('2d');
   scene.resize();

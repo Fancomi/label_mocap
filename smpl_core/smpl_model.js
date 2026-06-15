@@ -72,12 +72,32 @@ export async function loadModelFromFiles(metaUrl, readBinary) {
   return model;
 }
 
-export async function loadModel(baseUrl = './public/models/smpl_neutral.meta.json') {
+export async function loadModel(baseUrl = './public/models/smpl_neutral.meta.json', { onProgress } = {}) {
   return loadModelFromFiles(new URL(baseUrl, globalThis.location.href), async (url) => {
     const res = await fetch(url);
     if (!res.ok) {
       throw new Error(`failed to fetch ${url}: ${res.status}`);
     }
-    return new Uint8Array(await res.arrayBuffer());
+    // Stream the body so a large .bin (the SMPL model is ~19MB) can report
+    // download progress. Falls back to a plain read when streaming or the
+    // Content-Length header is unavailable.
+    const total = Number(res.headers.get('content-length')) || 0;
+    if (!onProgress || !res.body || !res.body.getReader) {
+      return new Uint8Array(await res.arrayBuffer());
+    }
+    const reader = res.body.getReader();
+    const chunks = [];
+    let loaded = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      loaded += value.length;
+      onProgress({ url, loaded, total });
+    }
+    const out = new Uint8Array(loaded);
+    let offset = 0;
+    for (const c of chunks) { out.set(c, offset); offset += c.length; }
+    return out;
   });
 }
