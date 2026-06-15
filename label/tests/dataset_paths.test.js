@@ -1,45 +1,57 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { classifyEntries, DATA_JSON_PATH } from '../src/io/dataset_paths.js';
+import { classifyEntries, DATA_JSON_PATH, basename } from '../src/io/dataset_paths.js';
 
-test('canonical data json path is json_results/player_0/player_0.json', () => {
+test('canonical diving json path constant', () => {
   assert.equal(DATA_JSON_PATH, 'json_results/player_0/player_0.json');
 });
 
-test('classify finds json, sorted images, and no video', () => {
-  const r = classifyEntries([
-    'json_results/player_0/player_0.json',
-    'images/0001.jpg', 'images/0000.jpg', 'images/0002.jpg',
-  ]);
+test('existing diving json → save in place to it', () => {
+  const r = classifyEntries(['images/0000.jpg', 'images/0001.jpg', 'json_results/player_0/player_0.json'], { rootName: 'test_data' });
   assert.equal(r.jsonPath, 'json_results/player_0/player_0.json');
-  assert.deepEqual(r.imagePaths, ['images/0000.jpg', 'images/0001.jpg', 'images/0002.jpg']);
-  assert.equal(r.videoPath, null);
-});
-
-test('classify finds a single video and no images', () => {
-  const r = classifyEntries(['clip.mp4']);
-  assert.equal(r.videoPath, 'clip.mp4');
-  assert.deepEqual(r.imagePaths, []);
-  assert.equal(r.jsonPath, null);
-});
-
-test('image-only folder: jsonPath null but writeJsonPath is the canonical target', () => {
-  const r = classifyEntries(['images/0000.jpg', 'images/0001.jpg']);
-  assert.equal(r.jsonPath, null);
   assert.equal(r.writeJsonPath, 'json_results/player_0/player_0.json');
 });
 
-test('images may sit at the directory root (no images/ prefix)', () => {
-  const r = classifyEntries(['0000.jpg', '0001.jpg']);
-  assert.deepEqual(r.imagePaths, ['0000.jpg', '0001.jpg']);
+test('images subfolder, no json → sibling <subfolder>.json at parent root', () => {
+  const r = classifyEntries(['images/0000.jpg', 'images/0001.jpg'], { rootName: 'datas' });
+  assert.equal(r.jsonPath, null);
+  assert.equal(r.dataItemName, 'images');
+  assert.equal(r.writeJsonPath, 'images.json');
 });
 
-test('prefers mp4 over other video extensions, ignores non-media', () => {
-  const r = classifyEntries(['a.mp4', 'notes.txt', 'b.webm']);
-  assert.equal(r.videoPath, 'a.mp4');
+test('re-open after sibling save: images.json now exists → load it in place', () => {
+  const r = classifyEntries(['images/0000.jpg', 'images.json'], { rootName: 'datas' });
+  assert.equal(r.jsonPath, 'images.json');
+  assert.equal(r.writeJsonPath, 'images.json');
 });
 
-test('images sort numerically, not lexicographically (2 before 10)', () => {
-  const r = classifyEntries(['images/10.jpg', 'images/2.jpg', 'images/1.jpg']);
+test('video in dir, no json → <videoBasename>.json', () => {
+  const r = classifyEntries(['foo.mp4'], { rootName: 'datas' });
+  assert.equal(r.videoPath, 'foo.mp4');
+  assert.equal(r.dataItemName, 'foo');
+  assert.equal(r.writeJsonPath, 'foo.json');
+});
+
+test('video flow with explicit videoName override', () => {
+  const r = classifyEntries([], { rootName: 'datas', videoName: '10m_clip.mp4' });
+  assert.equal(r.dataItemName, '10m_clip');
+  assert.equal(r.writeJsonPath, '10m_clip.json');
+});
+
+test('re-open after video save: <name>.json exists → in place', () => {
+  const r = classifyEntries(['foo.mp4', 'foo.json'], { rootName: 'datas' });
+  assert.equal(r.jsonPath, 'foo.json');
+});
+
+test('loose images at parent root, no subfolder → rootName.json', () => {
+  const r = classifyEntries(['0000.jpg', '0001.jpg'], { rootName: 'mydata' });
+  assert.equal(r.dataItemName, 'mydata');
+  assert.equal(r.writeJsonPath, 'mydata.json');
+});
+
+test('images numeric sort (2 before 10)', () => {
+  const r = classifyEntries(['images/10.jpg', 'images/2.jpg', 'images/1.jpg'], { rootName: 'd' });
   assert.deepEqual(r.imagePaths, ['images/1.jpg', 'images/2.jpg', 'images/10.jpg']);
 });
+
+test('basename helper', () => { assert.equal(basename('a/b/c.json'), 'c.json'); });
