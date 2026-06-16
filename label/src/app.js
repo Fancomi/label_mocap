@@ -490,6 +490,12 @@ function boot() {
     document.querySelectorAll('#tabs .tab').forEach((b) => b.classList.toggle('on', b.dataset.mode === ui.mode));
     document.querySelectorAll('.tabpanel').forEach((p) => { p.hidden = p.dataset.mode !== ui.mode; });
     jointGridButtons.forEach((b, j) => b.classList.toggle('on', ui.mode === 'pose' && ui.selectedJoint === j));
+    // IK 开启时:只有末端关节(腕/踝)能 IK 拖,其余灰掉,避免用户选了非末端却没反应。
+    jointGridButtons.forEach((b, j) => {
+      const isEnd = ikEnabled && ikController && !!ikController.chainFor(j + 1);
+      b.disabled = ikEnabled && !isEnd;
+      b.classList.toggle('ik', isEnd);
+    });
     $('sel-joint').textContent = ui.selectedJoint == null ? '未选择关节' : `已选择: ${JOINT_NAMES[ui.selectedJoint + 1]}`;
     const prb = $('pose-rot-block'); if (prb) prb.hidden = !(ui.mode === 'pose' && ui.selectedJoint != null);
     scene.setSelectedJoint(ui.mode === 'pose' && ui.selectedJoint != null ? ui.selectedJoint + 1 : -1);
