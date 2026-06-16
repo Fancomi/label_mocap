@@ -17,6 +17,8 @@ import { LabelScene } from './scene/scene.js';
 import { Panels } from './ui/panels.js';
 import { RootHandle } from './edit/root_handle.js';
 import { PoseGizmo } from './edit/pose_gizmo.js';
+import { IKController } from './edit/ik_controller.js';
+import { IKHandle } from './edit/ik_handle.js';
 import { projectBboxFromMesh } from './edit/bbox_edit.js';
 import { BboxOverlay } from './edit/bbox_overlay.js';
 import { fsAccessSupported, pickDirectory, DirSource, videoOpenSupported, pickVideoFile } from './io/dir_source.js';
@@ -72,6 +74,9 @@ let lastWorldRot = null;
 let panels = null;
 let rootHandle = null;
 let poseGizmo = null;
+let ikController = null;
+let ikHandle = null;
+let ikEnabled = false;
 let bboxOverlay = null;
 let syncUI = null;
 
@@ -101,6 +106,8 @@ async function mountDataset({ coco, background }) {
   $('slider').value = '0';
   $('right').classList.remove('disabled');
   if (!model) { model = await loadModelWithProgress(); scene.setTopology(model.faces); }
+  // model 此时必非空:每次 open 都把 parents 注入 IKController(IK 链查询/反解依赖它)。
+  if (ikController) ikController.setParents(model.parents);
   scene.prepareForSequence({ K: cam.K, image_w: cam.imageW, image_h: cam.imageH });
   cam.snapTo('2d');
   scene.resize();
@@ -416,7 +423,7 @@ function boot() {
       else if (smpl >= 1 && smpl <= 21) ui.selectJoint(smpl - 1);
     },
     onMiss: () => { if (ui && ui.mode === 'pose') ui.clearSelection(); },
-    canPick: () => !((poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged())),
+    canPick: () => !((poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged()) || (ikHandle && ikHandle.isEngaged())),
   });
 
   rootHandle = new RootHandle({
@@ -448,6 +455,29 @@ function boot() {
     onEdit: applyAnnotation,
   });
 
+  // IK 反解控制器 + 末端拖拽手柄。手柄拖动时把代理世界坐标喂给 IKController,
+  // 对当前选中的末端关节(腕/踝)做两段 IK 反解。
+  ikController = new IKController({
+    getRotation: () => rotation,
+    getStore: () => store,
+    getLastJoints: () => lastJoints,
+    getLastWorldRot: () => lastWorldRot,
+    getSkeleton: () => 'smpl',
+    onEdit: applyAnnotation,
+  });
+  ikHandle = new IKHandle({
+    scene: scene.threeScene(),
+    camera: cam.camera,
+    canvas: $('c'),
+    controls: cam.controls,
+    getMode: () => cam.mode,
+    getStore: () => store,
+    onDrag: (worldPos) => {
+      const chain = ikController.chainFor((ui?.selectedJoint ?? -1) + 1);
+      if (chain) ikController.solveTo(chain, worldPos);
+    },
+  });
+
   // ui.onChange fires whenever mode/joint changes → sync tabs, panels, gizmos.
   function refreshTabAvailability() {
     const bboxTab = document.querySelector('#tabs .tab[data-mode="bbox"]');
@@ -469,24 +499,43 @@ function boot() {
     // to run every frame (incl. undo/showFrame): it never pauses playback.
     // Pausing playback on edit-entry is handled by user-action handlers
     // (joint grid / picker / tab / root sub-mode), not here.
-    if (!playing && ui.mode === 'pose' && ui.selectedJoint != null && rotation && lastWorldRot) {
+    // 四分支,IK 分支优先:IK 开启且选中关节是末端(有链)→ 用 IK 手柄,detach 其他;
+    // 否则维持原单关节旋转 / root / 兜底逻辑,且任何不满足时都 detach IK 手柄。
+    const selSmpl = (ui.selectedJoint != null) ? ui.selectedJoint + 1 : -1;
+    const ikChain = ikEnabled && ikController ? ikController.chainFor(selSmpl) : null;
+    if (!playing && ui.mode === 'pose' && ikChain && lastJoints) {
+      ikHandle.attach(scene.jointWorldPosition(selSmpl));
+      poseGizmo.detach();
+      rootHandle.detach();
+    } else if (!playing && ui.mode === 'pose' && ui.selectedJoint != null && rotation && lastWorldRot) {
       const j = ui.selectedJoint;
       const smplJ = j + 1;
       const parent = model.parents[smplJ];
       const qParentWorld = mat3ToQuat(lastWorldRot.slice(parent * 9, parent * 9 + 9));
       poseGizmo.attach(j, scene.jointWorldPosition(smplJ), qParentWorld);
       rootHandle.detach();
+      ikHandle.detach();
     } else if (!playing && ui.mode === 'root' && store && store.current()) {
       rootHandle.attach(store.current().root_pos);
       poseGizmo.detach();
+      ikHandle.detach();
     } else {
       poseGizmo.detach();
       rootHandle.detach();
+      ikHandle.detach();
     }
     bboxOverlay.render(ui.mode === 'bbox' ? (store?.current()?.bbox ?? null) : null);
     renderAnnoActions();
     panels.syncFromState();
   };
+
+  // IK 拖拽开关:开启后,在姿势模式选中末端关节(腕/踝)时改用 IK 手柄反解。
+  $('ik-toggle').addEventListener('click', () => {
+    ikEnabled = !ikEnabled;
+    $('ik-toggle').classList.toggle('on', ikEnabled);
+    setStatus(ikEnabled ? 'IK 拖拽已开启:拖手腕/脚踝' : 'IK 拖拽已关闭');
+    if (syncUI) syncUI();
+  });
 
   // Root translate/rotate sub-mode buttons (inside the root tabpanel).
   $('root-translate').addEventListener('click', () => {
@@ -552,7 +601,7 @@ function boot() {
       }
     }
     lastTick = now;
-    const gizmoBusy = (poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged());
+    const gizmoBusy = (poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged()) || (ikHandle && ikHandle.isEngaged());
     if (cam) cam.controls.enabled = (cam.mode === '3d') && !gizmoBusy;
     scene.render();   // scene.render() calls cam.update() internally
     requestAnimationFrame(loop);

@@ -125,6 +125,10 @@
 
     <section class="tabpanel" data-mode="pose">
       <p class="hint">点击画面中的关节点,或在下方选择一个关节,然后拖动出现的旋转环。</p>
+      <div class="row" style="align-items:center;gap:6px">
+        <button id="ik-toggle">🔗 IK 拖拽</button>
+        <span style="font-size:10px;color:#8ab">开启后拖手腕/脚踝自动反解</span>
+      </div>
       <div id="joint-grid"></div>
       <div id="sel-joint" class="status">未选择关节</div>
       <div id="pose-rot-block" hidden>
