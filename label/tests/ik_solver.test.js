@@ -58,6 +58,19 @@ test('退化(肩腕重合 / 零臂)不抛错', () => {
   assert.ok(Number.isFinite(r.mid[0]) && Number.isFinite(r.end[0]));
 });
 
+test('pole 是方向向量:肢体整体平移、pole 同向平移不变时,肘相对解一致', () => {
+  // root 不在原点。pole 作为方向(相对 root 的偏移)传入,弯曲平面应只由方向决定,
+  // 不随肢体世界位置漂移。controller 传的就是 sub(mid,root) 这种相对向量。
+  const off = [5, -3, 2];
+  const at = (p) => [p[0] + off[0], p[1] + off[1], p[2] + off[2]];
+  const a = solveTwoBoneIK({ root: ROOT, mid: MID0, end: END0, target: [1, 0, 0], pole: [0, 1, 0] });
+  const b = solveTwoBoneIK({ root: at(ROOT), mid: at(MID0), end: at(END0), target: at([1, 0, 0]), pole: [0, 1, 0] });
+  // 肘相对各自 root 的偏移应一致(平移不变)
+  const relA = [a.mid[0] - ROOT[0], a.mid[1] - ROOT[1], a.mid[2] - ROOT[2]];
+  const relB = [b.mid[0] - at(ROOT)[0], b.mid[1] - at(ROOT)[1], b.mid[2] - at(ROOT)[2]];
+  close(relA[0], relB[0]); close(relA[1], relB[1]); close(relA[2], relB[2]);
+});
+
 test('shortestArcQuat 把单位向量 from 旋到 to', () => {
   const q = shortestArcQuat([1, 0, 0], [0, 1, 0]);
   const m = quatToMat3(q);

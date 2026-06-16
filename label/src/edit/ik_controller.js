@@ -1,6 +1,9 @@
 // label/src/edit/ik_controller.js
 // 编排两段 IK:末端目标 → 解 → 世界旋转 delta → 局部四元数 → 写回 RotationState。
 // 复用现有 forwardSmpl({worldRot})/撤销/保存链路;不直接依赖 three.js。
+// 写回为增量近似:肘段用本帧的(旧)父世界旋转,不补偿肩转动带动前臂的耦合。
+// 拖拽是高频增量调用,每步 onEdit→forwardSmpl 刷新 lastJoints/lastWorldRot,
+// 迭代收敛到目标(实测第 2 步起残差趋零),交互体验正确。
 import { solveTwoBoneIK, shortestArcQuat } from './ik_solver.js';
 import { endEffectorChain } from './ik_chains.js';
 import { mat3ToQuat, quatConjugate, quatMultiply, quatNormalize } from '../../../smpl_core/rotations.js';
@@ -36,8 +39,10 @@ export class IKController {
     const mid = j3(joints, jMid);
     const end = j3(joints, jEnd);
 
-    // 自动 pole:传入当前肘点,solver 内部投影到垂直于肩腕轴的分量,保持弯曲平面。
-    const out = solveTwoBoneIK({ root, mid, end, target, pole: mid });
+    // 自动 pole:当前肘相对肩(root)的偏移方向,solver 内投影到垂直于肩腕轴的
+    // 分量以保持弯曲平面。必须传相对 root 的向量(solver 把 pole 当方向用,不减
+    // root),否则肢体离原点时弯曲平面会随世界位置漂移。
+    const out = solveTwoBoneIK({ root, mid, end, target, pole: sub(mid, root) });
 
     // 上臂段:旧骨向(root→mid)→新骨向(root→out.mid),叠加到肩(jRoot)局部。
     this._applySegment(chain.bodyIdx[0], jRoot, sub(mid, root), sub(out.mid, root), rot, worldRot);
