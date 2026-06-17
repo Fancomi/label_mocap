@@ -3,6 +3,7 @@
 // 由上层(IKController)据此对所选末端关节做两段 IK 反解。
 import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { tightenTranslatePicker } from './transform_picker.js';
 
 export class IKHandle {
   constructor({ scene, camera, canvas, controls, getMode, getStore, onStart, onDrag, onEnd }) {
@@ -20,6 +21,7 @@ export class IKHandle {
 
     this._tc = new TransformControls(camera, canvas);
     this._tc.setMode('translate'); // 仅平移,不需要 rotate
+    tightenTranslatePicker(this._tc); // 命中范围贴合可见几何,避免轴 picker 盖住平面方片
     this._tc.attach(this._proxy);
 
     // 一次拖拽 = 一个 undo 事务:按下开启事务并冻结 IK 参考、松开提交并清参考。

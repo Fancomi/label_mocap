@@ -1,6 +1,7 @@
 // label/src/edit/root_handle.js — translate/rotate gizmo for the SMPL root.
 import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { tightenTranslatePicker } from './transform_picker.js';
 
 export class RootHandle {
   constructor({ scene, camera, canvas, controls, getMode, getStore, getRotation, onEdit }) {
@@ -17,6 +18,7 @@ export class RootHandle {
 
     this._tc = new TransformControls(camera, canvas);
     this._tc.setMode('translate');
+    tightenTranslatePicker(this._tc); // 命中范围贴合可见几何,避免轴 picker 盖住平面方片
     this._tc.attach(this._proxy);
 
     this._tc.addEventListener('mouseDown', () => this._getStore().beginEdit());
