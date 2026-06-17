@@ -5,12 +5,14 @@ import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 
 export class IKHandle {
-  constructor({ scene, camera, canvas, controls, getMode, getStore, onDrag }) {
+  constructor({ scene, camera, canvas, controls, getMode, getStore, onStart, onDrag, onEnd }) {
     this._scene = scene;       // THREE.Scene
     this._controls = controls; // OrbitControls
     this._getMode = getMode || (() => '3d');
     this._getStore = getStore;
+    this._onStart = onStart;   // () => void —— 拖拽起始,冻结 IK 参考
     this._onDrag = onDrag;     // (worldPos:[x,y,z]) => void
+    this._onEnd = onEnd;       // () => void —— 拖拽结束,清 IK 参考
     this._attached = false;
 
     // 代理对象:TransformControls 实际操纵它,我们只取它的世界坐标喂给 IK。
@@ -20,13 +22,13 @@ export class IKHandle {
     this._tc.setMode('translate'); // 仅平移,不需要 rotate
     this._tc.attach(this._proxy);
 
-    // 一次拖拽 = 一个 undo 事务:按下开启、松开提交。
-    this._tc.addEventListener('mouseDown', () => this._getStore().beginEdit());
+    // 一次拖拽 = 一个 undo 事务:按下开启事务并冻结 IK 参考、松开提交并清参考。
+    this._tc.addEventListener('mouseDown', () => { this._getStore().beginEdit(); if (this._onStart) this._onStart(); });
     this._tc.addEventListener('objectChange', () => {
       const p = this._proxy.position;
       this._onDrag([p.x, p.y, p.z]);
     });
-    this._tc.addEventListener('mouseUp', () => this._getStore().commitEdit());
+    this._tc.addEventListener('mouseUp', () => { if (this._onEnd) this._onEnd(); this._getStore().commitEdit(); });
   }
 
   attach(pos) {

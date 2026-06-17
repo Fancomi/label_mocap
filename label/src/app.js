@@ -472,10 +472,15 @@ function boot() {
     controls: cam.controls,
     getMode: () => cam.mode,
     getStore: () => store,
-    onDrag: (worldPos) => {
+    // 按下:冻结当前末端关节链的参考姿势(锁弯曲侧 + 参考朝向,防反关节/防拧)。
+    onStart: () => {
       const chain = ikController.chainFor((ui?.selectedJoint ?? -1) + 1);
-      if (chain) ikController.solveTo(chain, worldPos);
+      if (chain) ikController.beginDrag(chain);
     },
+    // 拖拽:从冻结参考绝对求解到当前世界点(无累积、无 twist 漂移)。
+    onDrag: (worldPos) => ikController.solveTo(worldPos),
+    // 松开:清参考。
+    onEnd: () => ikController.endDrag(),
   });
 
   // ui.onChange fires whenever mode/joint changes → sync tabs, panels, gizmos.
