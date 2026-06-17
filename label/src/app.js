@@ -17,8 +17,7 @@ import { LabelScene } from './scene/scene.js';
 import { Panels } from './ui/panels.js';
 import { RootHandle } from './edit/root_handle.js';
 import { PoseGizmo } from './edit/pose_gizmo.js';
-import { IKController } from './edit/ik_controller.js';
-import { IKHandle } from './edit/ik_handle.js';
+import { installIK } from './edit/ik_plugin.js';
 import { projectBboxFromMesh } from './edit/bbox_edit.js';
 import { BboxOverlay } from './edit/bbox_overlay.js';
 import { fsAccessSupported, pickDirectory, DirSource, videoOpenSupported, pickVideoFile } from './io/dir_source.js';
@@ -74,11 +73,15 @@ let lastWorldRot = null;
 let panels = null;
 let rootHandle = null;
 let poseGizmo = null;
-let ikController = null;
-let ikHandle = null;
-let ikEnabled = false;
 let bboxOverlay = null;
 let syncUI = null;
+// 通用扩展点:插件(如 IK)通过 install 时注入。本体不出现任何插件专有名字。
+//  - syncHooks:syncUI 末尾依次调用,任一返回 true 表示该插件接管了当前交互;
+//  - dragGuards:模式/标签切换前聚合 isDragging() 拦截;
+//  - engageGuards:相机锁 / 画布拾取聚合 isEngaged() 拦截。
+let syncHooks = [];
+let dragGuards = [];
+let engageGuards = [];
 
 function isJpeg(name) { return /\.(jpe?g)$/i.test(name); }
 
@@ -106,8 +109,6 @@ async function mountDataset({ coco, background }) {
   $('slider').value = '0';
   $('right').classList.remove('disabled');
   if (!model) { model = await loadModelWithProgress(); scene.setTopology(model.faces); }
-  // model 此时必非空:每次 open 都把 parents 注入 IKController(IK 链查询/反解依赖它)。
-  if (ikController) ikController.setParents(model.parents);
   scene.prepareForSequence({ K: cam.K, image_w: cam.imageW, image_h: cam.imageH });
   cam.snapTo('2d');
   scene.resize();
@@ -364,8 +365,8 @@ function boot() {
     openVideoData().catch((e) => { if (e?.name !== 'AbortError') setStatus(String(e)); });
   });
   $('dir-input').addEventListener('change', (e) => openFiles(e.target.files).catch((err) => setStatus(String(err))));
-  $('btn-2d').addEventListener('click', () => { if ((poseGizmo && poseGizmo.isDragging()) || (rootHandle && rootHandle.isDragging()) || (ikHandle && ikHandle.isDragging())) return; cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); refreshTabAvailability(); if (syncUI) syncUI(); });
-  $('btn-3d').addEventListener('click', () => { if ((poseGizmo && poseGizmo.isDragging()) || (rootHandle && rootHandle.isDragging()) || (ikHandle && ikHandle.isDragging())) return; cam.switchTo('3d'); $('btn-3d').classList.add('on'); $('btn-2d').classList.remove('on'); if (ui && ui.mode === 'bbox') ui.setMode('pose'); refreshTabAvailability(); if (syncUI) syncUI(); });
+  $('btn-2d').addEventListener('click', () => { if (dragGuards.some((g) => g.isDragging())) return; cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); refreshTabAvailability(); if (syncUI) syncUI(); });
+  $('btn-3d').addEventListener('click', () => { if (dragGuards.some((g) => g.isDragging())) return; cam.switchTo('3d'); $('btn-3d').classList.add('on'); $('btn-2d').classList.remove('on'); if (ui && ui.mode === 'bbox') ui.setMode('pose'); refreshTabAvailability(); if (syncUI) syncUI(); });
   $('slider').addEventListener('input', (e) => { if (!store) return; setPlaying(false); showFrame(+e.target.value); });
   $('btn-prev').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.max(0, store.currentFrame() - 1)); });
   $('btn-next').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.min(store.frameCount() - 1, store.currentFrame() + 1)); });
@@ -407,7 +408,7 @@ function boot() {
   // Tab buttons.
   document.querySelectorAll('#tabs .tab').forEach((btn) => btn.addEventListener('click', () => {
     if (btn.disabled) return;
-    if ((poseGizmo && poseGizmo.isDragging()) || (rootHandle && rootHandle.isDragging()) || (ikHandle && ikHandle.isDragging())) return;
+    if (dragGuards.some((g) => g.isDragging())) return;
     // Switching into an editing tab pauses playback (user-initiated edit entry).
     if (btn.dataset.mode === 'root' || btn.dataset.mode === 'pose') setPlaying(false);
     if (ui) ui.setMode(btn.dataset.mode);
@@ -423,7 +424,7 @@ function boot() {
       else if (smpl >= 1 && smpl <= 21) ui.selectJoint(smpl - 1);
     },
     onMiss: () => { if (ui && ui.mode === 'pose') ui.clearSelection(); },
-    canPick: () => !((poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged()) || (ikHandle && ikHandle.isEngaged())),
+    canPick: () => !engageGuards.some((g) => g.isEngaged()),
   });
 
   rootHandle = new RootHandle({
@@ -455,33 +456,9 @@ function boot() {
     onEdit: applyAnnotation,
   });
 
-  // IK 反解控制器 + 末端拖拽手柄。手柄拖动时把代理世界坐标喂给 IKController,
-  // 对当前选中的末端关节(腕/踝)做两段 IK 反解。
-  ikController = new IKController({
-    getRotation: () => rotation,
-    getStore: () => store,
-    getLastJoints: () => lastJoints,
-    getLastWorldRot: () => lastWorldRot,
-    getSkeleton: () => 'smpl',
-    onEdit: applyAnnotation,
-  });
-  ikHandle = new IKHandle({
-    scene: scene.threeScene(),
-    camera: cam.camera,
-    canvas: $('c'),
-    controls: cam.controls,
-    getMode: () => cam.mode,
-    getStore: () => store,
-    // 按下:冻结当前末端关节链的参考姿势(锁弯曲侧 + 参考朝向,防反关节/防拧)。
-    onStart: () => {
-      const chain = ikController.chainFor((ui?.selectedJoint ?? -1) + 1);
-      if (chain) ikController.beginDrag(chain);
-    },
-    // 拖拽:从冻结参考绝对求解到当前世界点(无累积、无 twist 漂移)。
-    onDrag: (worldPos) => ikController.solveTo(worldPos),
-    // 松开:清参考。
-    onEnd: () => ikController.endDrag(),
-  });
+  // 本体两个编辑基元并入通用守卫聚合(插件会各自再 push 自己的手柄)。
+  dragGuards.push(poseGizmo, rootHandle);
+  engageGuards.push(poseGizmo, rootHandle);
 
   // ui.onChange fires whenever mode/joint changes → sync tabs, panels, gizmos.
   function refreshTabAvailability() {
@@ -495,12 +472,6 @@ function boot() {
     document.querySelectorAll('#tabs .tab').forEach((b) => b.classList.toggle('on', b.dataset.mode === ui.mode));
     document.querySelectorAll('.tabpanel').forEach((p) => { p.hidden = p.dataset.mode !== ui.mode; });
     jointGridButtons.forEach((b, j) => b.classList.toggle('on', ui.mode === 'pose' && ui.selectedJoint === j));
-    // IK 开启时:只有末端关节(腕/踝)能 IK 拖,其余灰掉,避免用户选了非末端却没反应。
-    jointGridButtons.forEach((b, j) => {
-      const isEnd = ikEnabled && ikController && !!ikController.chainFor(j + 1);
-      b.disabled = ikEnabled && !isEnd;
-      b.classList.toggle('ik', isEnd);
-    });
     $('sel-joint').textContent = ui.selectedJoint == null ? '未选择关节' : `已选择: ${JOINT_NAMES[ui.selectedJoint + 1]}`;
     const prb = $('pose-rot-block'); if (prb) prb.hidden = !(ui.mode === 'pose' && ui.selectedJoint != null);
     scene.setSelectedJoint(ui.mode === 'pose' && ui.selectedJoint != null ? ui.selectedJoint + 1 : -1);
@@ -510,12 +481,11 @@ function boot() {
     // to run every frame (incl. undo/showFrame): it never pauses playback.
     // Pausing playback on edit-entry is handled by user-action handlers
     // (joint grid / picker / tab / root sub-mode), not here.
-    // 四分支,IK 分支优先:IK 开启且选中关节是末端(有链)→ 用 IK 手柄,detach 其他;
-    // 否则维持原单关节旋转 / root / 兜底逻辑,且任何不满足时都 detach IK 手柄。
-    const selSmpl = (ui.selectedJoint != null) ? ui.selectedJoint + 1 : -1;
-    const ikChain = ikEnabled && ikController ? ikController.chainFor(selSmpl) : null;
-    if (!playing && ui.mode === 'pose' && ikChain && lastJoints) {
-      ikHandle.attach(scene.jointWorldPosition(selSmpl));
+    // 先让扩展插件(如 IK)有机会接管当前交互;任一 hook 返回 true 即接管,
+    // 本体不再挂自己的 gizmo,只 detach。否则维持原 pose / root / 兜底逻辑。
+    let claimed = false;
+    for (const h of syncHooks) { if (h()) claimed = true; }
+    if (claimed) {
       poseGizmo.detach();
       rootHandle.detach();
     } else if (!playing && ui.mode === 'pose' && ui.selectedJoint != null && rotation && lastWorldRot) {
@@ -525,28 +495,17 @@ function boot() {
       const qParentWorld = mat3ToQuat(lastWorldRot.slice(parent * 9, parent * 9 + 9));
       poseGizmo.attach(j, scene.jointWorldPosition(smplJ), qParentWorld);
       rootHandle.detach();
-      ikHandle.detach();
     } else if (!playing && ui.mode === 'root' && store && store.current()) {
       rootHandle.attach(store.current().root_pos);
       poseGizmo.detach();
-      ikHandle.detach();
     } else {
       poseGizmo.detach();
       rootHandle.detach();
-      ikHandle.detach();
     }
     bboxOverlay.render(ui.mode === 'bbox' ? (store?.current()?.bbox ?? null) : null);
     renderAnnoActions();
     panels.syncFromState();
   };
-
-  // IK 拖拽开关:开启后,在姿势模式选中末端关节(腕/踝)时改用 IK 手柄反解。
-  $('ik-toggle').addEventListener('click', () => {
-    ikEnabled = !ikEnabled;
-    $('ik-toggle').classList.toggle('on', ikEnabled);
-    setStatus(ikEnabled ? 'IK 拖拽已开启:拖手腕/脚踝' : 'IK 拖拽已关闭');
-    if (syncUI) syncUI();
-  });
 
   // Root translate/rotate sub-mode buttons (inside the root tabpanel).
   $('root-translate').addEventListener('click', () => {
@@ -601,6 +560,24 @@ function boot() {
 
   window.addEventListener('resize', () => { scene.resize(); if (bboxOverlay) bboxOverlay.render(ui?.mode === 'bbox' ? (store?.current()?.bbox ?? null) : null); });
 
+  // 安装 IK 插件(可插拔):本体只此一行,通过 ctx 注入扩展点;
+  // 置 IK_ENABLED=false(或删此块)即彻底拆除 IK,本体不受影响。
+  // 必须在 jointGridButtons 构造之后、syncUI 定义之后、首帧 loop 之前。
+  const IK_ENABLED = true;
+  if (IK_ENABLED) {
+    installIK({
+      scene, camera: cam.camera, canvas: $('c'), controls: cam.controls,
+      getMode: () => cam.mode, getStore: () => store, getRotation: () => rotation,
+      getLastJoints: () => lastJoints, getLastWorldRot: () => lastWorldRot,
+      getUI: () => ui, getParents: () => model && model.parents, isPlaying: () => playing,
+      onEdit: applyAnnotation, jointGridButtons, setStatus,
+      requestSync: () => { if (syncUI) syncUI(); },
+      toggleButton: $('ik-toggle'),
+      registerSyncHook: (fn) => syncHooks.push(fn),
+      registerGuard: (g) => { dragGuards.push(g); engageGuards.push(g); },
+    });
+  }
+
   function loop(now) {
     if (playing && store && store.frameCount() > 0) {
       acc += now - lastTick;
@@ -612,7 +589,7 @@ function boot() {
       }
     }
     lastTick = now;
-    const gizmoBusy = (poseGizmo && poseGizmo.isEngaged()) || (rootHandle && rootHandle.isEngaged()) || (ikHandle && ikHandle.isEngaged());
+    const gizmoBusy = engageGuards.some((g) => g.isEngaged());
     if (cam) cam.controls.enabled = (cam.mode === '3d') && !gizmoBusy;
     scene.render();   // scene.render() calls cam.update() internally
     requestAnimationFrame(loop);

@@ -19,18 +19,18 @@ const j3 = (arr, i) => [arr[i * 3], arr[i * 3 + 1], arr[i * 3 + 2]];
 const m9 = (arr, i) => arr.slice(i * 9, i * 9 + 9);
 
 export class IKController {
-  constructor({ getRotation, getStore, getLastJoints, getLastWorldRot, getSkeleton, onEdit }) {
+  constructor({ getRotation, getStore, getLastJoints, getLastWorldRot, getSkeleton, getParents, onEdit }) {
     this._getRotation = getRotation;
     this._getStore = getStore;
     this._getLastJoints = getLastJoints;
     this._getLastWorldRot = getLastWorldRot;
     this._getSkeleton = getSkeleton || (() => 'smpl');
+    // parents(关节父索引数组)改为按需读取:不再由外部 setParents 推入,
+    // 而是每次 beginDrag 时从 getParents() 取最新值,消除外部装配时的耦合调用点。
+    this._getParents = getParents || (() => null);
     this._onEdit = onEdit;
-    this._parents = null;
     this._ref = null; // 拖拽参考快照(beginDrag 设置,endDrag 清空)
   }
-
-  setParents(parents) { this._parents = parents; }
 
   // smplJointIdx 是否可 IK 拖动的末端;是则返回其链,否则 null。
   chainFor(smplJointIdx) { return endEffectorChain(this._getSkeleton(), smplJointIdx); }
@@ -40,7 +40,8 @@ export class IKController {
   beginDrag(chain) {
     const joints = this._getLastJoints();
     const worldRot = this._getLastWorldRot();
-    if (!joints || !worldRot || !this._parents) { this._ref = null; return; }
+    const parents = this._getParents();
+    if (!joints || !worldRot || !parents) { this._ref = null; return; }
     const [jRoot, jMid, jEnd] = chain.joints;
     const root = j3(joints, jRoot);
     const mid = j3(joints, jMid);
@@ -62,7 +63,7 @@ export class IKController {
     const ref0 = cross(hinge, dir0);
     const sign = dot(perp0, ref0) >= 0 ? 1 : -1;
 
-    const pShoulder = this._parents[jRoot];
+    const pShoulder = parents[jRoot];
     this._ref = {
       chain, root, upper0, lower0, hinge, sign, perp0,
       midRef: mid, endRef: end,
