@@ -133,19 +133,15 @@ export class CameraModes {
     slot.fov = this.camera.fov;
   }
 
-  /** Update the 3D OrbitControls target (call per frame to follow root joint).
-   *  Also re-aim the saved 3D pose so a 2D→3D switch lerps to a quaternion
-   *  that actually faces the new pelvis (otherwise tween lands aimed at the
-   *  prior target and OrbitControls.update() would snap-correct → "瞬移"). */
+  /** Update the saved 3D pose's look target (pelvis) so a future 2D→3D switch
+   *  faces the body. Does NOT touch the live controls.target in 3D — in free 3D
+   *  the camera belongs to the user; overwriting controls.target on every edit
+   *  (gizmo / IK drag / frame) would yank a panned/orbited view back to the
+   *  pelvis (the "视角重置" bug). The saved pose is only applied on snapTo/switchTo. */
   set3DFollowTarget(vec3) {
     this._pose3D.target.copy(vec3);
-    // Re-derive the saved-pose quaternion using the saved-pose position →
-    // new target. Keeps the user's rotated/zoomed eye, just re-aims.
     this._pose3D.quaternion.copy(
       this._quatLookingAt(this._pose3D.position, vec3));
-    if (this.mode === '3d' && !this._tween) {
-      this.controls.target.copy(vec3);
-    }
   }
 
   /** Returns true while a tween is in progress. */
