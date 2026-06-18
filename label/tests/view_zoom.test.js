@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { computeWindow, zoomAtSolve, imageToCanvasNorm, canvasNormToImage } from '../src/scene/view_zoom.js';
+import { computeWindow, zoomAtSolve, imageToCanvasNorm, canvasNormToImage, clampPan } from '../src/scene/view_zoom.js';
 
 const K = { imageW: 1920, imageH: 1080, cx: 960, cy: 540 };
 const close = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} != ${b}`);
@@ -53,4 +53,14 @@ test('zoom 钳制在 [1, 8]', () => {
   assert.equal(lo.zoom, 1);
   const hi = zoomAtSolve({ ...K, zoom: 8, panX: 0, panY: 0, u: 0.5, v: 0.5, factor: 2 });
   assert.equal(hi.zoom, 8);
+});
+
+test('clampPan 把越界 pan 收敛到有效区间(消除死区);幂等', () => {
+  const a = clampPan({ ...K, zoom: 2, panX: 99999, panY: 99999 });
+  // z=2、主点居中:窗口半尺寸,有效 pan 上限 = imageW − winW = 960(基准左上为 0)
+  close(a.panX, 960); close(a.panY, 540);
+  const b = clampPan({ ...K, zoom: 2, panX: a.panX, panY: a.panY });
+  close(b.panX, a.panX); close(b.panY, a.panY); // 幂等:已钳制的值再钳不变
+  const lo = clampPan({ ...K, zoom: 2, panX: -99999, panY: -99999 });
+  close(lo.panX, 0); close(lo.panY, 0);
 });

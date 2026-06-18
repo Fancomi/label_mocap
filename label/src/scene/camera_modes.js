@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { computeWindow, zoomAtSolve, imageToCanvasNorm, canvasNormToImage } from './view_zoom.js';
+import { computeWindow, zoomAtSolve, imageToCanvasNorm, canvasNormToImage, clampPan } from './view_zoom.js';
 
 const TWEEN_MS = 1000;
 
@@ -135,16 +135,20 @@ export class CameraModes {
       imageW: this.imageW, imageH: this.imageH, cx: this.K.cx, cy: this.K.cy,
       zoom: this._zoom, panX: this._panX, panY: this._panY, u, v, factor,
     });
-    this._zoom = r.zoom; this._panX = r.panX; this._panY = r.panY;
+    this._zoom = r.zoom;
+    const p = clampPan({ imageW: this.imageW, imageH: this.imageH, cx: this.K.cx, cy: this.K.cy, zoom: this._zoom, panX: r.panX, panY: r.panY });
+    this._panX = p.panX; this._panY = p.panY;
     this._applyViewOffset();
     this.camera.updateProjectionMatrix();
   }
 
-  // 按画布归一化位移 (du,dv) 平移视图。
+  // 按画布归一化位移 (du,dv) 平移视图。pan 钳制回有效区间(消除沿边界拖拽的死区)。
   panByCanvas(du, dv) {
     if (!this._win) this._applyViewOffset();
-    this._panX -= du * this._win.winW;
-    this._panY -= dv * this._win.winH;
+    const px = this._panX - du * this._win.winW;
+    const py = this._panY - dv * this._win.winH;
+    const p = clampPan({ imageW: this.imageW, imageH: this.imageH, cx: this.K.cx, cy: this.K.cy, zoom: this._zoom, panX: px, panY: py });
+    this._panX = p.panX; this._panY = p.panY;
     this._applyViewOffset();
     this.camera.updateProjectionMatrix();
   }
