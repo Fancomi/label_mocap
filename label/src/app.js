@@ -532,27 +532,65 @@ function boot() {
     if (bboxOverlay) bboxOverlay.render(store.current()?.bbox ?? null);
   });
 
-  // Wheel = depth (root_pos.z) in 2D-aligned root/translate mode. In 2D the
-  // view axis is the depth axis, so an on-canvas Z handle projects to a point
-  // and is impossible to grab — the wheel sidesteps that geometry entirely.
-  // OrbitControls is disabled in 2D so the wheel is free here; in 3D the wheel
-  // stays with OrbitControls zoom (we don't intercept it). One continuous
-  // scroll = one undo unit, committed ~250ms after it stops.
+  // 2D 滚轮:裸滚轮 = 以光标为中心缩放视图(viewOffset,不改内外参/数据);
+  // Cmd(Mac)/Ctrl(其他)+ 滚轮 = 调 root 深度(整体/移动模式,低频,让位给缩放)。
+  // 3D 模式不拦截滚轮(留给 OrbitControls dolly)。全平台:deltaY + deltaMode 归一化。
   let wheelTimer = null;
   $('c').addEventListener('wheel', (e) => {
+    if (!cam || cam.mode !== '2d') return;
+    const depthMod = e.metaKey || e.ctrlKey;
+    const unit = e.deltaMode === 1 ? 16 : (e.deltaMode === 2 ? 400 : 1);
+    const dy = e.deltaY * unit;
+
+    if (!depthMod) {
+      e.preventDefault();
+      const rect = $('c').getBoundingClientRect();
+      const u = (e.clientX - rect.left) / rect.width;
+      const v = (e.clientY - rect.top) / rect.height;
+      if (u < 0 || u > 1 || v < 0 || v > 1) return; // 光标在 letterbox 黑边,忽略
+      const factor = Math.exp(-dy * 0.0015); // 上滚放大、下滚缩小
+      cam.zoomAt(u, v, factor);
+      if (bboxOverlay) bboxOverlay.render(store?.current()?.bbox ?? null);
+      return;
+    }
+
     if (!store || !store.current() || ui?.readOnly) return;
-    if (!(ui.mode === 'root' && cam.mode === '2d' && $('root-translate').classList.contains('on'))) return;
+    if (!(ui.mode === 'root' && $('root-translate').classList.contains('on'))) return;
     e.preventDefault();
     const a = store.current();
     const pos = (a.root_pos || [0, 0, 0]).slice();
-    pos[2] += (e.deltaY > 0 ? 1 : -1) * 0.05; // push away / pull near along view
+    pos[2] += (dy > 0 ? 1 : -1) * 0.05;
     if (wheelTimer === null) store.beginEdit();
     store.applyFields({ root_pos: pos });
     applyAnnotation();
-    if (rootHandle) rootHandle.attach(pos); // keep the gizmo centred on the body
+    if (rootHandle) rootHandle.attach(pos);
     clearTimeout(wheelTimer);
     wheelTimer = setTimeout(() => { store.commitEdit(); wheelTimer = null; }, 250);
   }, { passive: false });
+
+  // 2D 空白拖拽 = 平移视图。命中手柄(engageGuards 任一 engaged)让位手柄;
+  // 纯点击(位移<4px)不平移,让 jointPicker 的空白点选(取消选中)正常触发。
+  let panStart = null, panning = false;
+  $('c').addEventListener('pointerdown', (e) => {
+    if (!cam || cam.mode !== '2d' || engageGuards.some((g) => g.isEngaged())) { panStart = null; return; }
+    panStart = { x: e.clientX, y: e.clientY, id: e.pointerId }; panning = false;
+  });
+  $('c').addEventListener('pointermove', (e) => {
+    if (!panStart) return;
+    const rect = $('c').getBoundingClientRect();
+    if (!panning && Math.hypot(e.clientX - panStart.x, e.clientY - panStart.y) > 4) {
+      panning = true; $('c').setPointerCapture(panStart.id);
+    }
+    if (!panning) return;
+    const du = (e.clientX - panStart.x) / rect.width;
+    const dv = (e.clientY - panStart.y) / rect.height;
+    panStart.x = e.clientX; panStart.y = e.clientY;
+    cam.panByCanvas(du, dv);
+    if (bboxOverlay) bboxOverlay.render(store?.current()?.bbox ?? null);
+  });
+  const endPan = (e) => { if (panning) { try { $('c').releasePointerCapture(e.pointerId); } catch (_) {} } panStart = null; panning = false; };
+  $('c').addEventListener('pointerup', endPan);
+  $('c').addEventListener('pointercancel', endPan);
 
   // Save / Reset (#btn-save / #btn-reset) — Task 10.
   $('btn-save').addEventListener('click', () => saveJson().catch((e) => setStatus(String(e))));
