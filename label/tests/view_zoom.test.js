@@ -64,3 +64,10 @@ test('clampPan 把越界 pan 收敛到有效区间(消除死区);幂等', () => 
   const lo = clampPan({ ...K, zoom: 2, panX: -99999, panY: -99999 });
   close(lo.panX, 0); close(lo.panY, 0);
 });
+
+test('角落放大:zoomAtSolve 越界 pan 经 clampPan 收敛到有效区间', () => {
+  const r = zoomAtSolve({ ...K, zoom: 1, panX: 0, panY: 0, u: 0, v: 0, factor: 2 });
+  const c = clampPan({ ...K, zoom: r.zoom, panX: r.panX, panY: r.panY });
+  // 主点居中、z=2:有效 pan ∈ [0, 960]×[0,540];左上角放大定点应收敛到 0
+  close(c.panX, 0); close(c.panY, 0);
+});

@@ -543,20 +543,24 @@ function boot() {
     const dy = e.deltaY * unit;
 
     if (!depthMod) {
-      e.preventDefault();
+      // 先算归一化光标位置并判越界:在 letterbox 黑边滚轮时直接 return,
+      // 不 preventDefault,放行页面滚动(避免吞掉滚动却不缩放)。
       const rect = $('c').getBoundingClientRect();
       const u = (e.clientX - rect.left) / rect.width;
       const v = (e.clientY - rect.top) / rect.height;
-      if (u < 0 || u > 1 || v < 0 || v > 1) return; // 光标在 letterbox 黑边,忽略
+      if (u < 0 || u > 1 || v < 0 || v > 1) return; // 光标在 letterbox 黑边,放行页面滚动
+      e.preventDefault();
       const factor = Math.exp(-dy * 0.0015); // 上滚放大、下滚缩小
       cam.zoomAt(u, v, factor);
       if (bboxOverlay) bboxOverlay.render(store?.current()?.bbox ?? null);
       return;
     }
 
+    // depthMod 分支:2D 下用户已按修饰键,先 preventDefault 吞掉浏览器整页缩放,
+    // 再判是否满足 root 深度调节条件;不满足则 return(但已阻止默认缩放)。
+    e.preventDefault();
     if (!store || !store.current() || ui?.readOnly) return;
     if (!(ui.mode === 'root' && $('root-translate').classList.contains('on'))) return;
-    e.preventDefault();
     const a = store.current();
     const pos = (a.root_pos || [0, 0, 0]).slice();
     pos[2] += (dy > 0 ? 1 : -1) * 0.05;

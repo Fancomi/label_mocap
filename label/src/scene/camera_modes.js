@@ -127,7 +127,14 @@ export class CameraModes {
 
   // ── 2D 缩放/平移 ─────────────────────────────────────────────────────────
 
-  getZoom() { return this._zoom; }
+  // 统一写入缩放/平移尾巴:写 zoom → clampPan → 写 panX/panY → 应用 viewOffset → 刷新投影。
+  _setZoomPan(zoom, panX, panY) {
+    this._zoom = zoom;
+    const p = clampPan({ imageW: this.imageW, imageH: this.imageH, cx: this.K.cx, cy: this.K.cy, zoom, panX, panY });
+    this._panX = p.panX; this._panY = p.panY;
+    this._applyViewOffset();
+    this.camera.updateProjectionMatrix();
+  }
 
   // 在画布归一化点 (u,v) 处按 factor 缩放,使该点下的图像保持不动。
   zoomAt(u, v, factor) {
@@ -135,11 +142,7 @@ export class CameraModes {
       imageW: this.imageW, imageH: this.imageH, cx: this.K.cx, cy: this.K.cy,
       zoom: this._zoom, panX: this._panX, panY: this._panY, u, v, factor,
     });
-    this._zoom = r.zoom;
-    const p = clampPan({ imageW: this.imageW, imageH: this.imageH, cx: this.K.cx, cy: this.K.cy, zoom: this._zoom, panX: r.panX, panY: r.panY });
-    this._panX = p.panX; this._panY = p.panY;
-    this._applyViewOffset();
-    this.camera.updateProjectionMatrix();
+    this._setZoomPan(r.zoom, r.panX, r.panY);
   }
 
   // 按画布归一化位移 (du,dv) 平移视图。pan 钳制回有效区间(消除沿边界拖拽的死区)。
@@ -147,18 +150,13 @@ export class CameraModes {
     if (!this._win) this._applyViewOffset();
     const px = this._panX - du * this._win.winW;
     const py = this._panY - dv * this._win.winH;
-    const p = clampPan({ imageW: this.imageW, imageH: this.imageH, cx: this.K.cx, cy: this.K.cy, zoom: this._zoom, panX: px, panY: py });
-    this._panX = p.panX; this._panY = p.panY;
-    this._applyViewOffset();
-    this.camera.updateProjectionMatrix();
+    this._setZoomPan(this._zoom, px, py);
   }
 
   // 复位缩放/平移到初始状态(z=1, pan=0)。
   resetZoom() {
     if (this._zoom === 1 && this._panX === 0 && this._panY === 0) return;
-    this._zoom = 1; this._panX = 0; this._panY = 0;
-    this._applyViewOffset();
-    this.camera.updateProjectionMatrix();
+    this._setZoomPan(1, 0, 0);
   }
 
   // 图像像素 → 画布归一化(考虑当前缩放窗口)。
