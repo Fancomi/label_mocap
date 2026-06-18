@@ -272,6 +272,11 @@ export class LabelScene {
     this._bgNear.geometry.dispose();
     this._bgNear.geometry = new THREE.PlaneGeometry(p.near.w, p.near.h);
     this._bgNear.position.set(0, 0, p.near.z);
+    // 放大看细节:LinearFilter + 关 mipmap 直采原图最清晰。纹理对象共享,设一次即可。
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.generateMipmaps = false;
+    texture.needsUpdate = true;
     for (const plane of [this._bgFar, this._bgNear]) {
       plane.material.map = texture;
       plane.material.needsUpdate = true;
