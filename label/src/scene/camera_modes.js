@@ -7,6 +7,7 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { computeWindow, zoomAtSolve, imageToCanvasNorm, canvasNormToImage } from './view_zoom.js';
 
 const TWEEN_MS = 1000;
 
@@ -33,6 +34,12 @@ export class CameraModes {
     this.imageH = this._meta_H;
     this.bgPlaneZ3D = bgPlaneZ3D;
     this.bgPlaneZ2D = bgPlaneZ2D;
+
+    // 2D 缩放状态:必须在首次 _applyViewOffset() 之前初始化,
+    // 否则 computeWindow 会拿到 undefined 的 zoom/pan。
+    this._zoom = 1;
+    this._panX = 0;
+    this._panY = 0;
 
     const fovY = this._fovYDeg();
     this.camera = new THREE.PerspectiveCamera(fovY, this.imageW / this.imageH, 0.01, 200);
@@ -85,10 +92,12 @@ export class CameraModes {
   }
 
   _applyViewOffset() {
-    const offX = this.imageW / 2 - this.K.cx;
-    const offY = this.imageH / 2 - this.K.cy;
-    this.camera.setViewOffset(this.imageW, this.imageH, offX, offY,
-                              this.imageW, this.imageH);
+    const win = computeWindow({
+      imageW: this.imageW, imageH: this.imageH, cx: this.K.cx, cy: this.K.cy,
+      zoom: this._zoom, panX: this._panX, panY: this._panY,
+    });
+    this._win = win; // 缓存供映射方法用
+    this.camera.setViewOffset(this.imageW, this.imageH, win.winX, win.winY, win.winW, win.winH);
   }
 
   /** User-edited intrinsics from the panel — overwrites this.K, refreshes camera. */
@@ -115,6 +124,49 @@ export class CameraModes {
   }
 
   effectiveAspect() { return this._effectiveAspect(); }
+
+  // ── 2D 缩放/平移 ─────────────────────────────────────────────────────────
+
+  getZoom() { return this._zoom; }
+
+  // 在画布归一化点 (u,v) 处按 factor 缩放,使该点下的图像保持不动。
+  zoomAt(u, v, factor) {
+    const r = zoomAtSolve({
+      imageW: this.imageW, imageH: this.imageH, cx: this.K.cx, cy: this.K.cy,
+      zoom: this._zoom, panX: this._panX, panY: this._panY, u, v, factor,
+    });
+    this._zoom = r.zoom; this._panX = r.panX; this._panY = r.panY;
+    this._applyViewOffset();
+    this.camera.updateProjectionMatrix();
+  }
+
+  // 按画布归一化位移 (du,dv) 平移视图。
+  panByCanvas(du, dv) {
+    if (!this._win) this._applyViewOffset();
+    this._panX -= du * this._win.winW;
+    this._panY -= dv * this._win.winH;
+    this._applyViewOffset();
+    this.camera.updateProjectionMatrix();
+  }
+
+  // 复位缩放/平移到初始状态(z=1, pan=0)。
+  resetZoom() {
+    if (this._zoom === 1 && this._panX === 0 && this._panY === 0) return;
+    this._zoom = 1; this._panX = 0; this._panY = 0;
+    this._applyViewOffset();
+    this.camera.updateProjectionMatrix();
+  }
+
+  // 图像像素 → 画布归一化(考虑当前缩放窗口)。
+  imageToCanvasNorm(ix, iy) {
+    if (!this._win) this._applyViewOffset();
+    return imageToCanvasNorm(ix, iy, this._win);
+  }
+  // 画布归一化 → 图像像素(考虑当前缩放窗口)。
+  canvasNormToImage(u, v) {
+    if (!this._win) this._applyViewOffset();
+    return canvasNormToImage(u, v, this._win);
+  }
 
   _applyPose(p) {
     this.camera.position.copy(p.position);
@@ -173,6 +225,9 @@ export class CameraModes {
     // Already settled in the target mode → nothing to do.
     if (this.mode === mode && !this._tween) return;
 
+    // 2D→3D 立即复位缩放:缩放只改 viewOffset,不影响 tween 位姿。
+    if (mode === '3d') this.resetZoom();
+
     // Only capture the pose we're leaving when starting from a SETTLED state.
     // Mid-tween the camera is at an interpolated pose that isn't a real resting
     // slot — capturing it would corrupt the saved 2D/3D poses. Skipping capture
@@ -199,6 +254,7 @@ export class CameraModes {
     if (mode !== '2d' && mode !== '3d') throw new Error(`bad mode: ${mode}`);
     this._tween = null;
     this.mode = mode;
+    if (mode === '3d') this.resetZoom(); // 切回 3D 时复位缩放
     const slot = (mode === '2d') ? this._pose2D : this._pose3D;
     this._applyPose(slot);
     this.controls.target.copy(slot.target);
