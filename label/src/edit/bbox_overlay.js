@@ -44,17 +44,20 @@ export class BboxOverlay {
   }
 
   // Map an image-pixel point [ix,iy] to a stage-relative on-screen px point.
+  // 走 camera 的 imageToCanvasNorm:支持缩放/平移(z=1、pan=0 时退化为 ix/imageW,与原线性式一致)。
   _imgToScreen(ix, iy, cam, rect, stageRect) {
-    const sx = rect.left - stageRect.left + (ix / cam.imageW) * rect.width;
-    const sy = rect.top - stageRect.top + (iy / cam.imageH) * rect.height;
+    const [u, v] = cam.imageToCanvasNorm(ix, iy);
+    const sx = rect.left - stageRect.left + u * rect.width;
+    const sy = rect.top - stageRect.top + v * rect.height;
     return [sx, sy];
   }
 
   // Map a stage-relative on-screen px point back to image pixels.
+  // 走 camera 的 canvasNormToImage,与 _imgToScreen 互逆。
   _screenToImg(sx, sy, cam, rect, stageRect) {
-    const ix = ((sx + stageRect.left - rect.left) / rect.width) * cam.imageW;
-    const iy = ((sy + stageRect.top - rect.top) / rect.height) * cam.imageH;
-    return [ix, iy];
+    const u = (sx + stageRect.left - rect.left) / rect.width;
+    const v = (sy + stageRect.top - rect.top) / rect.height;
+    return cam.canvasNormToImage(u, v);
   }
 
   render(bbox) {
