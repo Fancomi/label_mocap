@@ -1,12 +1,13 @@
 // smpl_edit/ui_controller.js
-// One edit mode active at a time. Modes: 'pose' | 'root' | 'bbox' | 'beta'.
-// readOnly collapses to 'view' (no interaction, no selection).
-const MODES = ['pose', 'root', 'bbox', 'beta'];
+// One edit mode active at a time. Modes default to pose/root/bbox/beta; callers
+// (e.g. point-cloud annotator) may restrict via the `modes` option.
+const DEFAULT_MODES = ['pose', 'root', 'bbox', 'beta'];
 
 export class UIController {
-  constructor({ readOnly = false } = {}) {
+  constructor({ readOnly = false, modes = DEFAULT_MODES } = {}) {
+    this._modes = modes;
     this._readOnly = readOnly;
-    this._mode = readOnly ? 'view' : 'pose';
+    this._mode = readOnly ? 'view' : modes[0];
     this._joint = null;
     this._listeners = new Set();
   }
@@ -21,13 +22,13 @@ export class UIController {
   setReadOnly(v) {
     this._readOnly = v;
     if (v) { this._mode = 'view'; this._joint = null; }
-    else if (this._mode === 'view') { this._mode = 'pose'; }
+    else if (this._mode === 'view') { this._mode = this._modes[0]; }
     this._notify();
   }
 
   setMode(mode) {
     if (this._readOnly) return;
-    if (!MODES.includes(mode)) return;
+    if (!this._modes.includes(mode)) return;
     this._mode = mode;
     if (mode !== 'pose') this._joint = null;
     this._notify();

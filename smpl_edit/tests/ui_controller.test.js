@@ -49,3 +49,11 @@ test('readOnly forces a read-only mode and blocks edits', () => {
   assert.equal(c.selectedJoint, null);
   assert.equal(c.isInteractionActive('pose'), false);
 });
+
+test('custom modes restrict setMode (e.g. no bbox)', () => {
+  const ui = new UIController({ modes: ['pose', 'root', 'beta'] });
+  ui.setMode('bbox');
+  assert.notEqual(ui.mode, 'bbox');
+  ui.setMode('root');
+  assert.equal(ui.mode, 'root');
+});
