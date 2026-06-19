@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { chainsFor, endEffectorChain } from '../src/edit/ik_chains.js';
+import { chainsFor, endEffectorChain } from '../ik_chains.js';
 
 test('chainsFor(smpl) 返回 4 条链,各含三关节,bodyIdx = joints − 1', () => {
   const chains = chainsFor('smpl');

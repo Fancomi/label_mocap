@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { AnnotationStore } from '../src/edit/annotation_store.js';
-import { CocoDocument } from '../src/io/coco_document.js';
+import { AnnotationStore } from '../annotation_store.js';
+import { CocoDocument } from '../coco_document.js';
 
 function doc() {
   return new CocoDocument({

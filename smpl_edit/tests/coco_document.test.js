@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { CocoDocument } from '../src/io/coco_document.js';
+import { CocoDocument } from '../coco_document.js';
 
 function sampleDoc() {
   return {

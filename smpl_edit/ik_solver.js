@@ -1,7 +1,7 @@
 // label/src/edit/ik_solver.js
 // 两段解析 IK(余弦定理)+ 最短弧四元数。纯几何:点用 [x,y,z],四元数 [x,y,z,w]。
 // 零 three.js / 零 SMPL —— 对任何两段肢体成立。
-import { quatNormalize } from '../../../smpl_core/rotations.js';
+import { quatNormalize } from '../smpl_core/rotations.js';
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];

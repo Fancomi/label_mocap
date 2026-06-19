@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { localFromWorldGizmo, worldGizmoFromLocal } from '../src/edit/gizmo_frame.js';
+import { localFromWorldGizmo, worldGizmoFromLocal } from '../gizmo_frame.js';
 import { axisAngleToQuat, quatMultiply, quatToMat3, mat3ToQuat, quatNormalize } from '../../smpl_core/rotations.js';
 
 const close = (a, b, eps = 1e-5) => assert.ok(Math.abs(a - b) <= eps, `${a} != ${b}`);

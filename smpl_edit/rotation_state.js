@@ -2,7 +2,7 @@
 import {
   axisAngleToQuat, quatToAxisAngle,
   eulerXYZToQuat, quatToEulerXYZ,
-} from '../../../smpl_core/rotations.js';
+} from '../smpl_core/rotations.js';
 
 const JOINTS = 21;
 

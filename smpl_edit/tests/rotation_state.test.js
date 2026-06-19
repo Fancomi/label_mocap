@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { RotationState } from '../src/edit/rotation_state.js';
+import { RotationState } from '../rotation_state.js';
 import { quatToAxisAngle } from '../../smpl_core/rotations.js';
 
 const arrClose = (a, b, eps = 1e-5) => { assert.equal(a.length, b.length); a.forEach((v, i) => assert.ok(Math.abs(v - b[i]) <= eps, `${v} != ${b[i]}`)); };

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { solveTwoBoneIK, shortestArcQuat } from '../src/edit/ik_solver.js';
+import { solveTwoBoneIK, shortestArcQuat } from '../ik_solver.js';
 import { quatToMat3 } from '../../smpl_core/rotations.js';
 
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);

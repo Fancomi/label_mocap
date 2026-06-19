@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { UIController } from '../src/ui/ui_controller.js';
+import { UIController } from '../ui_controller.js';
 
 test('defaults to pose mode, no joint selected', () => {
   const c = new UIController();

@@ -7,8 +7,8 @@ import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { loadModelFromFiles } from '../../smpl_core/smpl_model.js';
 import { forwardSmpl } from '../../smpl_core/lbs.js';
-import { RotationState } from '../src/edit/rotation_state.js';
-import { IKController } from '../src/edit/ik_controller.js';
+import { RotationState } from '../rotation_state.js';
+import { IKController } from '../ik_controller.js';
 
 const model = await loadModelFromFiles(
   new URL('../../smpl_web_viewer/public/models/smpl_neutral.meta.json', import.meta.url),

@@ -7,7 +7,7 @@
 // 写回 RotationState 局部四元数,复用 forwardSmpl/撤销/保存链路;不依赖 three.js。
 import { solveTwoBoneIK, shortestArcQuat } from './ik_solver.js';
 import { endEffectorChain } from './ik_chains.js';
-import { mat3ToQuat, quatConjugate, quatMultiply, quatNormalize } from '../../../smpl_core/rotations.js';
+import { mat3ToQuat, quatConjugate, quatMultiply, quatNormalize } from '../smpl_core/rotations.js';
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const scale = (a, s) => [a[0] * s, a[1] * s, a[2] * s];

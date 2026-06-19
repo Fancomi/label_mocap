@@ -3,7 +3,7 @@
 // SMPL: a joint's world rotation = Wparent · Rlocal. So:
 //   gizmo world quat  = qParentWorld * qLocal
 //   qLocal            = qParentWorld⁻¹ * gizmo world quat
-import { quatMultiply, quatConjugate, quatNormalize } from '../../../smpl_core/rotations.js';
+import { quatMultiply, quatConjugate, quatNormalize } from '../smpl_core/rotations.js';
 
 export function worldGizmoFromLocal(qParentWorld, qLocal) {
   return quatNormalize(quatMultiply(qParentWorld, qLocal));
