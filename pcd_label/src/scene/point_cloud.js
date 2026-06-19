@@ -26,6 +26,15 @@ export class PointCloud {
     this._rebuild();
   }
 
+  // 当前点云（显示系）的质心，用于把人/相机对到点云上。无数据时返回 null。
+  centroid() {
+    if (!this._raw || this._raw.count === 0) return null;
+    const { positions, count } = this._raw;
+    let sx = 0, sy = 0, sz = 0;
+    for (let i = 0; i < count; i++) { sx += positions[i * 3]; sy += positions[i * 3 + 1]; sz += positions[i * 3 + 2]; }
+    return [sx / count, sy / count, sz / count];
+  }
+
   setColorMode(mode) { this._mode = mode; this._rebuild(); }
   setDecimation(ratio) { this._stride = Math.max(1, Math.round(1 / Math.min(1, Math.max(0.01, ratio)))); this._rebuild(); }
   setPointSize(s) { this._mat.size = s; }

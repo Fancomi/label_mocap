@@ -85,7 +85,12 @@ function renderAnnoActions() {
   const row = document.createElement('div'); row.className = 'row'; host.appendChild(row);
   const mk = (label, cls, fn) => { const b = document.createElement('button'); b.textContent = label; if (cls) b.className = cls; b.onclick = fn; row.appendChild(b); };
   if (has) mk('🗑 删除本帧标注', '', () => { store.deleteCurrent(); showFrame(store.currentFrame()); });
-  else { mk('＋ 新建:T-pose', 'primary', () => { store.addTpose(); showFrame(store.currentFrame()); }); mk('＋ 复制上一帧', '', () => { store.addFromPrevious(); showFrame(store.currentFrame()); }); }
+  else { mk('＋ 新建:T-pose', 'primary', () => {
+      store.addTpose();
+      const c = scene.pointCloud.centroid();
+      if (c) { store.beginEdit(); store.applyFields({ root_pos: c }); store.commitEdit(); }
+      showFrame(store.currentFrame());
+    }); mk('＋ 复制上一帧', '', () => { store.addFromPrevious(); showFrame(store.currentFrame()); }); }
 }
 
 async function showFrame(i) {
@@ -124,7 +129,8 @@ async function mountSequence() {
   fps = manifest.fps || 10; $('speed').value = String(fps); $('speed-val').textContent = `${fps} fps`;
   scene.resize();
   await showFrame(0);
-  cam.lookAtTarget(new THREE.Vector3(0, 1, 0));
+  const c0 = scene.pointCloud.centroid();
+  if (c0) cam.lookAtTarget(new THREE.Vector3(c0[0], c0[1], c0[2]));
   if (syncUI) syncUI();
   setStatus(`已加载 ${manifest.frameCount} 帧`);
 }
@@ -146,9 +152,10 @@ function boot() {
   scene = new PcdScene($('c'));
   cam = new OrbitCam({ canvas: $('c') });
   scene.setCamera(cam);
+  scene.resize();
 
   $('btn-open').addEventListener('click', () => {
-    if (!fsAccessSupported()) { $('dir-input').click(); return; }
+    if (!fsAccessSupported()) { setStatus('当前浏览器不支持目录访问，请用 Chrome/Edge 打开'); return; }
     openDirectory().catch((e) => { if (e?.name !== 'AbortError') setStatus(String(e)); });
   });
 
