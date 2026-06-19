@@ -8,6 +8,7 @@
     "test:server": "python3 -m unittest tests.test_server",
     "serve": "bash smpl_viewer/run.sh",
     "serve:web": "node smpl_web_viewer/tools/static_server.mjs --root smpl_web_viewer --port 5174",
-    "serve:label": "node smpl_web_viewer/tools/static_server.mjs --root . --port 5175"
+    "serve:label": "node smpl_web_viewer/tools/static_server.mjs --root . --port 5175",
+    "serve:pcd": "node smpl_web_viewer/tools/static_server.mjs --root . --port 5176"
   }
 }
