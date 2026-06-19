@@ -1,4 +1,4 @@
-// label/src/ui/ui_controller.js
+// smpl_edit/ui_controller.js
 // One edit mode active at a time. Modes: 'pose' | 'root' | 'bbox' | 'beta'.
 // readOnly collapses to 'view' (no interaction, no selection).
 const MODES = ['pose', 'root', 'bbox', 'beta'];

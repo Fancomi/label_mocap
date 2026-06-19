@@ -1,4 +1,4 @@
-// label/src/edit/ik_controller.js
+// smpl_edit/ik_controller.js
 // 两段 IK 编排:拖拽开始冻结参考姿势,拖拽中从参考「绝对求解」(非增量累积)。
 // 据此根治两类伪影:
 //  - 拧(绕骨轴扭转):每步对冻结的参考世界朝向施加单次最短弧,不累积,无 twist 漂移。

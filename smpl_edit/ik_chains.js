@@ -1,4 +1,4 @@
-// label/src/edit/ik_chains.js
+// smpl_edit/ik_chains.js
 // 骨骼无关的肢体链配置。joints = SMPL 24 关节索引(世界坐标取 lastJoints);
 // bodyIdx = body_pose 21 索引(= 关节索引 − 1,关节 0 是 root,不在 body_pose)。
 // 换骨骼只在此表加一项,solver/controller 不动。

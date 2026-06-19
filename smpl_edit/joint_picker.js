@@ -1,4 +1,4 @@
-// label/src/ui/joint_picker.js
+// smpl_edit/joint_picker.js
 import * as THREE from 'three';
 
 // 点击判定阈值:pointerdown→pointerup 位移 < 此值(px)视为「点击」,

@@ -1,4 +1,4 @@
-// label/src/edit/ik_handle.js — IK 末端拖拽手柄(复用 TransformControls translate)。
+// smpl_edit/ik_handle.js — IK 末端拖拽手柄(复用 TransformControls translate)。
 // 与 RootHandle 结构一致,但 objectChange 时不写 root_pos,而是回调 onDrag(worldPos),
 // 由上层(IKController)据此对所选末端关节做两段 IK 反解。
 import * as THREE from 'three';

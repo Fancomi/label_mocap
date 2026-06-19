@@ -1,4 +1,4 @@
-// label/src/edit/ik_plugin.js
+// smpl_edit/ik_plugin.js
 // IK 子系统的「一键插拔插件」。本体 app.js 只需调用 installIK(ctx) 一行,
 // 不出现任何 IK 名字;装上/拆下都不影响本体的姿势/根节点编辑链路。
 //

@@ -1,4 +1,4 @@
-// label/src/edit/transform_picker.js
+// smpl_edit/transform_picker.js
 // 收紧 TransformControls 平移手柄的「不可见命中体(picker)」,使命中范围贴合可见
 // 几何(所见即所得)。vendored 版轴 picker 是 r=0.2 的锥(可见箭头 r≈0.04),会向
 // 轴心鼓出、盖住 XY/YZ/XZ 平面方片,抢走对方片的点击。

@@ -1,4 +1,4 @@
-// label/src/edit/pose_gizmo.js
+// smpl_edit/pose_gizmo.js
 import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { worldGizmoFromLocal, localFromWorldGizmo } from './gizmo_frame.js';

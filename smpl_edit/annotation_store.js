@@ -1,4 +1,4 @@
-// label/src/edit/annotation_store.js
+// smpl_edit/annotation_store.js
 const DEFAULT_ROOT_POS = [0, 0, -4];
 
 export class AnnotationStore {

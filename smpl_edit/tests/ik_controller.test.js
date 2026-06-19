@@ -1,4 +1,4 @@
-// label/tests/ik_controller.test.js
+// smpl_edit/tests/ik_controller.test.js
 // IKController 的独立单元测试(node:test,无浏览器)。
 // 依赖注入真实 SMPL 模型 + forwardSmpl,验证 chainFor 命中、两段反解收敛、
 // 以及 endDrag 后 solveTo 的无副作用兜底。

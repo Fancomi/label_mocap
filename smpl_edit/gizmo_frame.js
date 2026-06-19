@@ -1,4 +1,4 @@
-// label/src/edit/gizmo_frame.js
+// smpl_edit/gizmo_frame.js
 // Map between a joint's LOCAL quaternion and the WORLD quaternion a gizmo shows.
 // SMPL: a joint's world rotation = Wparent · Rlocal. So:
 //   gizmo world quat  = qParentWorld * qLocal

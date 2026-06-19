@@ -1,4 +1,4 @@
-// label/src/edit/root_handle.js — translate/rotate gizmo for the SMPL root.
+// smpl_edit/root_handle.js — translate/rotate gizmo for the SMPL root.
 import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { tightenTranslatePicker } from './transform_picker.js';

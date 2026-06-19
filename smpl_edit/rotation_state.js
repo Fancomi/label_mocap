@@ -1,4 +1,4 @@
-// label/src/edit/rotation_state.js
+// smpl_edit/rotation_state.js
 import {
   axisAngleToQuat, quatToAxisAngle,
   eulerXYZToQuat, quatToEulerXYZ,
