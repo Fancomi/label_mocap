@@ -314,7 +314,7 @@ async function saveJson() {
     const link = document.createElement('a');
     link.href = url; link.download = 'player_0.json'; link.click();
     URL.revokeObjectURL(url);
-    setStatus('已下载 player_0.json(浏览器不支持原地保存)');
+    setStatus('⚠ 当前浏览器不支持原地保存,已下载 player_0.json — 请手动覆盖回数据目录(原地保存请用 Chrome/Edge)');
   }
 }
 

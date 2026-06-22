@@ -82,7 +82,7 @@ export class FileListSource {
     const a = document.createElement('a');
     a.href = url; a.download = ANNO_NAME; a.click();
     URL.revokeObjectURL(url);
-    return `${ANNO_NAME}(已下载)`;
+    return `${ANNO_NAME}(已下载,请手动覆盖回数据目录)`;
   }
 }
 

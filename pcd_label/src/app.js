@@ -169,7 +169,7 @@ function boot() {
     const files = e.target.files;
     if (!files || !files.length) return;
     source = new FileListSource(files);
-    setStatus('已选择文件夹(下载保存模式)');
+    setStatus('⚠ 当前浏览器不支持原地保存,保存将下载 player_0.json,需手动覆盖回数据目录(原地保存请用 Chrome/Edge)');
     mountSequence().catch((err) => setStatus(String(err)));
   });
 
