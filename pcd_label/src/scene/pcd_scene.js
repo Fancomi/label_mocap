@@ -40,6 +40,16 @@ export class PcdScene {
 
   threeScene() { return this._scene; }
   setCamera(cam) { this._cam = cam; }
+
+  // 地面网格朝向随「上轴」对齐(纯视觉:网格只是地平面参考,不旋转任何数据/SMPL)。
+  // GridHelper 默认在 XZ 平面(法线 +Y)。Z-up → 绕 X 转 90° 使其落在 XY 平面;
+  // X-up → 绕 Z 转 90°;Y-up → 不转。
+  orientGroundTo(up) {
+    if (!this._grid) return;
+    if (up === 'Z') this._grid.rotation.set(Math.PI / 2, 0, 0);
+    else if (up === 'X') this._grid.rotation.set(0, 0, Math.PI / 2);
+    else this._grid.rotation.set(0, 0, 0);
+  }
   jointMeshes() { return this._jointsGroup ? this._jointsGroup.children : []; }
   jointWorldPosition(j) { return this._lastJoints ? [this._lastJoints[j*3], this._lastJoints[j*3+1], this._lastJoints[j*3+2]] : [0,0,0]; }
   meshObject() { return this._mesh; }

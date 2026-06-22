@@ -54,6 +54,7 @@
   <aside id="left">
     <h2>点云 SMPL 标注器</h2>
     <button id="btn-open" class="primary" style="width:100%">📂 打开序列目录</button>
+    <input id="dir-input" type="file" webkitdirectory directory multiple hidden>
     <div class="hint" id="open-hint">Chrome/Edge 可原地保存；其他浏览器为下载模式</div>
 
     <div class="card">
@@ -113,7 +114,7 @@
       </div>
       <h3 style="margin-top:6px">坐标轴</h3>
       <div class="kgrid2">
-        <label>上轴</label><select id="axis-up"><option value="Z">Z-up</option><option value="Y">Y-up</option></select>
+        <label>上轴</label><select id="axis-up"><option value="Z">Z-up</option><option value="Y">Y-up</option><option value="X">X-up</option></select>
         <label>前轴</label><select id="axis-front"></select>
       </div>
     </div>

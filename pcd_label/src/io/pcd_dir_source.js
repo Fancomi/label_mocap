@@ -42,3 +42,47 @@ export class PcdDirSource {
     return ANNO_NAME;
   }
 }
+
+// 不支持 File System Access 的浏览器(如 Firefox/Safari)的退化路径:用
+// <input webkitdirectory> 一次拿到整个目录的 FileList,全部 File 持有在内存里。
+// 接口与 PcdDirSource 对齐;保存无法原地写,退化为下载 player_0.json。
+function baseName(path) { const p = String(path); const i = p.lastIndexOf('/'); return i >= 0 ? p.slice(i + 1) : p; }
+
+export class FileListSource {
+  constructor(fileList) {
+    this._byName = new Map();
+    for (const f of Array.from(fileList ?? [])) this._byName.set(baseName(f.webkitRelativePath || f.name), f);
+    this._manifest = null;
+  }
+
+  async readManifest() {
+    const f = this._byName.get('manifest.json');
+    if (!f) throw new Error('所选文件夹缺少 manifest.json');
+    this._manifest = parseManifest(JSON.parse(await f.text()));
+    return this._manifest;
+  }
+
+  async frameFile(i) {
+    const name = frameFileName(this._manifest.framePattern, i);
+    const f = this._byName.get(name);
+    if (!f) throw new Error(`缺少帧文件 ${name}`);
+    return f;
+  }
+
+  async readAnnotation() {
+    const f = this._byName.get(ANNO_NAME);
+    if (!f) return null;
+    try { return JSON.parse(await f.text()); } catch { return null; }
+  }
+
+  // 无原地写权限:下载 player_0.json。
+  async saveAnnotation(obj) {
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = ANNO_NAME; a.click();
+    URL.revokeObjectURL(url);
+    return `${ANNO_NAME}(已下载)`;
+  }
+}
+

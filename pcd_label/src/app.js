@@ -14,11 +14,12 @@ import { installIK } from '../../smpl_edit/ik_plugin.js';
 import { PcdScene } from './scene/pcd_scene.js';
 import { OrbitCam } from './scene/orbit_cam.js';
 import { PcdPanels } from './ui/pcd_panels.js';
-import { axisFrameMatrix, AXIS_OPTIONS } from './scene/axis_frame.js';
 import { decodeXYZ } from './scene/point_cloud_decode.js';
 import { decodePngFile } from './io/png_pixels.js';
-import { PcdDirSource, fsAccessSupported, pickDirectory } from './io/pcd_dir_source.js';
-import * as THREE from 'three';
+import { PcdDirSource, FileListSource, fsAccessSupported, pickDirectory } from './io/pcd_dir_source.js';
+
+// 每个上轴允许的前轴(互相垂直的另两轴)。
+const AXIS_OPTIONS = { X: ['Y', 'Z'], Y: ['X', 'Z'], Z: ['X', 'Y'] };
 
 const $ = (id) => document.getElementById(id);
 const setStatus = (t) => { $('status').textContent = t; };
@@ -32,7 +33,9 @@ let jointGridButtons = [];
 let lastVertices = null, lastJoints = null, lastWorldRot = null;
 let syncUI = null, syncHooks = [], dragGuards = [], engageGuards = [];
 let playing = false, fps = 10, lastTick = 0, acc = 0;
-let axisUp = 'Z', axisFront = 'X', axisM = axisFrameMatrix('Z', 'X');
+// 坐标轴(上轴/前轴)只影响观察者相机,不旋转点云/SMPL。AXIS_TO_IDX 给「高度配色」用。
+let axisUp = 'Z', axisFront = 'X';
+const AXIS_TO_IDX = { X: 0, Y: 1, Z: 2 };
 let lastDecoded = null;
 
 async function loadModelWithProgress() {
@@ -68,12 +71,17 @@ async function renderPointCloud(i) {
     pointWidth: manifest.pointWidth, pointHeight: manifest.pointHeight,
     scale: manifest.scale, center: manifest.center, channels,
   });
-  scene.pointCloud.setData(lastDecoded, axisM);
+  // 点云存原始数据系坐标,不旋转。高度配色取「上轴」分量。
+  scene.pointCloud.setHeightAxis(AXIS_TO_IDX[axisUp]);
+  scene.pointCloud.setData(lastDecoded);
 }
 
-function reapplyAxis() {
-  axisM = axisFrameMatrix(axisUp, axisFront);
-  if (lastDecoded) scene.pointCloud.setData(lastDecoded, axisM);
+// 上轴/前轴变化:只动相机(up 向量 + 环绕方位)与地面网格朝向,几何不变。
+function applyAxisFrame(recenter) {
+  scene.orientGroundTo(axisUp);
+  scene.pointCloud.setHeightAxis(AXIS_TO_IDX[axisUp]); // 高度配色取上轴分量(若为 height 模式会自动重算)
+  const b = scene.pointCloud.bounds();
+  cam.setFrame(axisUp, axisFront, recenter && b ? b.center : null, b ? b.radius : null);
 }
 
 function renderAnnoActions() {
@@ -129,8 +137,8 @@ async function mountSequence() {
   fps = manifest.fps || 10; $('speed').value = String(fps); $('speed-val').textContent = `${fps} fps`;
   scene.resize();
   await showFrame(0);
-  const c0 = scene.pointCloud.centroid();
-  if (c0) cam.lookAtTarget(new THREE.Vector3(c0[0], c0[1], c0[2]));
+  // 初次取景:相机按当前上轴/前轴环绕点云包围球,几何不动。
+  applyAxisFrame(true);
   if (syncUI) syncUI();
   setStatus(`已加载 ${manifest.frameCount} 帧`);
 }
@@ -155,8 +163,16 @@ function boot() {
   scene.resize();
 
   $('btn-open').addEventListener('click', () => {
-    if (!fsAccessSupported()) { setStatus('当前浏览器不支持目录访问，请用 Chrome/Edge 打开'); return; }
+    if (!fsAccessSupported()) { $('dir-input').click(); return; }
     openDirectory().catch((e) => { if (e?.name !== 'AbortError') setStatus(String(e)); });
+  });
+  // 退化路径(Firefox/Safari 无 FS Access):webkitdirectory 选目录 → 内存持有 FileList。
+  $('dir-input').addEventListener('change', (e) => {
+    const files = e.target.files;
+    if (!files || !files.length) return;
+    source = new FileListSource(files);
+    setStatus('已选择文件夹(下载保存模式)');
+    mountSequence().catch((err) => setStatus(String(err)));
   });
 
   $('slider').addEventListener('input', (e) => { if (!store) return; setPlaying(false); showFrame(+e.target.value); });
@@ -194,8 +210,8 @@ function boot2() {
   $('decimation').addEventListener('input', (e) => scene.pointCloud.setDecimation(+e.target.value));
   $('point-size').addEventListener('input', (e) => scene.pointCloud.setPointSize(+e.target.value));
   populateFrontAxis();
-  $('axis-up').addEventListener('change', (e) => { axisUp = e.target.value; populateFrontAxis(); reapplyAxis(); });
-  $('axis-front').addEventListener('change', (e) => { axisFront = e.target.value; reapplyAxis(); });
+  $('axis-up').addEventListener('change', (e) => { axisUp = e.target.value; populateFrontAxis(); applyAxisFrame(false); });
+  $('axis-front').addEventListener('change', (e) => { axisFront = e.target.value; applyAxisFrame(false); });
 
   panels = new PcdPanels({ getRotation: () => rotation, getStore: () => store, getUI: () => ui, getLastJoints: () => lastJoints, onEdit: applyAnnotation });
 
