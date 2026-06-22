@@ -173,9 +173,11 @@ class OrbitControls extends EventDispatcher {
 
 			const offset = new Vector3();
 
-			// so camera.up is the orbit axis
-			const quat = new Quaternion().setFromUnitVectors( object.up, new Vector3( 0, 1, 0 ) );
-			const quatInverse = quat.clone().invert();
+			// so camera.up is the orbit axis — recomputed each update() so changing
+			// object.up at runtime re-aligns the orbit axis (matches three r150+).
+			const quat = new Quaternion();
+			const quatInverse = new Quaternion();
+			const _upToY = new Vector3( 0, 1, 0 );
 
 			const lastPosition = new Vector3();
 			const lastQuaternion = new Quaternion();
@@ -184,6 +186,9 @@ class OrbitControls extends EventDispatcher {
 			const twoPI = 2 * Math.PI;
 
 			return function update( deltaTime = null ) {
+
+				quat.setFromUnitVectors( object.up, _upToY );
+				quatInverse.copy( quat ).invert();
 
 				const position = scope.object.position;
 

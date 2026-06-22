@@ -1,15 +1,22 @@
 // pcd_label/src/scene/orbit_cam.js
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { cameraPlacement } from '../../../smpl_edit/view_frame.js';
 
-const UNIT = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };
-
-// 纯自由 orbit 相机：透视 + OrbitControls。无 2D/内参概念。
-// 「上轴/前轴」只改相机：设置相机 up 向量 + 环绕起始方位，几何(点云/SMPL)绝不旋转。
+// 纯自由 orbit 相机。「上轴/前轴」只改【观察者】:相机 up 向量 + 摆位 + 环绕轴,
+// 经由通用 view_frame 模块计算,绝不旋转任何几何(点云/SMPL 始终在原始数据系)。
+//
+// 万向锁/拖拽偏差的根因与对策:
+//  - OrbitControls 的极角(phi)从 object.up 量起。改 up 后必须让 controls 用新 up
+//    重新解算 spherical,否则旧 up 残留 → 拖拽方向错乱、某些角度卡死(伪万向锁)。
+//    我们在 setFrame 里先写新 up、新 position/target,再 controls.update() 让它基于
+//    新 up 重建内部球坐标。vendored OrbitControls.update() 已改为每帧用当前 object.up
+//    重算 orbit 轴(setFromUnitVectors),所以运行时换轴即时生效。
+//  - 极角范围留出极小 epsilon,避免正好与 up 平行导致 makeSafe 抖动。
 export class OrbitCam {
   constructor({ canvas }) {
     this.mode = '3d';
-    this.camera = new THREE.PerspectiveCamera(50, 1, 0.05, 1000);
+    this.camera = new THREE.PerspectiveCamera(50, 1, 0.05, 2000);
     this.camera.up.set(0, 0, 1); // 默认 Z-up
     this.camera.position.set(6, 0, 2);
     this.controls = new OrbitControls(this.camera, canvas);
@@ -25,23 +32,20 @@ export class OrbitCam {
     this.controls.update();
   }
 
-  // 设定观察坐标系:up=上轴, front=朝向相机的轴。target/radius 决定环绕中心与距离。
-  // 仅移动相机与改 up 向量,不触碰任何几何。
+  // 设定观察坐标系:up=上轴, front=朝向相机的轴。target=环绕中心, radius=点云半径。
+  // 只移动相机与改 up,不触碰几何。
   setFrame(up, front, target = null, radius = null) {
     this._up = up; this._front = front;
-    const u = UNIT[up], f = UNIT[front];
-    const t = target ? new THREE.Vector3(target[0], target[1], target[2]) : this.controls.target.clone();
-    const r = (radius && radius > 0) ? radius : this.camera.position.distanceTo(this.controls.target) || 6;
-    this.camera.up.set(u[0], u[1], u[2]);
-    // 相机放在 target 沿 +front 退开,并沿 +up 略微抬高,得到 3/4 俯视。
-    const dist = r * 2.2 + 1;
-    this.camera.position.set(
-      t.x + f[0] * dist + u[0] * dist * 0.35,
-      t.y + f[1] * dist + u[1] * dist * 0.35,
-      t.z + f[2] * dist + u[2] * dist * 0.35,
-    );
-    this.controls.target.copy(t);
-    this.camera.lookAt(t);
+    const tgt = target ? target.slice() : this.controls.target.toArray();
+    const r = (radius && radius > 0) ? radius : (this.camera.position.distanceTo(this.controls.target) || 6);
+    const place = cameraPlacement(up, front, tgt, r);
+
+    // 关键顺序:先写 up,再写 position/target,最后 update() 让 OrbitControls 基于
+    // 新 up 重建内部 spherical(否则旧 up 残留 → 拖拽偏差 + 伪万向锁)。
+    this.camera.up.set(place.up[0], place.up[1], place.up[2]);
+    this.camera.position.set(place.position[0], place.position[1], place.position[2]);
+    this.controls.target.set(place.target[0], place.target[1], place.target[2]);
+    this.camera.lookAt(this.controls.target);
     this.controls.update();
   }
 

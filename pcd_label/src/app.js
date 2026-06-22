@@ -17,9 +17,7 @@ import { PcdPanels } from './ui/pcd_panels.js';
 import { decodeXYZ } from './scene/point_cloud_decode.js';
 import { decodePngFile } from './io/png_pixels.js';
 import { PcdDirSource, FileListSource, fsAccessSupported, pickDirectory } from './io/pcd_dir_source.js';
-
-// 每个上轴允许的前轴(互相垂直的另两轴)。
-const AXIS_OPTIONS = { X: ['Y', 'Z'], Y: ['X', 'Z'], Z: ['X', 'Y'] };
+import { FRONT_OPTIONS } from '../../smpl_edit/view_frame.js';
 
 const $ = (id) => document.getElementById(id);
 const setStatus = (t) => { $('status').textContent = t; };
@@ -193,8 +191,8 @@ function boot() {
 
 function populateFrontAxis() {
   const sel = $('axis-front'); sel.innerHTML = '';
-  for (const f of AXIS_OPTIONS[axisUp]) { const o = document.createElement('option'); o.value = f; o.textContent = `${f}-front`; sel.appendChild(o); }
-  if (!AXIS_OPTIONS[axisUp].includes(axisFront)) axisFront = AXIS_OPTIONS[axisUp][0];
+  for (const f of FRONT_OPTIONS[axisUp]) { const o = document.createElement('option'); o.value = f; o.textContent = `${f}-front`; sel.appendChild(o); }
+  if (!FRONT_OPTIONS[axisUp].includes(axisFront)) axisFront = FRONT_OPTIONS[axisUp][0];
   sel.value = axisFront;
 }
 
