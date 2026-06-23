@@ -25,6 +25,12 @@ export function parseInferResponse(doc) {
   if (!Array.isArray(ann.betas) || ann.betas.length !== 10) {
     throw new Error(`betas 维度异常: ${ann.betas && ann.betas.length}`);
   }
+  if (!Array.isArray(ann.root_pos) || ann.root_pos.length !== 3) {
+    throw new Error(`root_pos 维度异常: ${ann.root_pos && ann.root_pos.length}`);
+  }
+  if (!Array.isArray(ann.root_rota) || ann.root_rota.length !== 3) {
+    throw new Error(`root_rota 维度异常: ${ann.root_rota && ann.root_rota.length}`);
+  }
   const camK = doc.images && doc.images[0] ? doc.images[0].cam_K : null;
   return { ann, camK };
 }

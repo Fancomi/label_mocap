@@ -40,6 +40,16 @@ test('parseInferResponse throws on wrong body_pose length', () => {
   assert.throws(() => parseInferResponse(d), /body_pose/i);
 });
 
+test('parseInferResponse throws on missing root_rota', () => {
+  const d = okDoc(); delete d.annotations[0].root_rota;
+  assert.throws(() => parseInferResponse(d), /root_rota/i);
+});
+
+test('parseInferResponse throws on wrong root_pos length', () => {
+  const d = okDoc(); d.annotations[0].root_pos = [1, 2];
+  assert.throws(() => parseInferResponse(d), /root_pos/i);
+});
+
 test('cloudResultToFields maps the five editable fields', () => {
   const { ann } = parseInferResponse(okDoc());
   const f = cloudResultToFields(ann);

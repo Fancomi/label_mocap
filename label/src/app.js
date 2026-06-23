@@ -361,7 +361,7 @@ async function saveJson() {
   const doc = store.document();
   for (const id of doc.imageIds()) {
     const a = doc.getAnnotation(id);
-    if (!a) continue;
+    if (!a || !doc.hasSmpl(id)) continue;   // 仅 bbox 帧:保留框,不补算 SMPL 派生字段
     const out = forwardSmpl(model, { root_pos: a.root_pos, root_rota: a.root_rota, body_pose: a.body_pose, betas: a.betas });
     const keypoints = reprojectKeypoints(out.joints, cam.K, 52);
     const g = new THREE.BufferGeometry();
@@ -610,6 +610,13 @@ function boot() {
   $('btn-gvhmr-plain').addEventListener('click', () => runGvhmr(false));
   $('btn-gvhmr-bbox').addEventListener('click', () => runGvhmr(true));
   $('gvhmr-cancel').addEventListener('click', () => { if (gvhmrAbort) gvhmrAbort.abort(); });
+
+  const epInput = $('gvhmr-endpoint');
+  if (epInput) {
+    const saved = (() => { try { return localStorage.getItem('gvhmr-endpoint'); } catch (_) { return null; } })();
+    if (saved) epInput.value = saved;
+    epInput.addEventListener('change', () => { try { localStorage.setItem('gvhmr-endpoint', epInput.value); } catch (_) {} });
+  }
 
   // 2D 滚轮:裸滚轮 = 以光标为中心缩放视图(viewOffset,不改内外参/数据);
   // Cmd(Mac)/Ctrl(其他)+ 滚轮 = 调 root 深度(整体/移动模式,低频,让位给缩放)。
