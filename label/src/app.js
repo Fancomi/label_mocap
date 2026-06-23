@@ -246,6 +246,8 @@ function currentFileName() {
 
 // 云端 cam_K = [fx,0,cx, 0,fy,cy, 0,0,1](行主序)。采用为当前相机内参,
 // 并写入当前帧 images[].cam_K(cam_K 真相在数据,cam.K 为运行时镜像)。
+// 注意:cam_K 是图像级元数据(非 annotation 可编辑字段),刻意不纳入 undo——
+// 它代表云端相机,与后续姿势编辑无关,undo 姿势不应改回内参。
 function adoptCamK(camK) {
   if (!Array.isArray(camK) || camK.length < 9) return;
   const fx = camK[0], fy = camK[4], cx = camK[2], cy = camK[5];
@@ -263,6 +265,7 @@ function showGvhmrOverlay(on, msg) {
 
 // withBbox=false → 链路1(纯图);true → 链路2(带当前帧 bbox)。
 async function runGvhmr(withBbox) {
+  if (gvhmrAbort) return;                 // 已有推理在飞,忽略重复点击
   if (!store || ui?.readOnly) return;
   if (withBbox && !store.hasBbox()) { setStatus('当前帧无框,无法带框推理'); return; }
   const frameAtStart = store.currentFrame();      // 落地前校验仍在原帧
@@ -440,7 +443,7 @@ function boot() {
   $('speed').addEventListener('input', (e) => { fps = +e.target.value; $('speed-val').textContent = `${fps} fps`; });
 
   $('btn-undo').addEventListener('click', () => { if (store) { store.undo(); showFrame(store.currentFrame()); } });
-  window.addEventListener('keydown', (e) => { if (store && (e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); store.undo(); showFrame(store.currentFrame()); } });
+  window.addEventListener('keydown', (e) => { if (store && !gvhmrAbort && (e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); store.undo(); showFrame(store.currentFrame()); } });
 
   const toggle = (id, key) => $(id).addEventListener('click', () => {
     const on = !$(id).classList.contains('on');
