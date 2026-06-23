@@ -25,6 +25,7 @@ export class VideoSource {
   get height() { return this._video.videoHeight; }
   frameCount() { return Math.max(1, Math.floor((this._video.duration || 0) * this._fps)); }
   get texture() { return this._texture; }
+  get videoEl() { return this._video; }
 
   // Seek to a frame index; resolves once the frame is displayable.
   seek(index) {

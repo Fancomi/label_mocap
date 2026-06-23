@@ -22,6 +22,8 @@ import { projectBboxFromMesh } from './edit/bbox_edit.js';
 import { BboxOverlay } from './edit/bbox_overlay.js';
 import { fsAccessSupported, pickDirectory, DirSource, videoOpenSupported, pickVideoFile } from './io/dir_source.js';
 import { VideoSource } from './io/video_source.js';
+import { DEFAULT_ENDPOINT, inferGvhmr, cloudResultToFields } from './io/gvhmr_client.js';
+import { fileToBase64, videoFrameToBase64 } from './io/image_bytes.js';
 import * as THREE from 'three';
 
 const $ = (id) => document.getElementById(id);
@@ -229,10 +231,74 @@ function applyAnnotation() {
   if (bboxOverlay) bboxOverlay.render(store.current()?.bbox ?? null);
 }
 
+// 取当前显示帧的图像 base64(唯一来源:images / videoSource,不另存副本)。
+async function currentFrameBase64() {
+  if (videoSource) return videoFrameToBase64(videoSource.videoEl);
+  const file = images.get(store.currentFrame());
+  if (!file) throw new Error('当前帧没有可用图像');
+  return fileToBase64(file);
+}
+
+function currentFileName() {
+  const file = videoSource ? null : images.get(store.currentFrame());
+  return file ? file.name : `frame_${store.currentFrame()}.jpg`;
+}
+
+// 云端 cam_K = [fx,0,cx, 0,fy,cy, 0,0,1](行主序)。采用为当前相机内参,
+// 并写入当前帧 images[].cam_K(cam_K 真相在数据,cam.K 为运行时镜像)。
+function adoptCamK(camK) {
+  if (!Array.isArray(camK) || camK.length < 9) return;
+  const fx = camK[0], fy = camK[4], cx = camK[2], cy = camK[5];
+  cam.setIntrinsics({ fx, fy, cx, cy });
+  const info = store.document().imageInfo(store.currentImageId());
+  if (info) info.cam_K = camK.slice();
+}
+
+let gvhmrAbort = null;
+function showGvhmrOverlay(on, msg) {
+  const ov = $('gvhmr-overlay'); if (!ov) return;
+  if (msg) $('gvhmr-msg').textContent = msg;
+  ov.hidden = !on;
+}
+
+// withBbox=false → 链路1(纯图);true → 链路2(带当前帧 bbox)。
+async function runGvhmr(withBbox) {
+  if (!store || ui?.readOnly) return;
+  if (withBbox && !store.hasBbox()) { setStatus('当前帧无框,无法带框推理'); return; }
+  const frameAtStart = store.currentFrame();      // 落地前校验仍在原帧
+  const bbox = withBbox ? store.current()?.bbox : undefined;
+  setPlaying(false);
+  gvhmrAbort = new AbortController();
+  showGvhmrOverlay(true, '云端推理中…');
+  try {
+    const imageB64 = await currentFrameBase64();
+    const { ann, camK } = await inferGvhmr({
+      endpoint: $('gvhmr-endpoint')?.value || DEFAULT_ENDPOINT,
+      imageB64, fileName: currentFileName(), bbox, signal: gvhmrAbort.signal,
+    });
+    if (store.currentFrame() !== frameAtStart) { setStatus('已切帧,放弃本次结果'); return; }
+    store.applyCloudResult(cloudResultToFields(ann));   // 一个 undo 单元,直接覆盖
+    adoptCamK(camK);
+    await showFrame(frameAtStart);
+    setStatus('云端推理完成');
+  } catch (e) {
+    setStatus(String(e.message || e));
+  } finally {
+    showGvhmrOverlay(false);
+    gvhmrAbort = null;
+  }
+}
+
 function renderAnnoActions() {
   const host = $('anno-actions'); if (!host) return;
   const has = store && store.hasData();
-  $('anno-state').textContent = !store ? '—' : (has ? '✅ 本帧已标注' : '— 本帧无标注');
+  const hasB = store && store.hasBbox();
+  const hasS = store && store.hasSmpl();
+  $('anno-state').textContent = !store ? '—'
+    : (hasB && hasS) ? '✅ 框 + SMPL'
+    : hasS ? '🧍 已有 SMPL'
+    : hasB ? '📦 仅框选(可云端推理)'
+    : '— 本帧无标注';
   host.innerHTML = '';
   if (!store || ui?.readOnly) return;
   const row = document.createElement('div'); row.className = 'row'; host.appendChild(row);
@@ -250,7 +316,7 @@ async function showFrame(i) {
   $('slider').value = String(i);
   $('frame-info').textContent = `${i} / ${store.frameCount() - 1}`;
   const a = store.current();
-  if (a) {
+  if (a && store.hasSmpl()) {
     rotation = RotationState.fromAxisAngle({ root_rota: a.root_rota, body_pose: a.body_pose });
     applyAnnotation();
     scene.setPersonVisible(true);
@@ -261,7 +327,7 @@ async function showFrame(i) {
     lastWorldRot = null;
     scene.setPersonVisible(false);
     if (panels) panels.syncFromState();
-    if (bboxOverlay) bboxOverlay.render(null);
+    if (bboxOverlay) bboxOverlay.render(a && store.hasBbox() ? a.bbox : null);
   }
   renderAnnoActions();
   if (videoSource) {
@@ -453,12 +519,16 @@ function boot() {
     getCam: () => cam,
     getStore: () => store,
     getBboxVisible: () => ui?.mode === 'bbox',
+    getCanDraw: () => !!store && ui?.mode === 'bbox' && cam?.mode === '2d'
+      && !ui?.readOnly && !store.hasBbox(),
     onEdit: applyAnnotation,
   });
 
   // 本体两个编辑基元并入通用守卫聚合(插件会各自再 push 自己的手柄)。
   dragGuards.push(poseGizmo, rootHandle);
   engageGuards.push(poseGizmo, rootHandle);
+  dragGuards.push(bboxOverlay);
+  engageGuards.push(bboxOverlay);
 
   // ui.onChange fires whenever mode/joint changes → sync tabs, panels, gizmos.
   function refreshTabAvailability() {
@@ -503,6 +573,8 @@ function boot() {
       rootHandle.detach();
     }
     bboxOverlay.render(ui.mode === 'bbox' ? (store?.current()?.bbox ?? null) : null);
+    const bboxBtn = $('btn-gvhmr-bbox');
+    if (bboxBtn) bboxBtn.disabled = !(store && store.hasBbox() && !ui.readOnly);
     renderAnnoActions();
     panels.syncFromState();
   };
@@ -531,6 +603,10 @@ function boot() {
     panels.syncFromState();
     if (bboxOverlay) bboxOverlay.render(store.current()?.bbox ?? null);
   });
+
+  $('btn-gvhmr-plain').addEventListener('click', () => runGvhmr(false));
+  $('btn-gvhmr-bbox').addEventListener('click', () => runGvhmr(true));
+  $('gvhmr-cancel').addEventListener('click', () => { if (gvhmrAbort) gvhmrAbort.abort(); });
 
   // 2D 滚轮:裸滚轮 = 以光标为中心缩放视图(viewOffset,不改内外参/数据);
   // Cmd(Mac)/Ctrl(其他)+ 滚轮 = 调 root 深度(整体/移动模式,低频,让位给缩放)。
