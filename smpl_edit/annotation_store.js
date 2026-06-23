@@ -48,10 +48,12 @@ export class AnnotationStore {
       if (a) { src = a; break; }
     }
     if (!src) { this.addTpose(); return; }
-    this._txn((id) => this._doc.setAnnotation(id, {
+    const fields = {
       bbox: src.bbox, root_pos: src.root_pos, root_rota: src.root_rota,
       body_pose: src.body_pose, betas: src.betas,
-    }));
+    };
+    if (src.pole_vectors) fields.pole_vectors = src.pole_vectors;
+    this._txn((id) => this._doc.setAnnotation(id, fields));
   }
 
   deleteCurrent() { this._txn((id) => this._doc.deleteAnnotation(id)); }
