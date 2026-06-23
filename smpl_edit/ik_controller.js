@@ -36,6 +36,26 @@ export class IKController {
   // smplJointIdx 是否可 IK 拖动的末端;是则返回其链,否则 null。
   chainFor(smplJointIdx) { return endEffectorChain(this._getSkeleton(), smplJointIdx); }
 
+  // 读取某条链已存储的世界 pole;无则 null。
+  storedPole(chainName) {
+    const cur = this._getStore().current?.() ?? null;
+    const pv = cur && cur.pole_vectors;
+    return (pv && pv[chainName]) ? pv[chainName] : null;
+  }
+
+  // 自动推导弯曲方向的可视化世界点(无存储 pole 时用于摆放极向量柄):
+  // chainRoot + perp0 * 上臂/大腿骨长。
+  autoPoleViz(chain) {
+    const joints = this._getLastJoints();
+    const [jRoot, jMid, jEnd] = chain.joints;
+    const root = j3(joints, jRoot), mid = j3(joints, jMid), end = j3(joints, jEnd);
+    const upper0 = sub(mid, root);
+    const dir0 = norm(sub(end, root));
+    const perp0 = norm(sub(upper0, scale(dir0, dot(upper0, dir0))));
+    const L = len(upper0);
+    return [root[0] + perp0[0] * L, root[1] + perp0[1] * L, root[2] + perp0[2] * L];
+  }
+
   // 拖拽开始:冻结参考——三关节世界坐标、肩/肘世界朝向、肩父系朝向,以及
   // 铰链轴 + 屈伸符号(防反关节)。整段拖拽都基于这份参考。
   beginDrag(chain) {
@@ -85,10 +105,20 @@ export class IKController {
     if (!ref || !rot) return;
 
     const dir = norm(sub(target, ref.root));
-    // 铰链弯曲方向:hinge × dir 已垂直于 dir;目标与铰链轴近平行时回退到参考弯曲侧。
-    let bend = cross(ref.hinge, dir);
-    if (len(bend) < 1e-5) bend = ref.perp0;
-    bend = scale(norm(bend), ref.sign);
+    // 优先用存储的人控 pole:把它投影到 ⊥dir 平面得到弯曲方向(已隐含侧别,不再乘 sign)。
+    // 无存储 pole 或投影退化时,回退到原自动铰链方向 sign·(hinge×dir),再退到 perp0。
+    let bend = null;
+    const userPole = this.storedPole(ref.chain.name);
+    if (userPole) {
+      const rel = sub(userPole, ref.root);
+      const proj = sub(rel, scale(dir, dot(rel, dir)));
+      if (len(proj) >= 1e-5) bend = norm(proj);
+    }
+    if (!bend) {
+      bend = cross(ref.hinge, dir);
+      if (len(bend) < 1e-5) bend = ref.perp0;
+      bend = scale(norm(bend), ref.sign);
+    }
 
     const { mid: newMid, end: newEnd } = solveTwoBoneIK({
       root: ref.root, mid: ref.midRef, end: ref.endRef, target, pole: bend,

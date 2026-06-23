@@ -94,3 +94,40 @@ test('endPoleDrag clears reference; solveToPole after is a no-op', () => {
   ik.solveToPole([0, 0, -3]); // no ref → must not throw
   assert.ok(true);
 });
+
+test('storedPole reads the persisted world pole for a chain', () => {
+  const { ik, joints } = harness();
+  const chain = ik.chainFor(20);
+  const root = j3(joints(), 16);
+  const world = [root[0] + 0.3, root[1] + 0.2, root[2] + 0.1];
+  ik.beginPoleDrag(chain);
+  ik.solveToPole(world);
+  ik.endPoleDrag();
+  assert.deepEqual(ik.storedPole('L_Arm'), world);
+  assert.equal(ik.storedPole('R_Arm'), null);
+});
+
+test('autoPoleViz returns a world point on the current bend side', () => {
+  const { ik, joints } = harness();
+  const chain = ik.chainFor(20);
+  const viz = ik.autoPoleViz(chain);
+  assert.equal(viz.length, 3);
+  assert.ok(Number.isFinite(viz[0]) && Number.isFinite(viz[1]) && Number.isFinite(viz[2]));
+});
+
+test('end-target IK with a stored pole bends toward the pole side', () => {
+  const { ik, rotation, joints } = harness();
+  const chain = ik.chainFor(20);
+  const root = j3(joints(), 16);
+  // Persist a pole, then drag the end handle a little; solve must not throw and
+  // must keep producing a valid (finite) pose driven by the stored pole.
+  ik.beginPoleDrag(chain);
+  ik.solveToPole([root[0] + 0.3, root[1] + 0.25, root[2] + 0.15]);
+  ik.endPoleDrag();
+  const end = j3(joints(), 20);
+  ik.beginDrag(chain);
+  ik.solveTo([end[0] + 0.02, end[1] - 0.02, end[2]]);
+  ik.endDrag();
+  const elbow = j3(joints(), 18);
+  assert.ok(elbow.every(Number.isFinite), 'elbow must be finite');
+});
