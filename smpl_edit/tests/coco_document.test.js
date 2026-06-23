@@ -55,12 +55,49 @@ test('deleteAnnotation removes the entry but keeps the image', () => {
   assert.equal(out.images.length, 2);
 });
 
-test('setAnnotation on an empty frame creates an entry with defaults', () => {
+test('setAnnotation on an empty frame creates an entry with only passed fields', () => {
   const doc = new CocoDocument(sampleDoc());
   doc.setAnnotation(1, { root_pos: [0, 0, -4] });
   const a = doc.serialize().annotations.find((x) => x.image_id === 1);
   assert.ok(a);
   assert.equal(a.image_id, 1);
-  assert.equal(a.keypoints.length, 156);
+  assert.deepEqual(a.root_pos, [0, 0, -4]);
+  assert.equal('body_pose' in a, false);    // not auto-filled anymore
+  assert.equal('keypoints' in a, false);
+});
+
+test('setAnnotation with only bbox does NOT add SMPL pose keys', () => {
+  const doc = new CocoDocument(sampleDoc());
+  doc.setAnnotation(1, { bbox: [5, 6, 7, 8] });
+  const a = doc.serialize().annotations.find((x) => x.image_id === 1);
+  assert.deepEqual(a.bbox, [5, 6, 7, 8]);
+  assert.equal('body_pose' in a, false);
+  assert.equal('root_pos' in a, false);
+  assert.equal('betas' in a, false);
+});
+
+test('setAnnotation with only SMPL does NOT add a bbox key', () => {
+  const doc = new CocoDocument(sampleDoc());
+  doc.setAnnotation(1, { root_pos: [0, 0, -4], root_rota: [0, 0, 0],
+    body_pose: Array(63).fill(0), betas: Array(10).fill(0) });
+  const a = doc.serialize().annotations.find((x) => x.image_id === 1);
   assert.equal(a.body_pose.length, 63);
+  assert.equal('bbox' in a, false);
+});
+
+test('hasSmpl / hasBbox reflect independent presence', () => {
+  const doc = new CocoDocument(sampleDoc());
+  doc.setAnnotation(1, { bbox: [5, 6, 7, 8] });
+  assert.equal(doc.hasBbox(1), true);
+  assert.equal(doc.hasSmpl(1), false);
+  doc.setAnnotation(1, { body_pose: Array(63).fill(0) });
+  assert.equal(doc.hasSmpl(1), true);
+  assert.equal(doc.hasBbox(1), true);     // bbox still there
+});
+
+test('hasBbox is false for the [0,0,0,0] sentinel and for missing key', () => {
+  const doc = new CocoDocument(sampleDoc());
+  assert.equal(doc.hasBbox(1), false);              // no annotation
+  doc.setAnnotation(1, { bbox: [0, 0, 0, 0] });
+  assert.equal(doc.hasBbox(1), false);              // sentinel = no box
 });
