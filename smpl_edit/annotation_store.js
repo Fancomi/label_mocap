@@ -15,7 +15,12 @@ export class AnnotationStore {
   currentFrame() { return this._frame; }
   currentImageId() { return this._ids[this._frame]; }
   current() { return this._doc.getAnnotation(this.currentImageId()); }
-  hasData() { return this.current() !== null; }
+  hasData() {
+    const id = this.currentImageId();
+    return this._doc.hasBbox(id) || this._doc.hasSmpl(id);
+  }
+  hasSmpl() { return this._doc.hasSmpl(this.currentImageId()); }
+  hasBbox() { return this._doc.hasBbox(this.currentImageId()); }
 
   _snapshot() {
     const a = this.current();
@@ -55,6 +60,14 @@ export class AnnotationStore {
   }
 
   deleteCurrent() { this._txn((id) => this._doc.deleteAnnotation(id)); }
+
+  // 仅写 bbox(不碰 SMPL),一个 undo 单元。画框 / 云端给框用。
+  setBbox(bbox) { this._txn((id) => this._doc.setAnnotation(id, { bbox })); }
+
+  // 覆盖云端返回的 bbox + SMPL,一个 undo 单元。当前帧已有标注时直接覆盖。
+  applyCloudResult({ bbox, root_pos, root_rota, body_pose, betas }) {
+    this._txn((id) => this._doc.setAnnotation(id, { bbox, root_pos, root_rota, body_pose, betas }));
+  }
 
   // Drag transaction: begin → applyFields* → commit (one undo unit).
   // _pendingBefore is undefined when no transaction is open; a captured
