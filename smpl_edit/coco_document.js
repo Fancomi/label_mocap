@@ -1,6 +1,5 @@
 // smpl_edit/coco_document.js
 const EDITABLE = ['bbox', 'root_pos', 'root_rota', 'body_pose', 'betas', 'keypoints', 'occlution_joint'];
-const SMPL_KEYS = ['root_pos', 'root_rota', 'body_pose', 'betas'];
 
 // 空骨架:只含恒有的元字段。bbox / SMPL 位姿都不预填 —— 由 setAnnotation 按
 // 实际传入的 fields 决定,从而让「仅 bbox」「仅 SMPL」成为可表达的合法状态。
@@ -33,10 +32,10 @@ export class CocoDocument {
   imageInfo(id) { return (this._raw.images ?? []).find((im) => im.id === id) ?? null; }
   getAnnotation(imageId) { return this._byImageId.get(imageId) ?? null; }
 
-  // SMPL 是否存在 = 位姿键是否存在(以 SMPL_KEYS[2]=body_pose 为代表键),而非「是否全零」。
+  // SMPL 是否存在 = 位姿键 body_pose 是否存在(代表键),而非「是否全零」。
   hasSmpl(imageId) {
     const a = this._byImageId.get(imageId);
-    return !!a && SMPL_KEYS[2] in a;
+    return !!a && 'body_pose' in a;
   }
 
   hasBbox(imageId) {
