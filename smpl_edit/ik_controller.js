@@ -30,6 +30,7 @@ export class IKController {
     this._getParents = getParents || (() => null);
     this._onEdit = onEdit;
     this._ref = null; // 拖拽参考快照(beginDrag 设置,endDrag 清空)
+    this._lastPoleWorld = null;
   }
 
   // smplJointIdx 是否可 IK 拖动的末端;是则返回其链,否则 null。
@@ -73,7 +74,7 @@ export class IKController {
     };
   }
 
-  endDrag() { this._ref = null; }
+  endDrag() { this._ref = null; this._lastPoleWorld = null; }
 
   // 拖拽中:把末端拖到世界点 target。从冻结参考绝对求解,写回肩/肘局部四元数。
   // 弯曲方向 = sign·(铰链轴 × 目标方向),恒在生理一侧 → 不反关节;
@@ -109,36 +110,34 @@ export class IKController {
     this._onEdit();
   }
 
-  // ── Pole-vector drag ──────────────────────────────────────────────────
-  // End-locked, plane-only: the limb rotates rigidly about the root→end axis.
-  // Only the root joint (shoulder/hip) local quat changes; mid/end locals are
-  // left untouched, so FK carries them rigidly. This is the analytic form of
-  // "re-solve with new pole while end stays fixed".
+  // ── 极向量拖拽 ──────────────────────────────────────────────────────────
+  // 末端锁定、仅旋转弯折平面:整条肢体绕(根→末端)轴刚性旋转。只改根关节(肩/髋)
+  // 局部四元数;中/末端局部保持不变,由 FK 刚性带动。这是「末端固定、换极向量
+  // 重解」的解析形式。
   beginPoleDrag(chain) {
-    this.beginDrag(chain); // reuse the same frozen reference (root/upper0/dir/parentShoulderWorld)
-    if (this._ref) this._ref.poleDrag = true;
+    this.beginDrag(chain); // 复用同一份冻结参考(根/upper0/dir/肩父系朝向)
   }
 
-  // worldPole: world-space point the pole handle was dragged to.
+  // worldPole:极向量手柄被拖到的世界坐标点。
   solveToPole(worldPole) {
     const ref = this._ref;
     const rot = this._getRotation();
     if (!ref || !rot) return;
 
-    const dir = norm(sub(ref.endRef, ref.root));         // frozen root→end axis
-    const oldBend = ref.perp0;                            // frozen bend direction (⊥ dir)
-    // New bend = pole projected onto the plane ⊥ dir.
-    let newBend = sub(sub(worldPole, ref.root), scale(dir, dot(sub(worldPole, ref.root), dir)));
-    if (len(newBend) < 1e-6) return;                      // pole collinear with axis → ignore this step
+    const dir = norm(sub(ref.endRef, ref.root));         // 冻结的 根→末端 轴
+    const oldBend = ref.perp0;                            // 冻结的弯折方向(⊥ dir)
+    // 新弯折方向 = 极向量在 ⊥ dir 平面上的投影。
+    const rel = sub(worldPole, ref.root);
+    let newBend = sub(rel, scale(dir, dot(rel, dir)));
+    if (len(newBend) < 1e-6) return;                      // 极向量与轴共线 → 忽略本步
     newBend = norm(newBend);
 
-    // Rigid rotation about dir that maps oldBend → newBend (both ⊥ dir, so the
-    // shortest arc between them is a pure rotation about dir).
+    // 绕 dir 把 oldBend 旋到 newBend 的刚性旋转(两者均 ⊥ dir,故最短弧为绕 dir 的纯旋转)。
     const R = shortestArcQuat(oldBend, newBend);
     const shoulderWorldNew = quatNormalize(quatMultiply(R, ref.shoulderWorld0));
     const shoulderLocal = quatNormalize(quatMultiply(quatConjugate(ref.parentShoulderWorld), shoulderWorldNew));
 
-    rot.setJointQuat(ref.chain.bodyIdx[0], shoulderLocal); // ONLY the root joint; elbow/wrist untouched
+    rot.setJointQuat(ref.chain.bodyIdx[0], shoulderLocal); // 只改根关节;肘/腕不动
     this._lastPoleWorld = worldPole.slice();
     this._getStore().applyFields(rot.toAxisAngle());
     this._onEdit();

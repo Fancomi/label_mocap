@@ -17,7 +17,7 @@ const model = await loadModelFromFiles(
 function harness() {
   // Start from a slightly bent arm so the bend plane is well-defined.
   const body = Array(63).fill(0);
-  body[15 * 3 + 1] = 0.4; // L elbow (bodyIdx 17 → 关节18) small bend on Y
+  body[15 * 3 + 1] = 0.4; // L shoulder (bodyIdx 15 → joint 16) Y rotation; gives a non-collinear arm for a well-defined perp0
   let rotation = RotationState.fromAxisAngle({ root_rota: [0, 0, 0], body_pose: body });
   let lastJoints = null, lastWorldRot = null;
   let poleStore = {}; // chainName -> [x,y,z]
