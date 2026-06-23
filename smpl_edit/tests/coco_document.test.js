@@ -64,3 +64,25 @@ test('setAnnotation on an empty frame creates an entry with defaults', () => {
   assert.equal(a.keypoints.length, 156);
   assert.equal(a.body_pose.length, 63);
 });
+
+test('pole_vectors round-trips sparsely; untouched chains stay absent', () => {
+  const doc = new CocoDocument({
+    images: [{ id: 5 }],
+    annotations: [{ id: 0, image_id: 5, bbox: [0, 0, 1, 1] }],
+  });
+  doc.setAnnotation(5, { pole_vectors: { L_Arm: [0.1, 0.2, 0.3] } });
+  const out = doc.serialize();
+  const a = out.annotations.find((x) => x.image_id === 5);
+  assert.deepEqual(a.pole_vectors, { L_Arm: [0.1, 0.2, 0.3] });
+  assert.equal('R_Arm' in a.pole_vectors, false);
+});
+
+test('annotation with no pole_vectors serializes without the field', () => {
+  const doc = new CocoDocument({
+    images: [{ id: 7 }],
+    annotations: [{ id: 1, image_id: 7, bbox: [0, 0, 1, 1] }],
+  });
+  doc.setAnnotation(7, { root_rota: [0, 0, 0] });
+  const a = doc.serialize().annotations.find((x) => x.image_id === 7);
+  assert.equal('pole_vectors' in a, false);
+});

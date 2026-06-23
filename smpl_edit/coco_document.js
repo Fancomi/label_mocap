@@ -1,5 +1,5 @@
 // smpl_edit/coco_document.js
-const EDITABLE = ['bbox', 'root_pos', 'root_rota', 'body_pose', 'betas', 'keypoints', 'occlution_joint'];
+const EDITABLE = ['bbox', 'root_pos', 'root_rota', 'body_pose', 'betas', 'keypoints', 'occlution_joint', 'pole_vectors'];
 
 function defaultAnnotation(imageId, nextId) {
   return {
