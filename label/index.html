@@ -58,7 +58,6 @@
       background:#262b33; border:1px solid #3a4150; border-radius:6px;
       box-shadow:0 6px 18px rgba(0,0,0,.5); }
     #open-menu[hidden] { display:none; }
-    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -117,21 +116,10 @@
 
   <div id="stage"><canvas id="c"></canvas><div id="status">就绪 — 请先打开数据</div><div id="loading" hidden><div id="loading-text">加载模型…</div><div id="loading-track"><div id="loading-bar"></div></div></div></div>
 
-  <div id="gvhmr-overlay" hidden style="position:fixed;inset:0;z-index:100;
-       background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center">
-    <div style="background:#1b1f27;border:1px solid #3a4150;border-radius:8px;padding:22px 28px;
-         display:flex;flex-direction:column;gap:14px;align-items:center;min-width:220px">
-      <div id="gvhmr-msg" style="color:#9ecbff">云端推理中…</div>
-      <div class="spinner" style="width:26px;height:26px;border:3px solid #3a4150;
-           border-top-color:#3399ff;border-radius:50%;animation:spin 0.9s linear infinite"></div>
-      <button id="gvhmr-cancel">取消</button>
-    </div>
-  </div>
-
   <aside id="right" class="disabled">
     <div id="tabs">
-      <button class="tab on" data-mode="pose">姿势</button>
-      <button class="tab" data-mode="root">整体</button>
+      <button class="tab on" data-mode="root">整体</button>
+      <button class="tab" data-mode="pose">姿势</button>
       <button class="tab" data-mode="bbox">框</button>
       <button class="tab" data-mode="beta">体型</button>
     </div>
@@ -182,20 +170,12 @@
     </section>
 
     <section class="tabpanel" data-mode="bbox" hidden>
-      <p class="hint">在 2D 对齐视角下:画布空白处拖拽可新建框;已有框拖四角调整;或从人体投影。</p>
-      <button id="btn-bbox-auto">⌖ 从人体投影生成框</button>
-      <div id="bbox-ro" class="status">—</div>
-      <div class="card">
-        <h3>云端 GVHMR 推理</h3>
-        <label style="font-size:11px;color:#9ab">云端地址</label>
-        <input type="text" id="gvhmr-endpoint" style="width:100%;box-sizing:border-box"
-               value="http://10.52.104.78:8666/gvhmr/infer">
-        <div class="row" style="margin-top:6px">
-          <button id="btn-gvhmr-plain">☁ 纯图推理</button>
-          <button id="btn-gvhmr-bbox">☁ 带框推理</button>
-        </div>
-        <p class="hint">纯图:服务端自动检测人体。带框:用当前框(无框时禁用)。</p>
+      <p class="hint">在 2D 对齐视角下:点「新建框」后在画面上拖出方框;已有框可拖四角调整;或从人体投影。</p>
+      <div class="row">
+        <button id="btn-bbox-new">＋ 新建框</button>
+        <button id="btn-bbox-auto">⌖ 从人体投影</button>
       </div>
+      <div id="bbox-ro" class="status">—</div>
     </section>
 
     <section class="tabpanel" data-mode="beta" hidden>
