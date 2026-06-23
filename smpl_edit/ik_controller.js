@@ -108,4 +108,50 @@ export class IKController {
     this._getStore().applyFields(rot.toAxisAngle());
     this._onEdit();
   }
+
+  // ── Pole-vector drag ──────────────────────────────────────────────────
+  // End-locked, plane-only: the limb rotates rigidly about the root→end axis.
+  // Only the root joint (shoulder/hip) local quat changes; mid/end locals are
+  // left untouched, so FK carries them rigidly. This is the analytic form of
+  // "re-solve with new pole while end stays fixed".
+  beginPoleDrag(chain) {
+    this.beginDrag(chain); // reuse the same frozen reference (root/upper0/dir/parentShoulderWorld)
+    if (this._ref) this._ref.poleDrag = true;
+  }
+
+  // worldPole: world-space point the pole handle was dragged to.
+  solveToPole(worldPole) {
+    const ref = this._ref;
+    const rot = this._getRotation();
+    if (!ref || !rot) return;
+
+    const dir = norm(sub(ref.endRef, ref.root));         // frozen root→end axis
+    const oldBend = ref.perp0;                            // frozen bend direction (⊥ dir)
+    // New bend = pole projected onto the plane ⊥ dir.
+    let newBend = sub(sub(worldPole, ref.root), scale(dir, dot(sub(worldPole, ref.root), dir)));
+    if (len(newBend) < 1e-6) return;                      // pole collinear with axis → ignore this step
+    newBend = norm(newBend);
+
+    // Rigid rotation about dir that maps oldBend → newBend (both ⊥ dir, so the
+    // shortest arc between them is a pure rotation about dir).
+    const R = shortestArcQuat(oldBend, newBend);
+    const shoulderWorldNew = quatNormalize(quatMultiply(R, ref.shoulderWorld0));
+    const shoulderLocal = quatNormalize(quatMultiply(quatConjugate(ref.parentShoulderWorld), shoulderWorldNew));
+
+    rot.setJointQuat(ref.chain.bodyIdx[0], shoulderLocal); // ONLY the root joint; elbow/wrist untouched
+    this._lastPoleWorld = worldPole.slice();
+    this._getStore().applyFields(rot.toAxisAngle());
+    this._onEdit();
+  }
+
+  endPoleDrag() {
+    const ref = this._ref;
+    if (ref && this._lastPoleWorld) {
+      const cur = this._getStore().current?.() ?? null;
+      const existing = (cur && cur.pole_vectors) ? cur.pole_vectors : {};
+      this._getStore().applyFields({ pole_vectors: { ...existing, [ref.chain.name]: this._lastPoleWorld } });
+    }
+    this._lastPoleWorld = null;
+    this._ref = null;
+  }
 }
