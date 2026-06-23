@@ -41,8 +41,12 @@ export function cloudResultToFields(ann) {
 export async function inferGvhmr({ endpoint, imageB64, fileName, bbox, signal, timeoutMs = 60000 }) {
   const ctrl = new AbortController();
   const onAbort = () => ctrl.abort();
-  if (signal) signal.addEventListener('abort', onAbort, { once: true });
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  if (signal) {
+    if (signal.aborted) ctrl.abort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  }
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeoutMs);
   try {
     const resp = await fetch(endpoint || DEFAULT_ENDPOINT, {
       method: 'POST',
@@ -57,7 +61,7 @@ export async function inferGvhmr({ endpoint, imageB64, fileName, bbox, signal, t
     }
     return parseInferResponse(await resp.json());
   } catch (e) {
-    if (e.name === 'AbortError') throw new Error('已取消 / 云端超时');
+    if (e.name === 'AbortError') throw new Error(timedOut ? '云端推理超时,请重试' : '已取消');
     if (e instanceof TypeError) throw new Error('无法连接云端,请检查地址与网络');
     throw e;
   } finally {

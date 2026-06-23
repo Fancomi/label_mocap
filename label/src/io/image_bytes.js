@@ -35,5 +35,6 @@ export async function videoFrameToBase64(videoEl) {
   _frameCanvas.width = w; _frameCanvas.height = h;
   _frameCanvas.getContext('2d').drawImage(videoEl, 0, 0, w, h);
   const blob = await new Promise((res) => _frameCanvas.toBlob(res, 'image/jpeg', 0.92));
+  if (!blob) throw new Error('视频帧编码失败');
   return fileToBase64(blob);
 }
