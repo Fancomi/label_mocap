@@ -9,6 +9,7 @@
 //    (本体据此不再挂自己的单关节旋转 gizmo)。
 import { IKController } from './ik_controller.js';
 import { IKHandle } from './ik_handle.js';
+import { PoleHandle } from './pole_handle.js';
 
 // 安装 IK 插件。返回 uninstall 函数(调用即彻底拆除,不留痕迹)。
 export function installIK(ctx) {
@@ -44,6 +45,22 @@ export function installIK(ctx) {
   // 并入本体守卫聚合:模式/标签切换拦截 isDragging、相机/拾取锁 isEngaged。
   ctx.registerGuard(ikHandle);
 
+  // 极向量手柄:按下冻结参考、拖拽仅旋转弯折平面、松开把世界 pole 写入存储。
+  const poleHandle = new PoleHandle({
+    scene: ctx.scene.threeScene(),
+    camera: ctx.camera,
+    canvas: ctx.canvas,
+    controls: ctx.controls,
+    getStore: ctx.getStore,
+    onStart: () => {
+      const chain = ikController.chainFor((ctx.getUI()?.selectedJoint ?? -1) + 1);
+      if (chain) ikController.beginPoleDrag(chain);
+    },
+    onDrag: (worldPos) => ikController.solveToPole(worldPos),
+    onEnd: () => ikController.endPoleDrag(),
+  });
+  ctx.registerGuard(poleHandle);
+
   // 开关按钮:本体默认隐藏(index.html 带 hidden),install 时显形。
   ctx.toggleButton.hidden = false;
   const onToggleClick = () => {
@@ -70,9 +87,12 @@ export function installIK(ctx) {
     const ikChain = ikEnabled ? ikController.chainFor((sel ?? -1) + 1) : null;
     if (!ctx.isPlaying() && ui.mode === 'pose' && ikChain && ctx.getLastJoints()) {
       ikHandle.attach(ctx.scene.jointWorldPosition(sel + 1));
+      const stored = ikController.storedPole(ikChain.name);
+      poleHandle.attach(stored ?? ikController.autoPoleViz(ikChain));
       return true; // 接管:本体不要再挂单关节旋转 gizmo
     }
     ikHandle.detach();
+    poleHandle.detach();
     return false;
   }
   ctx.registerSyncHook(syncHook);
@@ -83,6 +103,7 @@ export function installIK(ctx) {
     ctx.toggleButton.classList.remove('on');
     ctx.toggleButton.hidden = true;
     ikHandle.detach();
+    poleHandle.detach();
     ctx.jointGridButtons.forEach((b) => { b.disabled = false; b.classList.remove('ik'); });
   };
 }
