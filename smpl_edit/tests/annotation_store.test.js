@@ -108,15 +108,25 @@ test('setBbox is one undo unit and does not touch SMPL on an existing frame', ()
   assert.deepEqual(s.current().bbox, [1, 1, 1, 1]);
 });
 
-test('applyCloudResult overwrites bbox+SMPL as a single undo unit', () => {
+test('applyCloudResult writes SMPL as a single undo unit (does not touch bbox)', () => {
   const s = new AnnotationStore(doc());
   s.setFrame(1);
-  s.applyCloudResult({ bbox: [2, 2, 2, 2], root_pos: [1, 1, 1],
+  s.applyCloudResult({ root_pos: [1, 1, 1],
     root_rota: [0, 0, 0], body_pose: Array(63).fill(0.1), betas: Array(10).fill(0.2) });
   assert.equal(s.hasSmpl(), true);
   assert.equal(s.current().body_pose[0], 0.1);
   s.undo();
   assert.equal(s.hasData(), false);    // back to empty frame
+});
+
+test('applyCloudResult preserves a pre-existing bbox (cloud must not overwrite the user box)', () => {
+  const s = new AnnotationStore(doc());
+  s.setFrame(1);
+  s.setBbox([5, 6, 7, 8]);             // user-drawn box
+  s.applyCloudResult({ root_pos: [1, 1, 1], root_rota: [0, 0, 0],
+    body_pose: Array(63).fill(0.1), betas: Array(10).fill(0.2) });
+  assert.deepEqual(s.current().bbox, [5, 6, 7, 8]);   // untouched
+  assert.equal(s.hasSmpl(), true);
 });
 
 test('hasData is true when only a bbox exists', () => {

@@ -64,9 +64,11 @@ export class AnnotationStore {
   // 仅写 bbox(不碰 SMPL),一个 undo 单元。画框 / 云端给框用。
   setBbox(bbox) { this._txn((id) => this._doc.setAnnotation(id, { bbox })); }
 
-  // 覆盖云端返回的 bbox + SMPL,一个 undo 单元。当前帧已有标注时直接覆盖。
-  applyCloudResult({ bbox, root_pos, root_rota, body_pose, betas }) {
-    this._txn((id) => this._doc.setAnnotation(id, { bbox, root_pos, root_rota, body_pose, betas }));
+  // 覆盖云端返回的 SMPL,一个 undo 单元。当前帧已有标注时直接覆盖。
+  // 只写传入的键 —— 调用方(云端)只传 SMPL 四件套,不传 bbox,故 bbox 不受影响
+  // (bbox⊥SMPL:带框推理时用户的框是输入,应保留;纯图推理不应凭空造框)。
+  applyCloudResult(fields) {
+    this._txn((id) => this._doc.setAnnotation(id, fields));
   }
 
   // Drag transaction: begin → applyFields* → commit (one undo unit).

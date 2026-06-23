@@ -5,10 +5,15 @@
 export const DEFAULT_ENDPOINT = 'http://10.52.104.78:8666/gvhmr/infer';
 
 // 链路1: 仅 image_b64(+file_name);链路2: 追加 bbox=[x,y,w,h]。
-export function buildPayload({ imageB64, fileName, bbox }) {
+// camK(可选 {fx,fy,cx,cy}):传给云端,令其在查看器同一内参下出结果 —— 这样
+// 返回的人体与背景图共用一个焦距,不会大小错位(否则云端自估内参会与背景失配)。
+export function buildPayload({ imageB64, fileName, bbox, camK }) {
   const p = { image_b64: imageB64 };
   if (fileName) p.file_name = fileName;
   if (Array.isArray(bbox) && bbox.length === 4) p.bbox = bbox.slice();
+  if (camK && ['fx', 'fy', 'cx', 'cy'].every((k) => Number.isFinite(camK[k]))) {
+    p.cam_K = { fx: camK.fx, fy: camK.fy, cx: camK.cx, cy: camK.cy };
+  }
   return p;
 }
 
@@ -35,16 +40,19 @@ export function parseInferResponse(doc) {
   return { ann, camK };
 }
 
-// 映射成 AnnotationStore.applyCloudResult 的字段对象(只取五个可编辑字段)。
+// 映射成 AnnotationStore.applyCloudResult 的字段对象。**只取 SMPL 四件套,不含 bbox**:
+// bbox 与 SMPL 独立(见数据模型),且云端回传的 bbox 是它推理用的 crop 区域
+// (base_enlarge=1.2 放大并正方形化),不是用户的紧框 —— 回写它会把用户画的框撑大。
+// 带框推理时框是输入、应原样保留;纯图推理后框由用户/投影按钮控制。
 export function cloudResultToFields(ann) {
   return {
-    bbox: ann.bbox, root_pos: ann.root_pos, root_rota: ann.root_rota,
+    root_pos: ann.root_pos, root_rota: ann.root_rota,
     body_pose: ann.body_pose, betas: ann.betas,
   };
 }
 
 // 网络 I/O(浏览器验证):POST JSON,AbortController 控超时/取消,错误归类为中文。
-export async function inferGvhmr({ endpoint, imageB64, fileName, bbox, signal, timeoutMs = 60000 }) {
+export async function inferGvhmr({ endpoint, imageB64, fileName, bbox, camK, signal, timeoutMs = 60000 }) {
   const ctrl = new AbortController();
   const onAbort = () => ctrl.abort();
   if (signal) {
@@ -57,7 +65,7 @@ export async function inferGvhmr({ endpoint, imageB64, fileName, bbox, signal, t
     const resp = await fetch(endpoint || DEFAULT_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildPayload({ imageB64, fileName, bbox })),
+      body: JSON.stringify(buildPayload({ imageB64, fileName, bbox, camK })),
       signal: ctrl.signal,
     });
     if (!resp.ok) {

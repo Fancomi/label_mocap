@@ -123,6 +123,24 @@ export class CameraModes {
     this.setIntrinsics(this.K);
   }
 
+  /** Adopt the loaded dataset's real image geometry as the factory baseline.
+   *  Sets image dims and a centered principal point (cx=W/2, cy=H/2); keeps the
+   *  current focal unless a finite fx/fy is given. This is the single place the
+   *  camera learns the actual image size — without it everything assumes the
+   *  hardcoded 1920x1080, which puts the principal point at the wrong pixel for
+   *  any other resolution (person drifts toward the top-left, appears small).
+   *  Becomes the reset baseline (_meta_*), so resetIntrinsics returns here. */
+  configureForImage({ width, height, fx, fy }) {
+    if (Number.isFinite(width) && width > 0) { this._meta_W = width; this.imageW = width; }
+    if (Number.isFinite(height) && height > 0) { this._meta_H = height; this.imageH = height; }
+    if (Number.isFinite(fx)) this._meta_K.fx = fx;
+    if (Number.isFinite(fy)) this._meta_K.fy = fy;
+    this._meta_K.cx = this.imageW / 2;
+    this._meta_K.cy = this.imageH / 2;
+    this.K = { ...this._meta_K };
+    this.setIntrinsics(this.K);
+  }
+
   effectiveAspect() { return this._effectiveAspect(); }
 
   // ── 2D 缩放/平移 ─────────────────────────────────────────────────────────
