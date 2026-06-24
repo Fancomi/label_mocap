@@ -26,6 +26,7 @@ export class PcdScene {
     this._scene.add(new THREE.AmbientLight(0xffffff, 0.2));
 
     this._cam = null;
+    this._manager = null;
     this._mesh = null; this._jointsGroup = null; this._bonesGroup = null;
     this._lastJoints = null; this._personVisible = false;
     this._flags = { points: true, mesh: true, joints: true, bones: true, grid: true, axes: false };
@@ -40,6 +41,7 @@ export class PcdScene {
 
   threeScene() { return this._scene; }
   setCamera(cam) { this._cam = cam; }
+  setManager(mgr) { this._manager = mgr; }
 
   // 地面网格朝向随「上轴」对齐(纯视觉:网格只是地平面参考,不旋转任何数据/SMPL)。
   // GridHelper 默认在 XZ 平面(法线 +Y)。Z-up → 绕 X 转 90° 使其落在 XY 平面;
@@ -128,11 +130,13 @@ export class PcdScene {
     this._canvas.style.width = `${w}px`; this._canvas.style.height = `${h}px`;
     this._renderer.setSize(w, h, false);
     this._cam.resize(w, h);
+    if (this._manager) this._manager.resize();
   }
 
   render() {
-    if (!this._cam) return;
     this._applyVisibility();
+    if (this._manager) { this._manager.render(this._renderer, this._scene); return; }
+    if (!this._cam) return;
     this._cam.update();
     this._renderer.render(this._scene, this._cam.camera);
   }
