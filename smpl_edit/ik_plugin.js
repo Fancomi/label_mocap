@@ -10,10 +10,18 @@
 import { IKController } from './ik_controller.js';
 import { IKHandle } from './ik_handle.js';
 import { PoleHandle } from './pole_handle.js';
+import { HandleSelection } from './handle_selection.js';
+import * as THREE from 'three';
 
 // 安装 IK 插件。返回 uninstall 函数(调用即彻底拆除,不留痕迹)。
 export function installIK(ctx) {
   let ikEnabled = false;
+
+  const selection = new HandleSelection();
+  let takeoverActive = false;        // syncHook 置位:当前是否处于 IK 接管态(决定切换监听是否生效)
+  const CLICK_THRESH = 4;            // 与 joint_picker 一致:位移 < 4px 视为点击
+  const _ray = new THREE.Raycaster();
+  let _down = null;                  // pointerdown 起点 {x,y,moved}
 
   // 反解控制器:依赖注入,parents 通过 getParents 按需读取(不再 setParents)。
   const ikController = new IKController({
@@ -86,16 +94,57 @@ export function installIK(ctx) {
     const sel = ui.selectedJoint;
     const ikChain = ikEnabled ? ikController.chainFor((sel ?? -1) + 1) : null;
     if (!ctx.isPlaying() && ui.mode === 'pose' && ikChain && ctx.getLastJoints()) {
+      selection.bindChain(ikChain.name);            // 换链重置回 'end',同链保持
       ikHandle.attach(ctx.scene.jointWorldPosition(sel + 1));
       const stored = ikController.storedPole(ikChain.name);
       poleHandle.attach(stored ?? ikController.autoPoleViz(ikChain));
+      // 单活动:按 selection 决定谁出箭头、谁作占位标识。attach 后再 setActive(setActive 为准)。
+      const active = selection.active();
+      ikHandle.setActive(active === 'end');
+      poleHandle.setActive(active === 'pole');
+      takeoverActive = true;
       return true; // 接管:本体不要再挂单关节旋转 gizmo
     }
+    selection.reset();
+    takeoverActive = false;
     ikHandle.detach();
     poleHandle.detach();
     return false;
   }
   ctx.registerSyncHook(syncHook);
+
+  // 切换拾取:在画布上自挂一条轻量 pointerdown/up 监听,只 raycast 两个占位标识 mesh
+  // (末端立方体 / 极向量球)。命中且未拖拽 → 按被点 mesh 的身份设 active 并重挂。
+  // 不复用 JointPicker:占位 mesh 不是关节球,且活动柄存在时会落入 engage 闸。
+  const canvas = ctx.canvas;
+  const onPointerDown = (e) => { _down = { x: e.clientX, y: e.clientY, moved: false }; };
+  const onPointerMove = (e) => {
+    if (!_down || _down.moved) return;
+    if (Math.hypot(e.clientX - _down.x, e.clientY - _down.y) > CLICK_THRESH) _down.moved = true;
+  };
+  const onPointerUp = (e) => {
+    const down = _down; _down = null;
+    if (!takeoverActive || !down || down.moved) return;           // 非接管态 / 拖拽 → 不切换
+    if (ikHandle.isDragging() || poleHandle.isDragging()) return; // 正在拖箭头 → 不切换
+    const rect = canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    _ray.setFromCamera(ndc, ctx.camera);
+    const endMarker = ikHandle.markerMesh();
+    const poleMarker = poleHandle.markerMesh();
+    const hits = _ray.intersectObjects([endMarker, poleMarker], false);
+    if (!hits.length) return;
+    const obj = hits[0].object;
+    if (obj === endMarker) selection.select('end');
+    else if (obj === poleMarker) selection.select('pole');
+    else return;
+    ctx.requestSync(); // 重挂:syncHook 据 selection 重新 setActive
+  };
+  canvas.addEventListener('pointerdown', onPointerDown);
+  canvas.addEventListener('pointermove', onPointerMove);
+  canvas.addEventListener('pointerup', onPointerUp);
 
   // 卸载:移除监听、隐藏按钮、detach 手柄、复位 joint-grid。彻底拆除不留痕迹。
   return function uninstallIK() {
@@ -104,6 +153,11 @@ export function installIK(ctx) {
     ctx.toggleButton.hidden = true;
     ikHandle.detach();
     poleHandle.detach();
+    canvas.removeEventListener('pointerdown', onPointerDown);
+    canvas.removeEventListener('pointermove', onPointerMove);
+    canvas.removeEventListener('pointerup', onPointerUp);
+    selection.reset();
+    takeoverActive = false;
     ctx.jointGridButtons.forEach((b) => { b.disabled = false; b.classList.remove('ik'); });
   };
 }
