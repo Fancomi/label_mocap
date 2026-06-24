@@ -27,6 +27,19 @@ export class ViewportManager {
   viewport(name) { return this._vps.get(name); }
   visibleRects() { return this._rects; }
 
+  // active 视口在 canvas 上的 CSS 像素子矩形(用于把指针重映射到该视口 NDC)。
+  activeCssRect() {
+    const cr = this._canvas.getBoundingClientRect();
+    const r = this._rects.find((x) => x.name === this._active) || { x: 0, y: 0, w: 1, h: 1 };
+    return { left: cr.left + r.x * cr.width, top: cr.top + r.y * cr.height, width: r.w * cr.width, height: r.h * cr.height };
+  }
+
+  // 指针事件 → active 视口的 NDC[-1,1]。供 JointPicker 与 TransformControls 共用。
+  pointerToNdc(e) {
+    const r = this.activeCssRect();
+    return { x: ((e.clientX - r.left) / r.width) * 2 - 1, y: -((e.clientY - r.top) / r.height) * 2 + 1 };
+  }
+
   _routePointer(e) {
     const r = this._canvas.getBoundingClientRect();
     const nx = (e.clientX - r.left) / r.width;

@@ -324,10 +324,17 @@ function boot3() {
     onPick: (smpl) => { setPlaying(false); if (smpl === 0) ui.setMode('root'); else if (smpl >= 1 && smpl <= 21) ui.selectJoint(smpl - 1); },
     onMiss: () => { if (ui && ui.mode === 'pose') ui.clearSelection(); },
     canPick: () => !engageGuards.some((g) => g.isEngaged()),
+    getNdc: (e) => mgr.pointerToNdc(e), // 多视口:按 active 视口子矩形算 NDC(单视口时等价整块 canvas)
   });
   rootHandle = new RootHandle({ scene: scene.threeScene(), camera: cam.camera, canvas: $('c'), controls: cam.controls, getMode: () => cam.mode, getStore: () => store, getRotation: () => rotation, onEdit: applyAnnotation });
   poseGizmo = new PoseGizmo({ scene: scene.threeScene(), camera: cam.camera, canvas: $('c'), controls: cam.controls, getMode: () => cam.mode, getRotation: () => rotation, getStore: () => store, onEdit: applyAnnotation });
   dragGuards.push(poseGizmo, rootHandle); engageGuards.push(poseGizmo, rootHandle);
+
+  // 多视口:把指针按 active 视口子矩形重映射成 NDC(覆写 TC 的整块-canvas getPointer)。
+  // mapper 只依赖 mgr,不随 active 相机变化,固定设一次即可。
+  const ndcMapper = (e) => mgr.pointerToNdc(e);
+  poseGizmo.setNdcMapper(ndcMapper);
+  rootHandle.setNdcMapper(ndcMapper);
 
   // active 视口切换时把新相机推给各交互组件(此刻三件套已建好,可安全注册)。
   camConsumers.push((c) => poseGizmo.setCamera(c));
@@ -375,6 +382,7 @@ function boot4() {
       registerSyncHook: (fn) => syncHooks.push(fn),
       registerGuard: (g) => { dragGuards.push(g); engageGuards.push(g); },
       registerCameraConsumer: (fn) => camConsumers.push(fn),
+      ndcMapper: (e) => mgr.pointerToNdc(e), // 多视口:IK 两柄的指针→NDC 重映射(单视口等价整块 canvas)
     });
   }
 

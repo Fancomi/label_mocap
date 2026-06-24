@@ -72,6 +72,13 @@ export class RootHandle {
 
   setCamera(camera) { if (camera && this._tc) this._tc.camera = camera; }
 
+  // 多视口:用 active 视口子矩形把指针重映射为 NDC(覆写 vendored TransformControls 的整块-canvas getPointer)。
+  setNdcMapper(fn) {
+    if (!this._tc) return;
+    if (!fn) return;
+    this._tc._getPointer = (event) => { const p = fn(event); return { x: p.x, y: p.y, button: event.button }; };
+  }
+
   // isEngaged: hover OR drag — used by the render loop to lock orbit early.
   // isDragging: real drag only — used to block mode/tab switches. `axis` (hover)
   // can stick if a pointerleave is missed; `dragging` is toggled by down/up so
