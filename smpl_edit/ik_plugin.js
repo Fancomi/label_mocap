@@ -22,6 +22,7 @@ export function installIK(ctx) {
   const CLICK_THRESH = 4;            // 与 joint_picker 一致:位移 < 4px 视为点击
   const _ray = new THREE.Raycaster();
   let _down = null;                  // pointerdown 起点 {x,y,moved}
+  let _markerHit = false;            // pointerdown 命中占位标识 mesh → 经 guard 让 JointPicker 本次点击不清选
 
   // 反解控制器:依赖注入,parents 通过 getParents 按需读取(不再 setParents)。
   const ikController = new IKController({
@@ -69,6 +70,10 @@ export function installIK(ctx) {
   });
   ctx.registerGuard(poleHandle);
 
+  // 占位标识点击守卫:按在 marker 上的瞬间 isEngaged=true,使 JointPicker 的 canPick 失效,
+  // 避免它把「点 marker」当作 miss 而清掉关节选中(否则切换会被它抢先清选打断)。
+  ctx.registerGuard({ isEngaged: () => _markerHit, isDragging: () => false });
+
   // 开关按钮:本体默认隐藏(index.html 带 hidden),install 时显形。
   ctx.toggleButton.hidden = false;
   const onToggleClick = () => {
@@ -113,32 +118,38 @@ export function installIK(ctx) {
   }
   ctx.registerSyncHook(syncHook);
 
-  // 切换拾取:在画布上自挂一条轻量 pointerdown/up 监听,只 raycast 两个占位标识 mesh
-  // (末端立方体 / 极向量球)。命中且未拖拽 → 按被点 mesh 的身份设 active 并重挂。
-  // 不复用 JointPicker:占位 mesh 不是关节球,且活动柄存在时会落入 engage 闸。
+  // 切换拾取:在画布上自挂轻量 pointerdown/move/up。pointerdown 时 raycast 两个占位标识 mesh
+  // (末端立方体 / 极向量球):命中则置 _markerHit —— 既用于 pointerup 切换,也经上面注册的
+  // guard 让 JointPicker 本次点击 canPick 失效(不把点 marker 当 miss 而清选)。
+  // 不复用 JointPicker:占位 mesh 不是关节球,且语义(切换 vs 选关节)不同。
   const canvas = ctx.canvas;
-  const onPointerDown = (e) => { _down = { x: e.clientX, y: e.clientY, moved: false }; };
-  const onPointerMove = (e) => {
-    if (!_down || _down.moved) return;
-    if (Math.hypot(e.clientX - _down.x, e.clientY - _down.y) > CLICK_THRESH) _down.moved = true;
-  };
-  const onPointerUp = (e) => {
-    const down = _down; _down = null;
-    if (!takeoverActive || !down || down.moved) return;           // 非接管态 / 拖拽 → 不切换
-    if (ikHandle.isDragging() || poleHandle.isDragging()) return; // 正在拖箭头 → 不切换
+  const _markerUnder = (e) => {
     const rect = canvas.getBoundingClientRect();
     const ndc = new THREE.Vector2(
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -((e.clientY - rect.top) / rect.height) * 2 + 1,
     );
     _ray.setFromCamera(ndc, ctx.camera);
-    const endMarker = ikHandle.markerMesh();
-    const poleMarker = poleHandle.markerMesh();
-    const hits = _ray.intersectObjects([endMarker, poleMarker], false);
-    if (!hits.length) return;
-    const obj = hits[0].object;
-    if (obj === endMarker) selection.select('end');
-    else if (obj === poleMarker) selection.select('pole');
+    const hits = _ray.intersectObjects([ikHandle.markerMesh(), poleHandle.markerMesh()], false);
+    return hits.length ? hits[0].object : null;
+  };
+  const onPointerDown = (e) => {
+    _down = { x: e.clientX, y: e.clientY, moved: false };
+    // 仅在 IK 接管态判定 marker 命中;_markerHit 在本次手势的 pointerup 末尾清除。
+    _markerHit = takeoverActive ? !!_markerUnder(e) : false;
+  };
+  const onPointerMove = (e) => {
+    if (!_down || _down.moved) return;
+    if (Math.hypot(e.clientX - _down.x, e.clientY - _down.y) > CLICK_THRESH) _down.moved = true;
+  };
+  const onPointerUp = (e) => {
+    const down = _down; _down = null;
+    const hit = _markerHit; _markerHit = false;
+    if (!takeoverActive || !down || down.moved || !hit) return;   // 非接管/拖拽/未按在 marker → 不切换
+    if (ikHandle.isDragging() || poleHandle.isDragging()) return; // 正在拖箭头 → 不切换
+    const obj = _markerUnder(e);
+    if (obj === ikHandle.markerMesh()) selection.select('end');
+    else if (obj === poleHandle.markerMesh()) selection.select('pole');
     else return;
     ctx.requestSync(); // 重挂:syncHook 据 selection 重新 setActive
   };
@@ -158,6 +169,7 @@ export function installIK(ctx) {
     canvas.removeEventListener('pointerup', onPointerUp);
     selection.reset();
     takeoverActive = false;
+    _markerHit = false;
     ctx.jointGridButtons.forEach((b) => { b.disabled = false; b.classList.remove('ik'); });
   };
 }
