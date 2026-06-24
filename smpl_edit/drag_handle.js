@@ -77,6 +77,8 @@ export class DragHandle {
 
   update() { /* TransformControls 自动跟随相机更新 */ }
 
+  setCamera(camera) { if (camera && this._tc) this._tc.camera = camera; }
+
   // isEngaged:悬停或拖拽(渲染循环据此提早锁住 OrbitControls);
   // isDragging:仅真正拖拽(用于拦截模式/标签切换)。
   isEngaged() { return !!(this._tc && (this._tc.dragging || this._tc.axis != null)); }

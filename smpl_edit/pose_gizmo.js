@@ -51,6 +51,8 @@ export class PoseGizmo {
   isEngaged() { return !!(this._tc && (this._tc.dragging || this._tc.axis != null)); }
   isDragging() { return !!(this._tc && this._tc.dragging); }
 
+  setCamera(camera) { if (camera && this._tc) this._tc.camera = camera; }
+
   _setVisible(v) {
     const helper = this._tc.getHelper ? this._tc.getHelper() : this._tc;
     helper.visible = v;

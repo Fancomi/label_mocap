@@ -28,6 +28,8 @@ export class JointPicker {
 
   setEnabled(v) { this._enabled = v; }
 
+  setCamera(camera) { if (camera) this._camera = camera; }
+
   _onPointerDown(e) {
     if (!this._enabled) { this._start = null; return; }
     // 仅记录起点,不在按下当场 raycast(否则会与平移拖拽竞争、误清选中)。

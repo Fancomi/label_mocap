@@ -70,6 +70,8 @@ export class RootHandle {
 
   update() { /* TransformControls auto-updates against the camera */ }
 
+  setCamera(camera) { if (camera && this._tc) this._tc.camera = camera; }
+
   // isEngaged: hover OR drag — used by the render loop to lock orbit early.
   // isDragging: real drag only — used to block mode/tab switches. `axis` (hover)
   // can stick if a pointerleave is missed; `dragging` is toggled by down/up so
