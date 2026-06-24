@@ -60,6 +60,16 @@ export class PoleHandle {
     this._attached = false;
   }
 
+  // 活动 = 出三轴箭头(青球作头标);非活动 = 藏箭头并禁用(青球仍在,作占位标识)。
+  setActive(active) {
+    this._tc.visible = active;
+    this._tc.enabled = active;
+    this._sphere.visible = true; // 青球两态都显示:活动时是头标,非活动时是占位标识
+  }
+
+  // 供插件做切换拾取:返回占位标识 mesh(青球)。
+  markerMesh() { return this._sphere; }
+
   update() { /* TransformControls 自动跟随相机更新 */ }
 
   isEngaged() { return !!(this._tc && (this._tc.dragging || this._tc.axis != null)); }
