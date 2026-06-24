@@ -114,6 +114,14 @@ export class PcdScene {
   setPersonVisible(v) { this._personVisible = v; this._applyVisibility(); }
   setFlag(key, v) { this._flags[key] = v; this._applyVisibility(); }
 
+  setMeshOpacity(v) {
+    if (!this._mesh) return;
+    const m = this._mesh.material;
+    if (v >= 1) { m.transparent = false; m.opacity = 1; m.depthWrite = true; }
+    else { m.transparent = true; m.opacity = Math.max(0.05, v); m.depthWrite = false; }
+    m.needsUpdate = true;
+  }
+
   _applyVisibility() {
     this.pointCloud.setVisible(this._flags.points);
     if (this._mesh) this._mesh.visible = this._flags.mesh && this._personVisible;

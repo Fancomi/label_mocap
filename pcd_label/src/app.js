@@ -238,6 +238,7 @@ function boot2() {
   $('color-mode').addEventListener('change', (e) => scene.pointCloud.setColorMode(e.target.value));
   $('decimation').addEventListener('input', (e) => scene.pointCloud.setDecimation(+e.target.value));
   $('point-size').addEventListener('input', (e) => scene.pointCloud.setPointSize(+e.target.value));
+  $('mesh-opacity').addEventListener('input', (e) => scene.setMeshOpacity(+e.target.value));
   populateFrontAxis();
   $('axis-up').addEventListener('change', (e) => { axisUp = e.target.value; populateFrontAxis(); applyAxisFrame(false); });
   $('axis-front').addEventListener('change', (e) => { axisFront = e.target.value; applyAxisFrame(false); });

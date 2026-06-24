@@ -120,6 +120,14 @@ export class LabelScene {
 
   setFlag(key, value) { this._flags[key] = value; this._applyVisibility(); }
 
+  setMeshOpacity(v) {
+    if (!this._mesh) return;
+    const m = this._mesh.material;
+    if (v >= 1) { m.transparent = false; m.opacity = 1; m.depthWrite = true; }
+    else { m.transparent = true; m.opacity = Math.max(0.05, v); m.depthWrite = false; }
+    m.needsUpdate = true;
+  }
+
   // Person-visibility gate independent of display flags. Hides the posed
   // mesh/joints/bones for empty frames (e.g. after deleting an annotation).
   setPersonVisible(v) { this._personVisible = v; this._applyVisibility(); }

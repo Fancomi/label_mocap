@@ -465,6 +465,7 @@ function boot() {
   });
   toggle('t-mesh', 'mesh'); toggle('t-points', 'points'); toggle('t-bones', 'bones');
   toggle('t-grid', 'grid'); toggle('t-axes', 'axes'); toggle('t-bg', 'bg');
+  $('mesh-opacity').addEventListener('input', (e) => scene.setMeshOpacity(+e.target.value));
 
   // --- Task 8: panels, gizmos, tabs, joint grid, canvas picking ---
   panels = new Panels({
