@@ -126,7 +126,7 @@ async function mountSequence() {
   if (raw) coco = new CocoDocument(raw);
   else coco = new CocoDocument({ images: Array.from({ length: manifest.frameCount }, (_, i) => ({ id: i })), annotations: [], categories: [] });
   store = new AnnotationStore(coco);
-  ui = new UIController({ modes: ['pose', 'root', 'beta'] });
+  ui = new UIController({ modes: ['root', 'pose', 'beta'] });
   if (syncUI) ui.onChange(syncUI);
   $('slider').max = String(Math.max(0, store.frameCount() - 1));
   $('slider').value = '0';
@@ -181,7 +181,7 @@ function boot() {
   $('btn-undo').addEventListener('click', () => { if (store) { store.undo(); showFrame(store.currentFrame()); } });
   window.addEventListener('keydown', (e) => { if (store && (e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); store.undo(); showFrame(store.currentFrame()); } });
   $('btn-save').addEventListener('click', () => saveAnnotation().catch((e) => setStatus(String(e))));
-  $('btn-reset').addEventListener('click', async () => { if (!source || !store) return; const raw = await source.readAnnotation(); if (raw) { store = new AnnotationStore(new CocoDocument(raw)); ui = new UIController({ modes: ['pose','root','beta'] }); if (syncUI) ui.onChange(syncUI); } await showFrame(Math.min(store.currentFrame(), store.frameCount() - 1)); setStatus('已重置'); });
+  $('btn-reset').addEventListener('click', async () => { if (!source || !store) return; const raw = await source.readAnnotation(); if (raw) { store = new AnnotationStore(new CocoDocument(raw)); ui = new UIController({ modes: ['root', 'pose', 'beta'] }); if (syncUI) ui.onChange(syncUI); } await showFrame(Math.min(store.currentFrame(), store.frameCount() - 1)); setStatus('已重置'); });
 
   const toggle = (id, key) => $(id).addEventListener('click', () => { const on = !$(id).classList.contains('on'); $(id).classList.toggle('on', on); scene.setFlag(key, on); });
   toggle('t-points', 'points'); toggle('t-mesh', 'mesh'); toggle('t-joints', 'joints'); toggle('t-bones', 'bones'); toggle('t-grid', 'grid'); toggle('t-axes', 'axes');
