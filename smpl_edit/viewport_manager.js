@@ -15,6 +15,7 @@ export class ViewportManager {
     this._active = 'main';
     this._rects = computeRects(this._preset, this._splits);
     canvas.addEventListener('pointerdown', (e) => this._routePointer(e), true);
+    this._syncControlsEnabled(); // 初始只开 active 视口的 controls
   }
 
   setLayout(preset) { this._preset = preset; this._recompute(); }
@@ -33,7 +34,17 @@ export class ViewportManager {
     const name = hitTest(nx, ny, this._rects);
     if (name && name !== this._active && this._vps.has(name)) {
       this._active = name;
+      this._syncControlsEnabled(); // 切 active → 只让该视口的 controls 响应本次拖拽
       this._onActiveChange(name);
+    }
+  }
+
+  // 多套 OrbitControls 共用一个 canvas:只开 active 视口的 controls,其余关掉,
+  // 否则一次拖拽会同时驱动三个视口。锁定的视口始终关。capture 阶段先于
+  // OrbitControls 的 pointerdown 执行,故同一次按下即对非 active 视口生效。
+  _syncControlsEnabled() {
+    for (const vp of this._vps.values()) {
+      vp.controls.enabled = (vp.name === this._active) && !vp.locked;
     }
   }
 
@@ -66,9 +77,12 @@ export class ViewportManager {
     renderer.setScissorTest(false);
   }
 
-  // 把当前 active 视口的 controls 启停交给守卫(gizmo engaged 时锁 active controls)。
+  // gizmo engaged 时锁 active 视口的 controls;松开后恢复。锁定视口不开。
   setActiveControlsEnabled(enabled) {
     const vp = this.activeViewport();
     if (vp && !vp.locked) vp.controls.enabled = enabled;
   }
+
+  // 锁/解锁某视口后,重新同步 controls 启停(解锁的 active 视口要恢复响应)。
+  syncControlsEnabled() { this._syncControlsEnabled(); }
 }
