@@ -1,5 +1,5 @@
 // smpl_edit/coco_document.js
-const EDITABLE = ['bbox', 'root_pos', 'root_rota', 'body_pose', 'betas', 'keypoints', 'occlution_joint'];
+const EDITABLE = ['bbox', 'root_pos', 'root_rota', 'body_pose', 'betas', 'keypoints', 'occlution_joint', 'pole_vectors'];
 
 // 空骨架:只含恒有的元字段。bbox / SMPL 位姿都不预填 —— 由 setAnnotation 按
 // 实际传入的 fields 决定,从而让「仅 bbox」「仅 SMPL」成为可表达的合法状态。

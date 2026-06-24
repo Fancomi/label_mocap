@@ -30,10 +30,30 @@ export class IKController {
     this._getParents = getParents || (() => null);
     this._onEdit = onEdit;
     this._ref = null; // 拖拽参考快照(beginDrag 设置,endDrag 清空)
+    this._lastPoleWorld = null;
   }
 
   // smplJointIdx 是否可 IK 拖动的末端;是则返回其链,否则 null。
   chainFor(smplJointIdx) { return endEffectorChain(this._getSkeleton(), smplJointIdx); }
+
+  // 当前帧已存的 pole_vectors 映射(链名→世界点);无则 {}。
+  _poleVectors() { return this._getStore().current?.()?.pole_vectors ?? {}; }
+
+  // 读取某条链已存储的世界 pole;无则 null。
+  storedPole(chainName) { return this._poleVectors()[chainName] ?? null; }
+
+  // 自动推导弯曲方向的可视化世界点(无存储 pole 时用于摆放极向量柄):
+  // chainRoot + perp0 * 上臂/大腿骨长。
+  autoPoleViz(chain) {
+    const joints = this._getLastJoints();
+    const [jRoot, jMid, jEnd] = chain.joints;
+    const root = j3(joints, jRoot), mid = j3(joints, jMid), end = j3(joints, jEnd);
+    const upper0 = sub(mid, root);
+    const dir0 = norm(sub(end, root));
+    const perp0 = norm(sub(upper0, scale(dir0, dot(upper0, dir0))));
+    const L = len(upper0);
+    return [root[0] + perp0[0] * L, root[1] + perp0[1] * L, root[2] + perp0[2] * L];
+  }
 
   // 拖拽开始:冻结参考——三关节世界坐标、肩/肘世界朝向、肩父系朝向,以及
   // 铰链轴 + 屈伸符号(防反关节)。整段拖拽都基于这份参考。
@@ -73,7 +93,7 @@ export class IKController {
     };
   }
 
-  endDrag() { this._ref = null; }
+  endDrag() { this._ref = null; this._lastPoleWorld = null; }
 
   // 拖拽中:把末端拖到世界点 target。从冻结参考绝对求解,写回肩/肘局部四元数。
   // 弯曲方向 = sign·(铰链轴 × 目标方向),恒在生理一侧 → 不反关节;
@@ -84,10 +104,20 @@ export class IKController {
     if (!ref || !rot) return;
 
     const dir = norm(sub(target, ref.root));
-    // 铰链弯曲方向:hinge × dir 已垂直于 dir;目标与铰链轴近平行时回退到参考弯曲侧。
-    let bend = cross(ref.hinge, dir);
-    if (len(bend) < 1e-5) bend = ref.perp0;
-    bend = scale(norm(bend), ref.sign);
+    // 优先用存储的人控 pole:把它投影到 ⊥dir 平面得到弯曲方向(已隐含侧别,不再乘 sign)。
+    // 无存储 pole 或投影退化时,回退到原自动铰链方向 sign·(hinge×dir),再退到 perp0。
+    let bend = null;
+    const userPole = this.storedPole(ref.chain.name);
+    if (userPole) {
+      const rel = sub(userPole, ref.root);
+      const proj = sub(rel, scale(dir, dot(rel, dir)));
+      if (len(proj) >= 1e-5) bend = norm(proj);
+    }
+    if (!bend) {
+      bend = cross(ref.hinge, dir);
+      if (len(bend) < 1e-5) bend = ref.perp0;
+      bend = scale(norm(bend), ref.sign);
+    }
 
     const { mid: newMid, end: newEnd } = solveTwoBoneIK({
       root: ref.root, mid: ref.midRef, end: ref.endRef, target, pole: bend,
@@ -107,5 +137,47 @@ export class IKController {
     rot.setJointQuat(ref.chain.bodyIdx[1], elbowLocal);
     this._getStore().applyFields(rot.toAxisAngle());
     this._onEdit();
+  }
+
+  // ── 极向量拖拽 ──────────────────────────────────────────────────────────
+  // 末端锁定、仅旋转弯折平面:整条肢体绕(根→末端)轴刚性旋转。只改根关节(肩/髋)
+  // 局部四元数;中/末端局部保持不变,由 FK 刚性带动。这是「末端固定、换极向量
+  // 重解」的解析形式。
+  beginPoleDrag(chain) {
+    this.beginDrag(chain); // 复用同一份冻结参考(根/upper0/dir/肩父系朝向)
+  }
+
+  // worldPole:极向量手柄被拖到的世界坐标点。
+  solveToPole(worldPole) {
+    const ref = this._ref;
+    const rot = this._getRotation();
+    if (!ref || !rot) return;
+
+    const dir = norm(sub(ref.endRef, ref.root));         // 冻结的 根→末端 轴
+    const oldBend = ref.perp0;                            // 冻结的弯折方向(⊥ dir)
+    // 新弯折方向 = 极向量在 ⊥ dir 平面上的投影。
+    const rel = sub(worldPole, ref.root);
+    let newBend = sub(rel, scale(dir, dot(rel, dir)));
+    if (len(newBend) < 1e-6) return;                      // 极向量与轴共线 → 忽略本步
+    newBend = norm(newBend);
+
+    // 绕 dir 把 oldBend 旋到 newBend 的刚性旋转(两者均 ⊥ dir,故最短弧为绕 dir 的纯旋转)。
+    const R = shortestArcQuat(oldBend, newBend);
+    const shoulderWorldNew = quatNormalize(quatMultiply(R, ref.shoulderWorld0));
+    const shoulderLocal = quatNormalize(quatMultiply(quatConjugate(ref.parentShoulderWorld), shoulderWorldNew));
+
+    rot.setJointQuat(ref.chain.bodyIdx[0], shoulderLocal); // 只改根关节;肘/腕不动
+    this._lastPoleWorld = worldPole.slice();
+    this._getStore().applyFields(rot.toAxisAngle());
+    this._onEdit();
+  }
+
+  endPoleDrag() {
+    const ref = this._ref;
+    if (ref && this._lastPoleWorld) {
+      this._getStore().applyFields({ pole_vectors: { ...this._poleVectors(), [ref.chain.name]: this._lastPoleWorld } });
+    }
+    this._lastPoleWorld = null;
+    this._ref = null;
   }
 }

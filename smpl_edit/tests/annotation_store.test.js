@@ -135,3 +135,25 @@ test('hasData is true when only a bbox exists', () => {
   s.setBbox([5, 6, 7, 8]);
   assert.equal(s.hasData(), true);
 });
+
+test('addFromPrevious copies pole_vectors when the source frame has them', () => {
+  const doc = new CocoDocument({
+    images: [{ id: 1 }, { id: 2 }],
+    annotations: [{ id: 0, image_id: 1, bbox: [0, 0, 1, 1], root_pos: [0, 0, -4], root_rota: [0, 0, 0], body_pose: Array(63).fill(0), betas: Array(10).fill(0), pole_vectors: { L_Arm: [1, 2, 3] } }],
+  });
+  const store = new AnnotationStore(doc);
+  store.setFrame(1);
+  store.addFromPrevious();
+  assert.deepEqual(store.current().pole_vectors, { L_Arm: [1, 2, 3] });
+});
+
+test('addFromPrevious omits pole_vectors when the source has none', () => {
+  const doc = new CocoDocument({
+    images: [{ id: 1 }, { id: 2 }],
+    annotations: [{ id: 0, image_id: 1, bbox: [0, 0, 1, 1], root_pos: [0, 0, -4], root_rota: [0, 0, 0], body_pose: Array(63).fill(0), betas: Array(10).fill(0) }],
+  });
+  const store = new AnnotationStore(doc);
+  store.setFrame(1);
+  store.addFromPrevious();
+  assert.equal('pole_vectors' in store.current(), false);
+});
