@@ -10,12 +10,13 @@ import { resizeBboxByCorner } from './bbox_edit.js';
 const CORNERS = ['tl', 'tr', 'bl', 'br'];
 
 export class BboxOverlay {
-  constructor({ stageEl, canvasEl, getCam, getStore, getBboxVisible, onEdit }) {
+  constructor({ stageEl, canvasEl, getCam, getStore, getBboxVisible, getCanDraw, onEdit }) {
     this._stage = stageEl;
     this._canvas = canvasEl;
     this._getCam = getCam;
     this._getStore = getStore;
     this._getBboxVisible = getBboxVisible || (() => true);
+    this._getCanDraw = getCanDraw || (() => false);   // 仅 Bbox tab + 无框 + 非只读时为 true
     this._onEdit = onEdit || (() => {});
     this._bbox = null;
     this._editing = false;
@@ -41,6 +42,13 @@ export class BboxOverlay {
     }
     this._onMove = (e) => this._onPointerMove(e);
     this._onUp = (e) => this._onPointerUp(e);
+
+    // 空画布画框:仅当 getCanDraw() 为真(Bbox tab + 当前帧无框 + 非只读)时拦截
+    // 画布 pointerdown,拖出一个新框。位移 < 4px 视作点击,不建框。
+    this._draw = null;
+    this._drawMove = (e) => this._onDrawMove(e);
+    this._drawEnd = (e) => this._onDrawEnd(e);
+    this._canvas.addEventListener('pointerdown', (e) => this._onDrawDown(e));
   }
 
   // Map an image-pixel point [ix,iy] to a stage-relative on-screen px point.
@@ -129,4 +137,61 @@ export class BboxOverlay {
     window.removeEventListener('pointermove', this._onMove);
     window.removeEventListener('pointerup', this._onUp);
   }
+
+  _eventToImg(e) {
+    const cam = this._getCam();
+    const rect = this._canvas.getBoundingClientRect();
+    const stageRect = this._stage.getBoundingClientRect();
+    const sx = e.clientX - stageRect.left;
+    const sy = e.clientY - stageRect.top;
+    return this._screenToImg(sx, sy, cam, rect, stageRect);
+  }
+
+  _onDrawDown(e) {
+    if (!this._getCanDraw()) return;
+    const cam = this._getCam();
+    if (!cam || cam.mode !== '2d') return;
+    const [ix, iy] = this._eventToImg(e);
+    this._draw = { x0: ix, y0: iy, sx: e.clientX, sy: e.clientY, id: e.pointerId, moved: false };
+    this._canvas.setPointerCapture(e.pointerId);
+    window.addEventListener('pointermove', this._drawMove);
+    window.addEventListener('pointerup', this._drawEnd);
+    window.addEventListener('pointercancel', this._drawEnd);
+    e.preventDefault();
+    // 本监听在 app.js 中先于「画布平移」pointerdown 注册;用 stopImmediatePropagation
+    // 阻止同元素上的平移监听,避免画框时视图同时平移。
+    e.stopImmediatePropagation();
+  }
+
+  _onDrawMove(e) {
+    if (!this._draw) return;
+    if (!this._draw.moved && Math.hypot(e.clientX - this._draw.sx, e.clientY - this._draw.sy) > 4) {
+      this._draw.moved = true;
+    }
+    if (!this._draw.moved) return;
+    const [ix, iy] = this._eventToImg(e);
+    const x = Math.min(this._draw.x0, ix), y = Math.min(this._draw.y0, iy);
+    const w = Math.abs(ix - this._draw.x0), h = Math.abs(iy - this._draw.y0);
+    this.render([x, y, w, h]);          // live preview (not yet committed)
+  }
+
+  _onDrawEnd(e) {
+    window.removeEventListener('pointermove', this._drawMove);
+    window.removeEventListener('pointerup', this._drawEnd);
+    window.removeEventListener('pointercancel', this._drawEnd);
+    try { this._canvas.releasePointerCapture(this._draw?.id); } catch (_) {}
+    const draw = this._draw; this._draw = null;
+    if (!draw || !draw.moved || e.type === 'pointercancel') return;  // 点击/取消 → 不建框
+    const [ix, iy] = this._eventToImg(e);
+    const x = Math.min(draw.x0, ix), y = Math.min(draw.y0, iy);
+    const w = Math.abs(ix - draw.x0), h = Math.abs(iy - draw.y0);
+    if (w < 1 || h < 1) return;
+    const store = this._getStore();
+    if (store) { store.setBbox([x, y, w, h]); this._onEdit(); }
+    this.render([x, y, w, h]);
+  }
+
+  // 画框手势是否正在进行(供 engageGuards 聚合,使画布平移/拾取让位)。
+  isEngaged() { return this._draw !== null && this._draw.moved; }
+  isDragging() { return this.isEngaged(); }
 }

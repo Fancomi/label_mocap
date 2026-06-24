@@ -1,13 +1,12 @@
 // smpl_edit/coco_document.js
 const EDITABLE = ['bbox', 'root_pos', 'root_rota', 'body_pose', 'betas', 'keypoints', 'occlution_joint'];
 
-function defaultAnnotation(imageId, nextId) {
+// 空骨架:只含恒有的元字段。bbox / SMPL 位姿都不预填 —— 由 setAnnotation 按
+// 实际传入的 fields 决定,从而让「仅 bbox」「仅 SMPL」成为可表达的合法状态。
+function skeletonAnnotation(imageId, nextId) {
   return {
-    id: nextId, image_id: imageId, bbox: [0, 0, 0, 0],
-    keypoints: Array(156).fill(0), p3d: [], iscrowd: 0, area: 0, category_id: 1,
-    segmentation: [], occlution_joint: Array(52).fill(0),
-    betas: Array(10).fill(0), root_pos: [0, 0, -4], root_rota: [0, 0, 0],
-    body_pose: Array(63).fill(0), right_hand_pose: Array(45).fill(0), left_hand_pose: Array(45).fill(0),
+    id: nextId, image_id: imageId,
+    iscrowd: 0, area: 0, category_id: 1, segmentation: [],
   };
 }
 
@@ -33,6 +32,18 @@ export class CocoDocument {
   imageInfo(id) { return (this._raw.images ?? []).find((im) => im.id === id) ?? null; }
   getAnnotation(imageId) { return this._byImageId.get(imageId) ?? null; }
 
+  // SMPL 是否存在 = 位姿键 body_pose 是否存在(代表键),而非「是否全零」。
+  hasSmpl(imageId) {
+    const a = this._byImageId.get(imageId);
+    return !!a && 'body_pose' in a;
+  }
+
+  hasBbox(imageId) {
+    const a = this._byImageId.get(imageId);
+    if (!a || !Array.isArray(a.bbox)) return false;
+    return a.bbox.some((v) => v !== 0);   // [0,0,0,0] sentinel = no box
+  }
+
   _nextId() {
     let max = -1;
     for (const a of this._byImageId.values()) max = Math.max(max, a.id ?? -1);
@@ -41,7 +52,7 @@ export class CocoDocument {
 
   setAnnotation(imageId, fields) {
     let a = this._byImageId.get(imageId);
-    if (!a) { a = defaultAnnotation(imageId, this._nextId()); this._byImageId.set(imageId, a); }
+    if (!a) { a = skeletonAnnotation(imageId, this._nextId()); this._byImageId.set(imageId, a); }
     for (const key of EDITABLE) {
       if (fields[key] !== undefined) a[key] = structuredClone(fields[key]);
     }

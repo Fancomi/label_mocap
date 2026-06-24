@@ -67,11 +67,16 @@ export class Panels {
       this._setVal($(`${prefix}-eul-z-s`), dz);
     };
 
+    // bbox 读出独立于 rotation:仅 bbox 帧(rot 为 null)也要显示框值。
+    const bb = cur && Array.isArray(cur.bbox) && cur.bbox.some((v) => v !== 0) ? cur.bbox : null;
+    $('bbox-ro').textContent = bb
+      ? `${Math.round(bb[0])}, ${Math.round(bb[1])}, ${Math.round(bb[2])}, ${Math.round(bb[3])}`
+      : '—';
+
     if (!rot || !cur) {
       clearSet('pose');
       clearSet('root');
       for (const id of ['pos-x', 'pos-y', 'pos-z']) this._setVal($(id), '');
-      $('bbox-ro').textContent = '—';
       $('angle-list').innerHTML = '';
     } else {
       // POSE set: only when a joint is selected in pose mode.
@@ -86,12 +91,6 @@ export class Panels {
       this._setVal($('pos-x'), (+p[0]).toFixed(3));
       this._setVal($('pos-y'), (+p[1]).toFixed(3));
       this._setVal($('pos-z'), (+p[2]).toFixed(3));
-      if (cur.bbox) {
-        const [x, y, w, h] = cur.bbox;
-        $('bbox-ro').textContent = `${Math.round(x)}, ${Math.round(y)}, ${Math.round(w)}, ${Math.round(h)}`;
-      } else {
-        $('bbox-ro').textContent = '—';
-      }
       const lj = this._getLastJoints();
       if (lj) this.renderAngles(lj);
       // beta sliders reflect current betas. _setVal skips the slider that is

@@ -18,6 +18,7 @@ import { Panels } from './ui/panels.js';
 import { RootHandle } from '../../smpl_edit/root_handle.js';
 import { PoseGizmo } from '../../smpl_edit/pose_gizmo.js';
 import { installIK } from '../../smpl_edit/ik_plugin.js';
+import { installGvhmr } from './gvhmr_plugin.js';
 import { projectBboxFromMesh } from './edit/bbox_edit.js';
 import { BboxOverlay } from './edit/bbox_overlay.js';
 import { fsAccessSupported, pickDirectory, DirSource, videoOpenSupported, pickVideoFile } from './io/dir_source.js';
@@ -75,13 +76,26 @@ let rootHandle = null;
 let poseGizmo = null;
 let bboxOverlay = null;
 let syncUI = null;
-// 通用扩展点:插件(如 IK)通过 install 时注入。本体不出现任何插件专有名字。
+// 通用扩展点:插件(如 IK / 云端推理)通过 install 时注入。本体不出现任何插件专有名字。
 //  - syncHooks:syncUI 末尾依次调用,任一返回 true 表示该插件接管了当前交互;
 //  - dragGuards:模式/标签切换前聚合 isDragging() 拦截;
-//  - engageGuards:相机锁 / 画布拾取聚合 isEngaged() 拦截。
+//  - engageGuards:相机锁 / 画布拾取聚合 isEngaged() 拦截;
+//  - busyGuards:聚合 fn() —— 任一为 true 时本体禁用编辑入口(如 Ctrl+Z),供「忙态」插件用;
+//  - pluginTabs:插件注册的额外 tab(mode → {label, panel}),并入 tabs/tabpanel 渲染。
 let syncHooks = [];
 let dragGuards = [];
 let engageGuards = [];
+let busyGuards = [];
+let pluginTabs = [];
+let drawArmed = false;   // 「新建框」按钮按下后置真:允许在画布上拖出一个新框,画一次即复位
+const isBusy = () => busyGuards.some((fn) => fn());
+// bbox 在哪些 tab 下可见:框 tab 与云端 tab(云端需看到/确认带框推理用的框)。
+// 收敛到一处,避免散落的 ui.mode === 'bbox' 判断各自漏改。
+const bboxVisibleModes = new Set(['bbox', 'cloud']);
+const bboxShownNow = () => !!ui && bboxVisibleModes.has(ui.mode);
+// 编辑模式列表:本体四个 + 插件注册的额外 tab(registerTab 追加)。UIController 用它校验 setMode。
+// 顺序即 tab 顺序;modes[0]('root')是默认进入的模式,需与 index.html 里 .tab.on 一致。
+const editorModes = ['root', 'pose', 'bbox', 'beta'];
 
 function isJpeg(name) { return /\.(jpe?g)$/i.test(name); }
 
@@ -103,17 +117,49 @@ async function mountDataset({ coco, background }) {
   readOnly = info ? isPortrait(info) : false;
   if (readOnly) setStatus('⚠ 该数据为竖拍/旋转,标注器仅支持查看;请用其他软件转正后再标注');
   store = new AnnotationStore(coco);
-  ui = new UIController({ readOnly });
+  ui = new UIController({ readOnly, modes: editorModes });
   if (syncUI) ui.onChange(syncUI);
   $('slider').max = String(Math.max(0, store.frameCount() - 1));
   $('slider').value = '0';
   $('right').classList.remove('disabled');
   if (!model) { model = await loadModelWithProgress(); scene.setTopology(model.faces); }
+  // 让相机学习本数据集的真实图像尺寸(否则一切按写死的 1920×1080,非该分辨率时
+  // 主点 cx/cy 落错像素 → 人体朝左上偏、且相对焦距偏小)。优先用 json 的 width/height,
+  // 否则解码首帧/取视频尺寸。cx=W/2、cy=H/2 居中,焦距保持工厂默认(用户可在面板微调)。
+  const dims = await resolveImageDims(info);
+  if (dims) cam.configureForImage(dims);
+  else cam.resetIntrinsics();
+  cam.resetZoom();
   scene.prepareForSequence({ K: cam.K, image_w: cam.imageW, image_h: cam.imageH });
   cam.snapTo('2d');
   scene.resize();
   await showFrame(0);
   if (syncUI) syncUI();
+}
+
+// 解析数据集首帧的真实像素尺寸。来源优先级:json images[0].width/height →
+// 解码首帧图像 File → videoSource 尺寸。拿不到返回 null(回退工厂默认)。
+async function resolveImageDims(info) {
+  if (info && Number.isFinite(info.width) && Number.isFinite(info.height)
+      && info.width > 0 && info.height > 0) {
+    return { width: info.width, height: info.height };
+  }
+  if (videoSource && videoSource.width > 0) {
+    return { width: videoSource.width, height: videoSource.height };
+  }
+  const file = images.get(0);
+  if (file) {
+    try { return await decodeImageDims(file); } catch (_) { /* fall through */ }
+  }
+  return null;
+}
+
+// 用 createImageBitmap 读 File 的自然像素尺寸(不渲染、不占显存)。
+async function decodeImageDims(file) {
+  const bmp = await createImageBitmap(file);
+  const dims = { width: bmp.width, height: bmp.height };
+  bmp.close();
+  return dims;
 }
 
 async function openFiles(fileList) {
@@ -232,7 +278,13 @@ function applyAnnotation() {
 function renderAnnoActions() {
   const host = $('anno-actions'); if (!host) return;
   const has = store && store.hasData();
-  $('anno-state').textContent = !store ? '—' : (has ? '✅ 本帧已标注' : '— 本帧无标注');
+  const hasB = store && store.hasBbox();
+  const hasS = store && store.hasSmpl();
+  $('anno-state').textContent = !store ? '—'
+    : (hasB && hasS) ? '✅ 框 + SMPL'
+    : hasS ? '🧍 已有 SMPL'
+    : hasB ? '📦 仅框选(可云端推理)'
+    : '— 本帧无标注';
   host.innerHTML = '';
   if (!store || ui?.readOnly) return;
   const row = document.createElement('div'); row.className = 'row'; host.appendChild(row);
@@ -250,7 +302,7 @@ async function showFrame(i) {
   $('slider').value = String(i);
   $('frame-info').textContent = `${i} / ${store.frameCount() - 1}`;
   const a = store.current();
-  if (a) {
+  if (a && store.hasSmpl()) {
     rotation = RotationState.fromAxisAngle({ root_rota: a.root_rota, body_pose: a.body_pose });
     applyAnnotation();
     scene.setPersonVisible(true);
@@ -261,7 +313,7 @@ async function showFrame(i) {
     lastWorldRot = null;
     scene.setPersonVisible(false);
     if (panels) panels.syncFromState();
-    if (bboxOverlay) bboxOverlay.render(null);
+    if (bboxOverlay) bboxOverlay.render(a && store.hasBbox() ? a.bbox : null);
   }
   renderAnnoActions();
   if (videoSource) {
@@ -292,7 +344,7 @@ async function saveJson() {
   const doc = store.document();
   for (const id of doc.imageIds()) {
     const a = doc.getAnnotation(id);
-    if (!a) continue;
+    if (!a || !doc.hasSmpl(id)) continue;   // 仅 bbox 帧:保留框,不补算 SMPL 派生字段
     const out = forwardSmpl(model, { root_pos: a.root_pos, root_rota: a.root_rota, body_pose: a.body_pose, betas: a.betas });
     const keypoints = reprojectKeypoints(out.joints, cam.K, 52);
     const g = new THREE.BufferGeometry();
@@ -326,17 +378,32 @@ async function resetFromDisk() {
     const raw = await dirSource.readJson();
     if (raw) {
       store = new AnnotationStore(new CocoDocument(raw));
-      ui = new UIController({ readOnly });
-      if (syncUI) ui.onChange(syncUI);
+    } else {
+      // 目录里没有 json:重置 = 清空所有标注(回到「未标注」空白态),而不是保留内存里的。
+      store = new AnnotationStore(emptyCocoLike(store.document()));
     }
+    ui = new UIController({ readOnly, modes: editorModes });
+    if (syncUI) ui.onChange(syncUI);
   } else if (loadedJsonFile) {
     const coco = new CocoDocument(JSON.parse(await loadedJsonFile.text()));
     store = new AnnotationStore(coco);
-    ui = new UIController({ readOnly });
+    ui = new UIController({ readOnly, modes: editorModes });
+    if (syncUI) ui.onChange(syncUI);
+  } else {
+    // 无 json 来源(纯图像/视频):重置 = 清空所有标注。
+    store = new AnnotationStore(emptyCocoLike(store.document()));
+    ui = new UIController({ readOnly, modes: editorModes });
     if (syncUI) ui.onChange(syncUI);
   }
   await showFrame(Math.min(store.currentFrame(), store.frameCount() - 1));
   setStatus('已重置');
+}
+
+// 构造一个保留 images[](帧序/尺寸/file_name)但 annotations 全空的 CocoDocument,
+// 用于「无 json 来源时」重置 → 清空全部标注。沿用原 images 以保持帧数与背景对齐。
+function emptyCocoLike(doc) {
+  const raw = doc.serialize();
+  return new CocoDocument({ images: raw.images ?? [], annotations: [], categories: raw.categories ?? [] });
 }
 
 function boot() {
@@ -374,7 +441,7 @@ function boot() {
   $('speed').addEventListener('input', (e) => { fps = +e.target.value; $('speed-val').textContent = `${fps} fps`; });
 
   $('btn-undo').addEventListener('click', () => { if (store) { store.undo(); showFrame(store.currentFrame()); } });
-  window.addEventListener('keydown', (e) => { if (store && (e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); store.undo(); showFrame(store.currentFrame()); } });
+  window.addEventListener('keydown', (e) => { if (store && !isBusy() && (e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); store.undo(); showFrame(store.currentFrame()); } });
 
   const toggle = (id, key) => $(id).addEventListener('click', () => {
     const on = !$(id).classList.contains('on');
@@ -405,14 +472,35 @@ function boot() {
     jointGridButtons.push(b);
   }
 
-  // Tab buttons.
-  document.querySelectorAll('#tabs .tab').forEach((btn) => btn.addEventListener('click', () => {
+  // Tab buttons. bindTab 既用于本体四个静态 tab,也用于插件 registerTab 动态追加的 tab。
+  const bindTab = (btn) => btn.addEventListener('click', () => {
     if (btn.disabled) return;
     if (dragGuards.some((g) => g.isDragging())) return;
     // Switching into an editing tab pauses playback (user-initiated edit entry).
     if (btn.dataset.mode === 'root' || btn.dataset.mode === 'pose') setPlaying(false);
     if (ui) ui.setMode(btn.dataset.mode);
-  }));
+  });
+  document.querySelectorAll('#tabs .tab').forEach(bindTab);
+
+  // 插件 tab 注册扩展点:追加一个互斥编辑 tab(标签按钮 + 面板),并入 editorModes/
+  // tabs/tabpanel 渲染。返回 { remove } 供插件卸载时彻底移除。本体不出现插件名字。
+  function registerTab({ mode, label, buildPanel }) {
+    editorModes.push(mode);
+    const btn = document.createElement('button');
+    btn.className = 'tab'; btn.dataset.mode = mode; btn.textContent = label;
+    $('tabs').appendChild(btn);
+    bindTab(btn);
+    const panel = document.createElement('section');
+    panel.className = 'tabpanel'; panel.dataset.mode = mode; panel.hidden = true;
+    $('right').appendChild(panel);
+    if (buildPanel) buildPanel(panel);
+    pluginTabs.push({ mode, btn, panel });
+    return { remove() {
+      const i = editorModes.indexOf(mode); if (i >= 0) editorModes.splice(i, 1);
+      btn.remove(); panel.remove();
+      pluginTabs = pluginTabs.filter((t) => t.mode !== mode);
+    } };
+  }
 
   jointPicker = new JointPicker({
     canvas: $('c'),
@@ -452,13 +540,18 @@ function boot() {
     canvasEl: $('c'),
     getCam: () => cam,
     getStore: () => store,
-    getBboxVisible: () => ui?.mode === 'bbox',
-    onEdit: applyAnnotation,
+    getBboxVisible: () => bboxShownNow(),
+    // 画框入口由「新建框」按钮显式开启(drawArmed),避免空画布误触;画一次即关闭。
+    getCanDraw: () => drawArmed && !!store && ui?.mode === 'bbox' && cam?.mode === '2d'
+      && !ui?.readOnly && !store.hasBbox(),
+    onEdit: () => { drawArmed = false; applyAnnotation(); if (syncUI) syncUI(); },
   });
 
   // 本体两个编辑基元并入通用守卫聚合(插件会各自再 push 自己的手柄)。
   dragGuards.push(poseGizmo, rootHandle);
   engageGuards.push(poseGizmo, rootHandle);
+  dragGuards.push(bboxOverlay);
+  engageGuards.push(bboxOverlay);
 
   // ui.onChange fires whenever mode/joint changes → sync tabs, panels, gizmos.
   function refreshTabAvailability() {
@@ -502,7 +595,7 @@ function boot() {
       poseGizmo.detach();
       rootHandle.detach();
     }
-    bboxOverlay.render(ui.mode === 'bbox' ? (store?.current()?.bbox ?? null) : null);
+    bboxOverlay.render(bboxShownNow() ? (store?.current()?.bbox ?? null) : null);
     renderAnnoActions();
     panels.syncFromState();
   };
@@ -530,6 +623,16 @@ function boot() {
     store.commitEdit();
     panels.syncFromState();
     if (bboxOverlay) bboxOverlay.render(store.current()?.bbox ?? null);
+  });
+
+  // 「新建框」:武装画框态(仅当前帧无框时有意义),用户随后在画布上拖出一个框。
+  $('btn-bbox-new').addEventListener('click', () => {
+    if (!store || ui?.readOnly) return;
+    if (store.hasBbox()) { setStatus('本帧已有框,可拖四角调整'); return; }
+    if (cam.mode !== '2d') { cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); }
+    setPlaying(false);
+    drawArmed = true;
+    setStatus('在画面上拖出一个方框');
   });
 
   // 2D 滚轮:裸滚轮 = 以光标为中心缩放视图(viewOffset,不改内外参/数据);
@@ -600,7 +703,7 @@ function boot() {
   $('btn-save').addEventListener('click', () => saveJson().catch((e) => setStatus(String(e))));
   $('btn-reset').addEventListener('click', () => resetFromDisk().catch((e) => setStatus(String(e))));
 
-  window.addEventListener('resize', () => { scene.resize(); if (bboxOverlay) bboxOverlay.render(ui?.mode === 'bbox' ? (store?.current()?.bbox ?? null) : null); });
+  window.addEventListener('resize', () => { scene.resize(); if (bboxOverlay) bboxOverlay.render(bboxShownNow() ? (store?.current()?.bbox ?? null) : null); });
 
   // 安装 IK 插件(可插拔):本体只此一行,通过 ctx 注入扩展点;
   // 置 IK_ENABLED=false(或删此块)即彻底拆除 IK,本体不受影响。
@@ -617,6 +720,27 @@ function boot() {
       toggleButton: $('ik-toggle'),
       registerSyncHook: (fn) => syncHooks.push(fn),
       registerGuard: (g) => { dragGuards.push(g); engageGuards.push(g); },
+    });
+  }
+
+  // 安装云端 GVHMR 推理插件(可插拔):本体只此一行,DOM(独立 tab + 进度浮层)与
+  // 逻辑全由插件自建;通过 ctx 注入扩展点。置 GVHMR_ENABLED=false 即彻底拆除,本体不受影响。
+  const GVHMR_ENABLED = true;
+  if (GVHMR_ENABLED) {
+    installGvhmr({
+      getCam: () => cam, getStore: () => store, getUI: () => ui,
+      getVideoEl: () => (videoSource ? videoSource.videoEl : null),
+      getCurrentImageFile: () => images.get(store.currentFrame()) ?? null,
+      getCurrentFileName: () => {
+        const file = videoSource ? null : images.get(store.currentFrame());
+        return file ? file.name : `frame_${store.currentFrame()}.jpg`;
+      },
+      setStatus, setPlaying, showFrame,
+      requestSync: () => { if (syncUI) syncUI(); },
+      registerTab,
+      registerSyncHook: (fn) => syncHooks.push(fn),
+      registerGuard: (g) => { dragGuards.push(g); engageGuards.push(g); },
+      registerBusyGuard: (fn) => busyGuards.push(fn),
     });
   }
 

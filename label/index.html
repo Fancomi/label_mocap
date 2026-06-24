@@ -118,8 +118,8 @@
 
   <aside id="right" class="disabled">
     <div id="tabs">
-      <button class="tab on" data-mode="pose">姿势</button>
-      <button class="tab" data-mode="root">整体</button>
+      <button class="tab on" data-mode="root">整体</button>
+      <button class="tab" data-mode="pose">姿势</button>
       <button class="tab" data-mode="bbox">框</button>
       <button class="tab" data-mode="beta">体型</button>
     </div>
@@ -170,8 +170,11 @@
     </section>
 
     <section class="tabpanel" data-mode="bbox" hidden>
-      <p class="hint">在 2D 对齐视角下,拖动方框四角调整;或一键从人体投影。</p>
-      <button id="btn-bbox-auto">⌖ 从人体投影生成框</button>
+      <p class="hint">在 2D 对齐视角下:点「新建框」后在画面上拖出方框;已有框可拖四角调整;或从人体投影。</p>
+      <div class="row">
+        <button id="btn-bbox-new">＋ 新建框</button>
+        <button id="btn-bbox-auto">⌖ 从人体投影</button>
+      </div>
       <div id="bbox-ro" class="status">—</div>
     </section>
 

@@ -15,7 +15,12 @@ export class AnnotationStore {
   currentFrame() { return this._frame; }
   currentImageId() { return this._ids[this._frame]; }
   current() { return this._doc.getAnnotation(this.currentImageId()); }
-  hasData() { return this.current() !== null; }
+  hasData() {
+    const id = this.currentImageId();
+    return this._doc.hasBbox(id) || this._doc.hasSmpl(id);
+  }
+  hasSmpl() { return this._doc.hasSmpl(this.currentImageId()); }
+  hasBbox() { return this._doc.hasBbox(this.currentImageId()); }
 
   _snapshot() {
     const a = this.current();
@@ -55,6 +60,16 @@ export class AnnotationStore {
   }
 
   deleteCurrent() { this._txn((id) => this._doc.deleteAnnotation(id)); }
+
+  // 仅写 bbox(不碰 SMPL),一个 undo 单元。画框 / 云端给框用。
+  setBbox(bbox) { this._txn((id) => this._doc.setAnnotation(id, { bbox })); }
+
+  // 覆盖云端返回的 SMPL,一个 undo 单元。当前帧已有标注时直接覆盖。
+  // 只写传入的键 —— 调用方(云端)只传 SMPL 四件套,不传 bbox,故 bbox 不受影响
+  // (bbox⊥SMPL:带框推理时用户的框是输入,应保留;纯图推理不应凭空造框)。
+  applyCloudResult(fields) {
+    this._txn((id) => this._doc.setAnnotation(id, fields));
+  }
 
   // Drag transaction: begin → applyFields* → commit (one undo unit).
   // _pendingBefore is undefined when no transaction is open; a captured

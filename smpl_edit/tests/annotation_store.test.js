@@ -88,3 +88,50 @@ test('mutation updates state', () => {
   s.setFrame(1); s.addTpose();
   assert.equal(s.hasData(), true);
 });
+
+test('setBbox on an empty frame creates a bbox-only annotation (no SMPL)', () => {
+  const s = new AnnotationStore(doc());
+  s.setFrame(1);
+  s.setBbox([5, 6, 7, 8]);
+  assert.equal(s.hasBbox(), true);
+  assert.equal(s.hasSmpl(), false);
+  assert.deepEqual(s.current().bbox, [5, 6, 7, 8]);
+});
+
+test('setBbox is one undo unit and does not touch SMPL on an existing frame', () => {
+  const s = new AnnotationStore(doc());
+  s.setFrame(0);                       // has full SMPL + bbox [1,1,1,1]
+  s.setBbox([5, 6, 7, 8]);
+  assert.deepEqual(s.current().bbox, [5, 6, 7, 8]);
+  assert.equal(s.current().body_pose.length, 63);   // SMPL untouched
+  s.undo();
+  assert.deepEqual(s.current().bbox, [1, 1, 1, 1]);
+});
+
+test('applyCloudResult writes SMPL as a single undo unit (does not touch bbox)', () => {
+  const s = new AnnotationStore(doc());
+  s.setFrame(1);
+  s.applyCloudResult({ root_pos: [1, 1, 1],
+    root_rota: [0, 0, 0], body_pose: Array(63).fill(0.1), betas: Array(10).fill(0.2) });
+  assert.equal(s.hasSmpl(), true);
+  assert.equal(s.current().body_pose[0], 0.1);
+  s.undo();
+  assert.equal(s.hasData(), false);    // back to empty frame
+});
+
+test('applyCloudResult preserves a pre-existing bbox (cloud must not overwrite the user box)', () => {
+  const s = new AnnotationStore(doc());
+  s.setFrame(1);
+  s.setBbox([5, 6, 7, 8]);             // user-drawn box
+  s.applyCloudResult({ root_pos: [1, 1, 1], root_rota: [0, 0, 0],
+    body_pose: Array(63).fill(0.1), betas: Array(10).fill(0.2) });
+  assert.deepEqual(s.current().bbox, [5, 6, 7, 8]);   // untouched
+  assert.equal(s.hasSmpl(), true);
+});
+
+test('hasData is true when only a bbox exists', () => {
+  const s = new AnnotationStore(doc());
+  s.setFrame(1);
+  s.setBbox([5, 6, 7, 8]);
+  assert.equal(s.hasData(), true);
+});
