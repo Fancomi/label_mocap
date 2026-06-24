@@ -17,7 +17,14 @@
     #left { border-right:1px solid #283040; } #right { border-left:1px solid #283040; }
     #stage { position:relative; flex:1; background:#05070a; overflow:hidden; min-width:0; }
     canvas { display:block; position:absolute; top:0; left:0; }
-    #status { position:absolute; top:8px; left:8px; background:rgba(0,0,0,.6); padding:5px 9px; border-radius:3px; }
+    #status { position:absolute; top:8px; right:8px; background:rgba(0,0,0,.6); padding:5px 9px; border-radius:3px; z-index:5; }
+    #vp-bar { position:absolute; top:6px; left:6px; z-index:5; display:flex; gap:4px; align-items:center; }
+    #vp-bar button { background:#16202c; color:#cfe; border:1px solid #2a3340; border-radius:4px; padding:2px 6px; cursor:pointer; font-size:12px; }
+    #vp-bar button.on { background:#2563a8; }
+    #vp-bar .vp-hint { color:#8ab; font-size:10px; margin-left:6px; }
+    .vp-split { position:absolute; z-index:4; background:transparent; }
+    #vp-split-v { top:0; bottom:0; width:6px; cursor:col-resize; }
+    #vp-split-h { right:0; height:6px; cursor:row-resize; }
     #loading { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:240px; background:rgba(0,0,0,.7); padding:14px 16px; border-radius:8px; text-align:center; }
     #loading[hidden] { display:none; }
     #loading-text { font-size:12px; color:#cde; margin-bottom:8px; }
@@ -96,7 +103,14 @@
     </div>
   </aside>
 
-  <div id="stage"><canvas id="c"></canvas><div id="status">就绪 — 请打开序列目录</div><div id="loading" hidden><div id="loading-text">加载模型…</div><div id="loading-track"><div id="loading-bar"></div></div></div></div>
+  <div id="stage"><canvas id="c"></canvas><div id="vp-bar">
+      <button id="vp-single" title="单视口">▢</button>
+      <button id="vp-tri" class="on" title="三视口">▥</button>
+      <button id="vp-mainbig" title="主大参考小">◰</button>
+      <button id="vp-lock-side" title="锁侧视">🔓侧</button>
+      <button id="vp-lock-front" title="锁正视">🔓正</button>
+      <span class="vp-hint">F聚焦 R重置朝向</span>
+    </div><div id="vp-split-v" class="vp-split"></div><div id="vp-split-h" class="vp-split"></div><div id="status">就绪 — 请打开序列目录</div><div id="loading" hidden><div id="loading-text">加载模型…</div><div id="loading-track"><div id="loading-bar"></div></div></div></div>
 
   <aside id="right" class="disabled">
     <div class="card">

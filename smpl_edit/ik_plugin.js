@@ -63,6 +63,10 @@ export function installIK(ctx) {
   });
   ctx.registerGuard(poleHandle);
 
+  // active 视口切换时,两柄也要换相机(多视口下 TransformControls 须跟随 active 相机)。
+  // 其它 app(单视口)不传 registerCameraConsumer 时 ?. 静默跳过。
+  ctx.registerCameraConsumer?.((c) => { ikHandle.setCamera(c); poleHandle.setCamera(c); });
+
   // 占位标识点击守卫:按在 marker 上的瞬间 isEngaged=true,使 JointPicker 的 canPick 失效,
   // 避免它把「点 marker」当作 miss 而清掉关节选中(否则切换会被它抢先清选打断)。
   ctx.registerGuard({ isEngaged: () => !!_hitMarker, isDragging: () => false });

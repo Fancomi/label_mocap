@@ -17,7 +17,10 @@ import { PcdPanels } from './ui/pcd_panels.js';
 import { decodeXYZ } from './scene/point_cloud_decode.js';
 import { decodePngFile } from './io/png_pixels.js';
 import { PcdDirSource, FileListSource, fsAccessSupported, pickDirectory } from './io/pcd_dir_source.js';
-import { FRONT_OPTIONS } from '../../smpl_edit/view_frame.js';
+import { FRONT_OPTIONS, viewFrame } from '../../smpl_edit/view_frame.js';
+import { Viewport } from '../../smpl_edit/viewport.js';
+import { ViewportManager } from '../../smpl_edit/viewport_manager.js';
+import { bodyBounds } from '../../smpl_edit/framing.js';
 
 const $ = (id) => document.getElementById(id);
 const setStatus = (t) => { $('status').textContent = t; };
@@ -30,11 +33,20 @@ let rootHandle = null, poseGizmo = null, jointPicker = null;
 let jointGridButtons = [];
 let lastVertices = null, lastJoints = null, lastWorldRot = null;
 let syncUI = null, syncHooks = [], dragGuards = [], engageGuards = [];
+let mgr = null;
+const camConsumers = []; // active 视口切换时,把新相机推给各交互组件(运行时填充)
 let playing = false, fps = 10, lastTick = 0, acc = 0;
 // 坐标轴(上轴/前轴)只影响观察者相机,不旋转点云/SMPL。AXIS_TO_IDX 给「高度配色」用。
 let axisUp = 'Z', axisFront = 'X';
 const AXIS_TO_IDX = { X: 0, Y: 1, Z: 2 };
 let lastDecoded = null;
+
+// 单位向量 → 轴字母。viewFrame(up,front).right 用于推侧视的正对轴。
+function axisName(v) {
+  const ax = [Math.abs(v[0]), Math.abs(v[1]), Math.abs(v[2])];
+  const i = ax[0] >= ax[1] && ax[0] >= ax[2] ? 0 : (ax[1] >= ax[2] ? 1 : 2);
+  return ['X', 'Y', 'Z'][i];
+}
 
 async function loadModelWithProgress() {
   const box = $('loading'), bar = $('loading-bar'), txt = $('loading-text');
@@ -79,7 +91,15 @@ function applyAxisFrame(recenter) {
   scene.orientGroundTo(axisUp);
   scene.pointCloud.setHeightAxis(AXIS_TO_IDX[axisUp]); // 高度配色取上轴分量(若为 height 模式会自动重算)
   const b = scene.pointCloud.bounds();
-  cam.setFrame(axisUp, axisFront, recenter && b ? b.center : null, b ? b.radius : null);
+  const center = recenter && b ? b.center : null;
+  const radius = b ? b.radius : null;
+  cam.setFrame(axisUp, axisFront, center, radius); // 主视
+  // 侧/正视口同步标准朝向:侧视沿 right 轴看,正视沿 front 轴看,均以 up 为上。
+  const rightAxis = axisName(viewFrame(axisUp, axisFront).right);
+  const side = mgr.viewport('side'), front = mgr.viewport('front');
+  if (side) { side.setOrientationAxes(rightAxis, axisUp); side.resetOrientation(center ?? undefined, radius ?? undefined); }
+  if (front) { front.setOrientationAxes(axisFront, axisUp); front.resetOrientation(center ?? undefined, radius ?? undefined); }
+  mgr.syncControlsEnabled(); // resetOrientation 会解锁视口,重同步 controls 启停
 }
 
 function renderAnnoActions() {
@@ -157,7 +177,18 @@ async function saveAnnotation() {
 function boot() {
   scene = new PcdScene($('c'));
   cam = new OrbitCam({ canvas: $('c') });
-  scene.setCamera(cam);
+
+  // 三视口装配:主视复用 OrbitCam 的相机+控件(透视);侧/正新建正交视口。
+  const rightAxis = axisName(viewFrame(axisUp, axisFront).right);
+  const vpMain = new Viewport({ name: 'main', kind: 'perspective', dirAxis: axisFront, upAxis: axisUp, camera: cam.camera, controls: cam.controls });
+  const vpSide = new Viewport({ name: 'side', kind: 'ortho', canvas: $('c'), dirAxis: rightAxis, upAxis: axisUp });
+  const vpFront = new Viewport({ name: 'front', kind: 'ortho', canvas: $('c'), dirAxis: axisFront, upAxis: axisUp });
+  mgr = new ViewportManager({
+    viewports: [vpMain, vpSide, vpFront], canvas: $('c'),
+    onActiveChange: () => { const c = mgr.activeCamera(); camConsumers.forEach((fn) => fn(c)); },
+  });
+  scene.setManager(mgr);
+  scene.setCamera(cam); // resize 防 null + 单视口回退仍走 cam
   scene.resize();
 
   $('btn-open').addEventListener('click', () => {
@@ -225,6 +256,64 @@ function boot2() {
     if (ui) ui.setMode(btn.dataset.mode);
   }));
 
+  // 视口工具条:分隔条拖动 + 布局预设 + 锁侧/正 + F聚焦/R重置朝向。
+  const placeSplits = () => {
+    const stage = $('stage'); const W = stage.clientWidth, H = stage.clientHeight;
+    const sv = $('vp-split-v'), sh = $('vp-split-h');
+    const s = mgr._splits;
+    const single = mgr._preset === 'single';
+    sv.style.left = `${W * s.v - 3}px`; sv.style.display = single ? 'none' : 'block';
+    sh.style.top = `${H * s.h - 3}px`; sh.style.left = `${W * s.v}px`; sh.style.right = '0'; sh.style.display = single ? 'none' : 'block';
+  };
+  const setPreset = (p, btn) => {
+    mgr.setLayout(p);
+    ['vp-single', 'vp-tri', 'vp-mainbig'].forEach((id) => $(id).classList.toggle('on', id === btn));
+    placeSplits();
+  };
+  $('vp-single').addEventListener('click', () => setPreset('single', 'vp-single'));
+  $('vp-tri').addEventListener('click', () => setPreset('tri', 'vp-tri'));
+  $('vp-mainbig').addEventListener('click', () => setPreset('main-big', 'vp-mainbig'));
+  const dragSplit = (el, axis) => {
+    el.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); const stage = $('stage');
+      const move = (ev) => {
+        const r = stage.getBoundingClientRect();
+        if (axis === 'v') mgr.setSplits({ v: Math.min(0.92, Math.max(0.4, (ev.clientX - r.left) / r.width)) });
+        else mgr.setSplits({ h: Math.min(0.85, Math.max(0.15, (ev.clientY - r.top) / r.height)) });
+        placeSplits();
+      };
+      const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+      window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+    });
+  };
+  dragSplit($('vp-split-v'), 'v'); dragSplit($('vp-split-h'), 'h');
+  const lockBtn = (id, name, label) => $(id).addEventListener('click', () => {
+    const vp = mgr.viewport(name); if (!vp) return;
+    vp.setLocked(!vp.locked);
+    mgr.syncControlsEnabled(); // 锁/解锁后重新同步各视口 controls 启停
+    $(id).textContent = (vp.locked ? '🔒' : '🔓') + label;
+    $(id).classList.toggle('on', vp.locked);
+  });
+  lockBtn('vp-lock-side', 'side', '侧'); lockBtn('vp-lock-front', 'front', '正');
+  window.addEventListener('resize', placeSplits);
+  placeSplits();
+
+  window.addEventListener('keydown', (e) => {
+    if (!store || e.target.matches('input,select,textarea')) return;
+    if (dragGuards.some((g) => g.isDragging()) || playing) return;
+    const vp = mgr.activeViewport(); if (!vp) return;
+    const b = bodyBounds(lastJoints);
+    if (e.key === 'f' || e.key === 'F') {
+      if (!b) { setStatus('无人体可聚焦'); return; }
+      vp.focus(b.center, b.radius);
+    } else if (e.key === 'r' || e.key === 'R') {
+      vp.resetOrientation(b ? b.center : undefined, b ? b.radius : undefined);
+      mgr.syncControlsEnabled();
+      if (vp.name === 'side') { $('vp-lock-side').textContent = '🔓侧'; $('vp-lock-side').classList.remove('on'); }
+      if (vp.name === 'front') { $('vp-lock-front').textContent = '🔓正'; $('vp-lock-front').classList.remove('on'); }
+    }
+  });
+
   boot3();
 }
 
@@ -238,6 +327,11 @@ function boot3() {
   rootHandle = new RootHandle({ scene: scene.threeScene(), camera: cam.camera, canvas: $('c'), controls: cam.controls, getMode: () => cam.mode, getStore: () => store, getRotation: () => rotation, onEdit: applyAnnotation });
   poseGizmo = new PoseGizmo({ scene: scene.threeScene(), camera: cam.camera, canvas: $('c'), controls: cam.controls, getMode: () => cam.mode, getRotation: () => rotation, getStore: () => store, onEdit: applyAnnotation });
   dragGuards.push(poseGizmo, rootHandle); engageGuards.push(poseGizmo, rootHandle);
+
+  // active 视口切换时把新相机推给各交互组件(此刻三件套已建好,可安全注册)。
+  camConsumers.push((c) => poseGizmo.setCamera(c));
+  camConsumers.push((c) => rootHandle.setCamera(c));
+  camConsumers.push((c) => jointPicker.setCamera(c));
 
   syncUI = () => {
     if (!ui) return;
@@ -279,6 +373,7 @@ function boot4() {
       toggleButton: $('ik-toggle'),
       registerSyncHook: (fn) => syncHooks.push(fn),
       registerGuard: (g) => { dragGuards.push(g); engageGuards.push(g); },
+      registerCameraConsumer: (fn) => camConsumers.push(fn),
     });
   }
 
@@ -292,7 +387,7 @@ function boot4() {
     }
     lastTick = now;
     const gizmoBusy = engageGuards.some((g) => g.isEngaged());
-    if (cam) cam.controls.enabled = !gizmoBusy;
+    mgr.setActiveControlsEnabled(!gizmoBusy);
     scene.render();
     requestAnimationFrame(loop);
   }
