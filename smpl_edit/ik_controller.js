@@ -36,12 +36,11 @@ export class IKController {
   // smplJointIdx 是否可 IK 拖动的末端;是则返回其链,否则 null。
   chainFor(smplJointIdx) { return endEffectorChain(this._getSkeleton(), smplJointIdx); }
 
+  // 当前帧已存的 pole_vectors 映射(链名→世界点);无则 {}。
+  _poleVectors() { return this._getStore().current?.()?.pole_vectors ?? {}; }
+
   // 读取某条链已存储的世界 pole;无则 null。
-  storedPole(chainName) {
-    const cur = this._getStore().current?.() ?? null;
-    const pv = cur && cur.pole_vectors;
-    return (pv && pv[chainName]) ? pv[chainName] : null;
-  }
+  storedPole(chainName) { return this._poleVectors()[chainName] ?? null; }
 
   // 自动推导弯曲方向的可视化世界点(无存储 pole 时用于摆放极向量柄):
   // chainRoot + perp0 * 上臂/大腿骨长。
@@ -176,9 +175,7 @@ export class IKController {
   endPoleDrag() {
     const ref = this._ref;
     if (ref && this._lastPoleWorld) {
-      const cur = this._getStore().current?.() ?? null;
-      const existing = (cur && cur.pole_vectors) ? cur.pole_vectors : {};
-      this._getStore().applyFields({ pole_vectors: { ...existing, [ref.chain.name]: this._lastPoleWorld } });
+      this._getStore().applyFields({ pole_vectors: { ...this._poleVectors(), [ref.chain.name]: this._lastPoleWorld } });
     }
     this._lastPoleWorld = null;
     this._ref = null;
