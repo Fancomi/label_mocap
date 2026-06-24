@@ -19,6 +19,15 @@ export class IKHandle {
     // 代理对象:TransformControls 实际操纵它,我们只取它的世界坐标喂给 IK。
     this._proxy = new THREE.Object3D();
 
+    // 占位标识:非活动态显示的灰白小立方体(形状区别于极向量的球),可被点选以切回末端柄。
+    this._cube = new THREE.Mesh(
+      new THREE.BoxGeometry(0.04, 0.04, 0.04),
+      new THREE.MeshBasicMaterial({ color: 0xcccccc, depthTest: false, transparent: true, opacity: 0.9 }),
+    );
+    this._cube.renderOrder = 999;
+    this._cube.visible = false; // 默认活动(出箭头),立方体藏起
+    this._proxy.add(this._cube);
+
     this._tc = new TransformControls(camera, canvas);
     this._tc.setMode('translate'); // 仅平移,不需要 rotate
     tightenTranslatePicker(this._tc); // 命中范围贴合可见几何,避免轴 picker 盖住平面方片
@@ -52,6 +61,16 @@ export class IKHandle {
     this._scene.remove(this._proxy);
     this._attached = false;
   }
+
+  // 活动 = 出三轴箭头、藏立方体;非活动 = 藏箭头并禁用、显示立方体占位。
+  setActive(active) {
+    this._tc.visible = active;
+    this._tc.enabled = active;
+    this._cube.visible = !active;
+  }
+
+  // 供插件做切换拾取:返回占位标识 mesh(立方体)。
+  markerMesh() { return this._cube; }
 
   update() { /* TransformControls 自动跟随相机更新 */ }
 
