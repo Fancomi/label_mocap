@@ -71,7 +71,9 @@ export function installGvhmr(ctx) {
     plainBtn.addEventListener('click', () => runGvhmr(false));
     bboxBtn.addEventListener('click', () => runGvhmr(true));
   }
-  const tab = ctx.registerTab({ mode: 'cloud', label: '☁ 云端', buildPanel });
+  // 云端 tab 依赖 2D 对齐视角(要看/确认带框推理用的框、bbox 叠加层是 2D 的),
+  // requires2d:true 让它享受本体统一的视图互斥规则(3D 禁用 + 自动跳离 + 框显示门控)。
+  const tab = ctx.registerTab({ mode: 'cloud', label: '☁ 云端', buildPanel, requires2d: true });
 
   // 当前帧图像 → base64(唯一来源:本体 images / videoSource,不另存副本)。
   async function currentFrameBase64() {
@@ -117,9 +119,14 @@ export function installGvhmr(ctx) {
         camK: { fx: k.fx, fy: k.fy, cx: k.cx, cy: k.cy }, signal: abort.signal,
       });
       if (store.currentFrame() !== frameAtStart) { ctx.setStatus('已切帧,放弃本次结果'); return; }
+      const hadBbox = store.hasBbox();
       store.applyCloudResult(cloudResultToFields(ann));   // 一个 undo 单元:无人则新建,有人则覆盖
       recordCamK(camK);                                   // 仅记录到数据,不动相机视野
-      await ctx.showFrame(frameAtStart);
+      await ctx.showFrame(frameAtStart);                  // 先渲染新人体(更新 lastVertices)
+      // 纯图推理(无框输入)且原本无框:从新人体投影一个紧框,使框立即可视/可用。
+      // 必须在 showFrame 之后 —— 投影依赖刚渲染的网格顶点。(带框推理保留用户输入的框;
+      // 原本已有框也不动 —— bbox⊥SMPL。)
+      if (!withBbox && !hadBbox) ctx.projectBboxFromMesh?.();
       ctx.setStatus('云端推理完成');
     } catch (e) {
       ctx.setStatus(String(e.message || e));

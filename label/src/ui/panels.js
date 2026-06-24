@@ -57,6 +57,8 @@ export class Panels {
     const clearSet = (prefix) => {
       for (const id of [`${prefix}-eul-x`, `${prefix}-eul-y`, `${prefix}-eul-z`, `${prefix}-eul-x-s`, `${prefix}-eul-y-s`, `${prefix}-eul-z-s`]) this._setVal($(id), '');
     };
+    // 体型滑块归位到中心(0)。range 无法置空,0 即「无数据」的视觉表示。
+    const clearBetas = () => { for (let i = 0; i < 10; i++) this._setVal($(`beta-${i}`), '0'); };
     const writeSet = (prefix, e) => {
       const dx = (e[0] * DEG).toFixed(1), dy = (e[1] * DEG).toFixed(1), dz = (e[2] * DEG).toFixed(1);
       this._setVal($(`${prefix}-eul-x`), dx);
@@ -74,10 +76,13 @@ export class Panels {
       : '—';
 
     if (!rot || !cur) {
+      // 无数据(或仅 bbox 帧):清空姿态/整体欧拉、整体平移、关节角度,并把体型滑块归 0。
+      // 否则切到未标注数据时会残留上一份数据的滑块/读数。
       clearSet('pose');
       clearSet('root');
       for (const id of ['pos-x', 'pos-y', 'pos-z']) this._setVal($(id), '');
       $('angle-list').innerHTML = '';
+      clearBetas();
     } else {
       // POSE set: only when a joint is selected in pose mode.
       if (ui && ui.mode === 'pose' && ui.selectedJoint != null) {

@@ -71,7 +71,10 @@ export class BboxOverlay {
   render(bbox) {
     this._bbox = bbox ? bbox.slice() : null;
     const cam = this._getCam();
-    const visible = bbox && cam && cam.mode === '2d' && this._getBboxVisible();
+    // 用 intendedMode():切换动画(1s slerp)期间 cam.mode 仍是旧值,会导致
+    // 「切 2D 时框消失、切 3D 时框出现」的反相 bug。intendedMode 取的是目标模式。
+    const mode2d = cam && (cam.intendedMode ? cam.intendedMode() === '2d' : cam.mode === '2d');
+    const visible = bbox && mode2d && this._getBboxVisible();
     if (!visible) {
       this._box.style.display = 'none';
       for (const corner of CORNERS) this._handles[corner].style.display = 'none';

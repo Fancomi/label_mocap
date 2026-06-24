@@ -219,6 +219,13 @@ export class CameraModes {
   /** Returns true while a tween is in progress. */
   isAnimating() { return this._tween !== null; }
 
+  /** The mode the camera is settling into: the tween destination while a switch
+   *  is animating, else the current mode. View-dependent visibility (e.g. the
+   *  2D bbox overlay, tab availability) MUST use this, not `this.mode` — during
+   *  the 1s slerp `this.mode` still holds the OLD value, which otherwise shows a
+   *  2D bbox in 3D and hides it in 2D (stale-mode bug). */
+  intendedMode() { return this._tween ? this._tween.dest : this.mode; }
+
   /** Returns background plane params for the current state, used by scene to position bg planes.
    *  Plane width/height in world units = image_pixels * z / focal, using factory meta_K.
    */

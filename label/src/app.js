@@ -89,10 +89,16 @@ let busyGuards = [];
 let pluginTabs = [];
 let drawArmed = false;   // 「新建框」按钮按下后置真:允许在画布上拖出一个新框,画一次即复位
 const isBusy = () => busyGuards.some((fn) => fn());
-// bbox 在哪些 tab 下可见:框 tab 与云端 tab(云端需看到/确认带框推理用的框)。
-// 收敛到一处,避免散落的 ui.mode === 'bbox' 判断各自漏改。
-const bboxVisibleModes = new Set(['bbox', 'cloud']);
-const bboxShownNow = () => !!ui && bboxVisibleModes.has(ui.mode);
+// ── 视图-模式互斥的单一事实源 ───────────────────────────────────────────────
+// twoDOnlyModes:这些编辑模式依赖 2D 对齐视角(框交互/bbox 叠加层),3D 下无意义。
+// 统一规则(避免散落的特判):
+//   1) 3D 时这些 tab 一律 disabled(refreshTabAvailability);
+//   2) 切到 3D 时若当前正处于其一,自动跳回安全模式 SAFE_MODE_3D;
+//   3) bbox 叠加层仅在「当前模式 ∈ twoDOnlyModes 且视图(目标)为 2D」时显示。
+// 'bbox' 是本体的;插件可经 registerTab({ requires2d:true }) 加入(如云端 'cloud')。
+const twoDOnlyModes = new Set(['bbox']);
+const SAFE_MODE_3D = 'root';   // 3D 下允许的默认模式(姿势/整体均可,取整体)
+const bboxShownNow = () => !!ui && twoDOnlyModes.has(ui.mode);
 // 编辑模式列表:本体四个 + 插件注册的额外 tab(registerTab 追加)。UIController 用它校验 setMode。
 // 顺序即 tab 顺序;modes[0]('root')是默认进入的模式,需与 index.html 里 .tab.on 一致。
 const editorModes = ['root', 'pose', 'bbox', 'beta'];
@@ -119,6 +125,7 @@ async function mountDataset({ coco, background }) {
   store = new AnnotationStore(coco);
   ui = new UIController({ readOnly, modes: editorModes });
   if (syncUI) ui.onChange(syncUI);
+  drawArmed = false;   // 切换数据集时复位画框武装态,避免残留到新数据
   $('slider').max = String(Math.max(0, store.frameCount() - 1));
   $('slider').value = '0';
   $('right').classList.remove('disabled');
@@ -433,7 +440,7 @@ function boot() {
   });
   $('dir-input').addEventListener('change', (e) => openFiles(e.target.files).catch((err) => setStatus(String(err))));
   $('btn-2d').addEventListener('click', () => { if (dragGuards.some((g) => g.isDragging())) return; cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); refreshTabAvailability(); if (syncUI) syncUI(); });
-  $('btn-3d').addEventListener('click', () => { if (dragGuards.some((g) => g.isDragging())) return; cam.switchTo('3d'); $('btn-3d').classList.add('on'); $('btn-2d').classList.remove('on'); if (ui && ui.mode === 'bbox') ui.setMode('pose'); refreshTabAvailability(); if (syncUI) syncUI(); });
+  $('btn-3d').addEventListener('click', () => { if (dragGuards.some((g) => g.isDragging())) return; cam.switchTo('3d'); $('btn-3d').classList.add('on'); $('btn-2d').classList.remove('on'); leave2dOnlyModeIfNeeded(); refreshTabAvailability(); if (syncUI) syncUI(); });
   $('slider').addEventListener('input', (e) => { if (!store) return; setPlaying(false); showFrame(+e.target.value); });
   $('btn-prev').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.max(0, store.currentFrame() - 1)); });
   $('btn-next').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.min(store.frameCount() - 1, store.currentFrame() + 1)); });
@@ -483,9 +490,11 @@ function boot() {
   document.querySelectorAll('#tabs .tab').forEach(bindTab);
 
   // 插件 tab 注册扩展点:追加一个互斥编辑 tab(标签按钮 + 面板),并入 editorModes/
-  // tabs/tabpanel 渲染。返回 { remove } 供插件卸载时彻底移除。本体不出现插件名字。
-  function registerTab({ mode, label, buildPanel }) {
+  // tabs/tabpanel 渲染。requires2d:true 表示该 tab 依赖 2D 视角(并入 twoDOnlyModes,
+  // 享受统一互斥规则:3D 禁用 + 自动跳离 + bbox 显示门控)。返回 { remove } 供卸载。
+  function registerTab({ mode, label, buildPanel, requires2d = false }) {
     editorModes.push(mode);
+    if (requires2d) twoDOnlyModes.add(mode);
     const btn = document.createElement('button');
     btn.className = 'tab'; btn.dataset.mode = mode; btn.textContent = label;
     $('tabs').appendChild(btn);
@@ -497,6 +506,7 @@ function boot() {
     pluginTabs.push({ mode, btn, panel });
     return { remove() {
       const i = editorModes.indexOf(mode); if (i >= 0) editorModes.splice(i, 1);
+      twoDOnlyModes.delete(mode);
       btn.remove(); panel.remove();
       pluginTabs = pluginTabs.filter((t) => t.mode !== mode);
     } };
@@ -554,9 +564,18 @@ function boot() {
   engageGuards.push(bboxOverlay);
 
   // ui.onChange fires whenever mode/joint changes → sync tabs, panels, gizmos.
+  // 3D 视角下禁用所有「2D-only」tab(框/云端等);单一规则,新插件 tab 自动纳入。
   function refreshTabAvailability() {
-    const bboxTab = document.querySelector('#tabs .tab[data-mode="bbox"]');
-    if (bboxTab) bboxTab.disabled = (cam.mode === '3d');
+    const is3d = cam.intendedMode() === '3d';
+    document.querySelectorAll('#tabs .tab').forEach((b) => {
+      if (twoDOnlyModes.has(b.dataset.mode)) b.disabled = is3d;
+    });
+  }
+
+  // 切到 3D 时,若当前正处于某个 2D-only 模式,自动跳回 3D 下安全模式(避免停在
+  // 一个已禁用且无意义的 tab)。在 cam.switchTo('3d') 之后、syncUI 之前调用。
+  function leave2dOnlyModeIfNeeded() {
+    if (ui && twoDOnlyModes.has(ui.mode)) { drawArmed = false; ui.setMode(SAFE_MODE_3D); }
   }
 
   syncUI = () => {
@@ -616,23 +635,29 @@ function boot() {
     if (syncUI) syncUI();
   });
 
-  $('btn-bbox-auto').addEventListener('click', () => {
-    if (!store || !store.current() || ui?.readOnly || !lastVertices) return;
+  // 从当前帧已渲染的人体网格投影出一个紧框,写入 bbox(一个 undo 单元)。
+  // 供「⌖ 从人体投影」按钮与云端纯图推理后自动补框复用。需先有 SMPL(lastVertices)。
+  function autoBboxFromMesh() {
+    if (!store || !store.current() || ui?.readOnly || !lastVertices) return false;
     store.beginEdit();
     store.applyFields({ bbox: projectBboxFromMesh(lastVertices, cam.K) });
     store.commitEdit();
     panels.syncFromState();
-    if (bboxOverlay) bboxOverlay.render(store.current()?.bbox ?? null);
-  });
+    if (bboxOverlay) bboxOverlay.render(bboxShownNow() ? (store.current()?.bbox ?? null) : null);
+    return true;
+  }
+
+  $('btn-bbox-auto').addEventListener('click', autoBboxFromMesh);
 
   // 「新建框」:武装画框态(仅当前帧无框时有意义),用户随后在画布上拖出一个框。
   $('btn-bbox-new').addEventListener('click', () => {
     if (!store || ui?.readOnly) return;
     if (store.hasBbox()) { setStatus('本帧已有框,可拖四角调整'); return; }
-    if (cam.mode !== '2d') { cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); }
+    if (cam.mode !== '2d') { cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); refreshTabAvailability(); }
     setPlaying(false);
     drawArmed = true;
     setStatus('在画面上拖出一个方框');
+    if (syncUI) syncUI();
   });
 
   // 2D 滚轮:裸滚轮 = 以光标为中心缩放视图(viewOffset,不改内外参/数据);
@@ -736,6 +761,8 @@ function boot() {
         return file ? file.name : `frame_${store.currentFrame()}.jpg`;
       },
       setStatus, setPlaying, showFrame,
+      // 云端纯图推理(无框输入)落地后,从新人体投影一个紧框,使框立即可视/可用。
+      projectBboxFromMesh: () => autoBboxFromMesh(),
       requestSync: () => { if (syncUI) syncUI(); },
       registerTab,
       registerSyncHook: (fn) => syncHooks.push(fn),
