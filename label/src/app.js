@@ -4,6 +4,7 @@ import { forwardSmpl } from '../../smpl_core/lbs.js';
 import { mat3ToQuat } from '../../smpl_core/rotations.js';
 import { JOINT_NAMES } from '../../smpl_core/joint_names.js';
 import { CocoDocument } from '../../smpl_edit/coco_document.js';
+import { bodyBounds } from '../../smpl_edit/framing.js';
 import { assertHasContent, isPortrait } from './io/source_loader.js';
 import { orderedImageNames, basename } from './io/image_order.js';
 import { AnnotationStore } from '../../smpl_edit/annotation_store.js';
@@ -449,6 +450,13 @@ function boot() {
 
   $('btn-undo').addEventListener('click', () => { if (store) { store.undo(); showFrame(store.currentFrame()); } });
   window.addEventListener('keydown', (e) => { if (store && !isBusy() && (e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); store.undo(); showFrame(store.currentFrame()); } });
+  window.addEventListener('keydown', (e) => {
+    if (!store || isBusy() || e.target.matches('input,select,textarea')) return;
+    if (e.key !== 'f' && e.key !== 'F') return;
+    const b = bodyBounds(lastJoints);
+    if (!b) { setStatus('无人体可聚焦'); return; }
+    if (!cam.focusOn(b.center, b.radius)) setStatus('2D 模式不聚焦，切到 3D 后按 F');
+  });
 
   const toggle = (id, key) => $(id).addEventListener('click', () => {
     const on = !$(id).classList.contains('on');

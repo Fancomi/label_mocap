@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { computeWindow, zoomAtSolve, imageToCanvasNorm, canvasNormToImage, clampPan } from './view_zoom.js';
+import { focusPlacement } from '../../../smpl_edit/framing.js';
 
 const TWEEN_MS = 1000;
 
@@ -214,6 +215,21 @@ export class CameraModes {
     this._pose3D.target.copy(vec3);
     this._pose3D.quaternion.copy(
       this._quatLookingAt(this._pose3D.position, vec3));
+  }
+
+  /** F 聚焦:仅 3D 模式生效。保持朝向,把 controls.target 移到 center 并按 radius 拉开。
+   *  2D 模式(锁内参看图)不响应——视口已足够小。返回是否执行。 */
+  focusOn(center, radius) {
+    if (this.mode !== '3d' || this.isAnimating()) return false;
+    const view = { position: this.camera.position.toArray(), target: this.controls.target.toArray() };
+    const out = focusPlacement(view, center, radius);
+    this.camera.position.set(out.position[0], out.position[1], out.position[2]);
+    this.controls.target.set(out.target[0], out.target[1], out.target[2]);
+    this._pose3D.position.copy(this.camera.position);
+    this._pose3D.target.copy(this.controls.target);
+    this._pose3D.quaternion.copy(this._quatLookingAt(this.camera.position, this.controls.target));
+    this.controls.update();
+    return true;
   }
 
   /** Returns true while a tween is in progress. */
