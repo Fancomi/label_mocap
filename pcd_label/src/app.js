@@ -34,6 +34,7 @@ let jointGridButtons = [];
 let lastVertices = null, lastJoints = null, lastWorldRot = null;
 let syncUI = null, syncHooks = [], dragGuards = [], engageGuards = [];
 let mgr = null;
+let placeBordersAndCaps = () => {}; // boot2 赋值;onActiveChange 可在赋值前安全调(占位)
 const camConsumers = []; // active 视口切换时,把新相机推给各交互组件(运行时填充)
 let playing = false, fps = 10, lastTick = 0, acc = 0;
 // 坐标轴(上轴/前轴)只影响观察者相机,不旋转点云/SMPL。AXIS_TO_IDX 给「高度配色」用。
@@ -186,7 +187,7 @@ function boot() {
   const vpFront = new Viewport({ name: 'front', kind: 'ortho', canvas: $('c'), dirAxis: axisFront, upAxis: axisUp });
   mgr = new ViewportManager({
     viewports: [vpMain, vpSide, vpFront], canvas: $('c'),
-    onActiveChange: () => { const c = mgr.activeCamera(); camConsumers.forEach((fn) => fn(c)); },
+    onActiveChange: () => { const c = mgr.activeCamera(); camConsumers.forEach((fn) => fn(c)); placeBordersAndCaps(); },
   });
   scene.setManager(mgr);
   scene.setCamera(cam); // resize 防 null + 单视口回退仍走 cam
@@ -269,12 +270,32 @@ function boot2() {
   };
   const setPreset = (p, btn) => {
     mgr.setLayout(p);
-    ['vp-single', 'vp-tri', 'vp-mainbig'].forEach((id) => $(id).classList.toggle('on', id === btn));
-    placeSplits();
+    ['vp-single', 'vp-tri'].forEach((id) => $(id).classList.toggle('on', id === btn));
+    placeSplits(); placeBordersAndCaps();
   };
   $('vp-single').addEventListener('click', () => setPreset('single', 'vp-single'));
   $('vp-tri').addEventListener('click', () => setPreset('tri', 'vp-tri'));
-  $('vp-mainbig').addEventListener('click', () => setPreset('main-big', 'vp-mainbig'));
+  // DOM 视口边框(active 高亮)+ 各视口右上角「⊙ 锁定为重置视角」按钮的定位。
+  placeBordersAndCaps = () => {
+    const stage = $('stage'); const W = stage.clientWidth, H = stage.clientHeight;
+    const host = $('vp-borders'); if (!host) return; host.innerHTML = '';
+    const rects = mgr.visibleRects();
+    const active = mgr.activeViewport()?.name;
+    for (const r of rects) {
+      const d = document.createElement('div');
+      d.className = 'vp-border' + (r.name === active ? ' active' : '');
+      d.style.left = `${r.x * W}px`; d.style.top = `${r.y * H}px`;
+      d.style.width = `${r.w * W}px`; d.style.height = `${r.h * H}px`;
+      host.appendChild(d);
+    }
+    for (const [capId, vpName] of [['vp-cap-side', 'side'], ['vp-cap-front', 'front']]) {
+      const cap = $(capId); const rect = rects.find((x) => x.name === vpName);
+      if (!rect) { cap.style.display = 'none'; continue; }
+      cap.style.display = 'block';
+      cap.style.left = `${(rect.x + rect.w) * W - 24}px`;
+      cap.style.top = `${rect.y * H + 4}px`;
+    }
+  };
   const dragSplit = (el, axis) => {
     el.addEventListener('pointerdown', (e) => {
       e.preventDefault(); const stage = $('stage');
@@ -282,23 +303,30 @@ function boot2() {
         const r = stage.getBoundingClientRect();
         if (axis === 'v') mgr.setSplits({ v: Math.min(0.92, Math.max(0.4, (ev.clientX - r.left) / r.width)) });
         else mgr.setSplits({ h: Math.min(0.85, Math.max(0.15, (ev.clientY - r.top) / r.height)) });
-        placeSplits();
+        placeSplits(); placeBordersAndCaps();
       };
       const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
       window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
     });
   };
   dragSplit($('vp-split-v'), 'v'); dragSplit($('vp-split-h'), 'h');
-  const lockBtn = (id, name, label) => $(id).addEventListener('click', () => {
+  // ⊙ 角按钮:把该视口当前相机相对人体中心的方位记为「重置视角」(R 据此还原)。
+  const capBtn = (id, name) => $(id).addEventListener('click', () => {
     const vp = mgr.viewport(name); if (!vp) return;
-    vp.setLocked(!vp.locked);
-    mgr.syncControlsEnabled(); // 锁/解锁后重新同步各视口 controls 启停
-    $(id).textContent = (vp.locked ? '🔒' : '🔓') + label;
-    $(id).classList.toggle('on', vp.locked);
+    const b = bodyBounds(lastJoints);
+    vp.captureAsReset(b ? b.center : undefined);
+    $(id).classList.add('on'); setTimeout(() => $(id).classList.remove('on'), 400);
+    setStatus(`已锁定${name === 'side' ? '侧' : '正'}视为重置视角`);
   });
-  lockBtn('vp-lock-side', 'side', '侧'); lockBtn('vp-lock-front', 'front', '正');
-  window.addEventListener('resize', placeSplits);
-  placeSplits();
+  capBtn('vp-cap-side', 'side'); capBtn('vp-cap-front', 'front');
+  window.addEventListener('resize', () => { placeSplits(); placeBordersAndCaps(); });
+  placeSplits(); placeBordersAndCaps();
+
+  // 快捷键提示面板最小化。
+  $('kbd-hint-toggle').addEventListener('click', () => {
+    const min = $('kbd-hint').classList.toggle('min');
+    $('kbd-hint-toggle').textContent = min ? '▸' : '▾';
+  });
 
   window.addEventListener('keydown', (e) => {
     if (!store || e.target.matches('input,select,textarea')) return;
@@ -310,9 +338,6 @@ function boot2() {
       vp.focus(b.center, b.radius);
     } else if (e.key === 'r' || e.key === 'R') {
       vp.resetOrientation(b ? b.center : undefined, b ? b.radius : undefined);
-      mgr.syncControlsEnabled();
-      if (vp.name === 'side') { $('vp-lock-side').textContent = '🔓侧'; $('vp-lock-side').classList.remove('on'); }
-      if (vp.name === 'front') { $('vp-lock-front').textContent = '🔓正'; $('vp-lock-front').classList.remove('on'); }
     }
   });
 
@@ -341,6 +366,9 @@ function boot3() {
   camConsumers.push((c) => poseGizmo.setCamera(c));
   camConsumers.push((c) => rootHandle.setCamera(c));
   camConsumers.push((c) => jointPicker.setCamera(c));
+
+  // 注册手柄场景对象给 manager:逐区渲染时仅 active 视口那一遍可见(否则三视口都画出 gizmo)。
+  mgr.registerHandleObjects([...poseGizmo.sceneObjects(), ...rootHandle.sceneObjects()]);
 
   syncUI = () => {
     if (!ui) return;
@@ -383,6 +411,7 @@ function boot4() {
       registerSyncHook: (fn) => syncHooks.push(fn),
       registerGuard: (g) => { dragGuards.push(g); engageGuards.push(g); },
       registerCameraConsumer: (fn) => camConsumers.push(fn),
+      registerHandleObjects: (objs) => mgr.registerHandleObjects(objs),
       ndcMapper: (e) => mgr.pointerToNdc(e), // 多视口:IK 两柄的指针→NDC 重映射(单视口等价整块 canvas)
     });
   }

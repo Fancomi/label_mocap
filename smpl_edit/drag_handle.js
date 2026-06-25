@@ -75,6 +75,9 @@ export class DragHandle {
 
   markerMesh() { return this._marker; }
 
+  // 场景中由本手柄 add 的对象(供 ViewportManager 注册为仅 active 视口可见;marker 是 _proxy 子节点随之隐藏)。
+  sceneObjects() { return [this._proxy, this._tc]; }
+
   update() { /* TransformControls 自动跟随相机更新 */ }
 
   setCamera(camera) { if (camera && this._tc) this._tc.camera = camera; }

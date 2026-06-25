@@ -25,6 +25,19 @@
     .vp-split { position:absolute; z-index:4; background:transparent; }
     #vp-split-v { top:0; bottom:0; width:6px; cursor:col-resize; }
     #vp-split-h { right:0; height:6px; cursor:row-resize; }
+    #vp-borders { position:absolute; inset:0; pointer-events:none; z-index:3; }
+    .vp-border { position:absolute; border:1px solid #2a3a4a; box-sizing:border-box; }
+    .vp-border.active { border-color:#2fd6e0; box-shadow:0 0 0 1px #2fd6e0 inset; }
+    .vp-cap { position:absolute; z-index:5; width:20px; height:20px; line-height:18px; text-align:center; background:#16202c; color:#cfe; border:1px solid #2a3340; border-radius:4px; cursor:pointer; font-size:12px; display:none; }
+    .vp-cap.on { background:#2563a8; }
+    .kbd-hint { position:absolute; right:8px; bottom:8px; z-index:6; background:#111922; border:1px solid #2a3340; border-radius:6px; color:#bcd; font-size:11px; min-width:140px; }
+    .kbd-hint-head { display:flex; justify-content:space-between; align-items:center; padding:4px 8px; border-bottom:1px solid #2a3340; }
+    .kbd-hint-head button { background:none; border:none; color:#8ab; cursor:pointer; font-size:12px; }
+    .kbd-hint-body { padding:6px 8px; display:flex; flex-direction:column; gap:3px; }
+    .kbd-hint-body b { color:#2fd6e0; }
+    .kbd-hint-note { color:#789; margin-top:2px; }
+    .kbd-hint.min .kbd-hint-body { display:none; }
+    .kbd-hint.min { min-width:0; }
     #loading { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:240px; background:rgba(0,0,0,.7); padding:14px 16px; border-radius:8px; text-align:center; }
     #loading[hidden] { display:none; }
     #loading-text { font-size:12px; color:#cde; margin-bottom:8px; }
@@ -106,11 +119,21 @@
   <div id="stage"><canvas id="c"></canvas><div id="vp-bar">
       <button id="vp-single" title="单视口">▢</button>
       <button id="vp-tri" class="on" title="三视口">▥</button>
-      <button id="vp-mainbig" title="主大参考小">◰</button>
-      <button id="vp-lock-side" title="锁侧视">🔓侧</button>
-      <button id="vp-lock-front" title="锁正视">🔓正</button>
-      <span class="vp-hint">F聚焦 R重置朝向</span>
-    </div><div id="vp-split-v" class="vp-split"></div><div id="vp-split-h" class="vp-split"></div><div id="status">就绪 — 请打开序列目录</div><div id="loading" hidden><div id="loading-text">加载模型…</div><div id="loading-track"><div id="loading-bar"></div></div></div></div>
+    </div>
+    <div id="vp-split-v" class="vp-split"></div>
+    <div id="vp-split-h" class="vp-split"></div>
+    <div id="vp-borders"></div>
+    <div id="vp-cap-side" class="vp-cap" title="锁定为重置视角(侧)">⊙</div>
+    <div id="vp-cap-front" class="vp-cap" title="锁定为重置视角(正)">⊙</div>
+    <div id="kbd-hint" class="kbd-hint">
+      <div class="kbd-hint-head"><span>快捷键</span><button id="kbd-hint-toggle" title="最小化">▾</button></div>
+      <div class="kbd-hint-body">
+        <div><b>F</b> 聚焦人体中心</div>
+        <div><b>R</b> 重置当前视口朝向</div>
+        <div><b>⊙</b> 锁定为重置视角(侧/正)</div>
+        <div class="kbd-hint-note">鼠标所在视口为当前视口</div>
+      </div>
+    </div><div id="status">就绪 — 请打开序列目录</div><div id="loading" hidden><div id="loading-text">加载模型…</div><div id="loading-track"><div id="loading-bar"></div></div></div></div>
 
   <aside id="right" class="disabled">
     <div class="card">

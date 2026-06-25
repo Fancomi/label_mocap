@@ -68,6 +68,9 @@ export function installIK(ctx) {
   // 其它 app(单视口)不传 registerCameraConsumer 时 ?. 静默跳过。
   ctx.registerCameraConsumer?.((c) => { _activeCam = c; ikHandle.setCamera(c); poleHandle.setCamera(c); });
 
+  // 多视口:把两柄的场景对象注册为「仅 active 视口可见」(单视口 app 不传时 ?. 跳过)。
+  ctx.registerHandleObjects?.([...ikHandle.sceneObjects(), ...poleHandle.sceneObjects()]);
+
   // 多视口:把两柄 TC 的指针→NDC 重映射成 active 视口子矩形(覆写整块-canvas getPointer)。
   // 单视口 app 不传 ndcMapper 时跳过,走整块 canvas 旧路径(零回归)。
   if (ctx.ndcMapper) { ikHandle.setNdcMapper?.(ctx.ndcMapper); poleHandle.setNdcMapper?.(ctx.ndcMapper); }

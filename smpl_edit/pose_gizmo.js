@@ -25,9 +25,13 @@ export class PoseGizmo {
       else this._getStore().commitEdit();
     });
     this._tc.addEventListener('objectChange', () => this._onDrag());
-    this._scene.add(this._tc.getHelper ? this._tc.getHelper() : this._tc);
+    this._helper = this._tc.getHelper ? this._tc.getHelper() : this._tc;
+    this._scene.add(this._helper);
     this.detach();
   }
+
+  // 场景中由本 gizmo add 的对象(供 ViewportManager 注册为仅 active 视口可见)。
+  sceneObjects() { return [this._proxy, this._helper]; }
 
   // qParentWorld: [x,y,z,w] parent joint world rotation. worldPos: [x,y,z].
   attach(jointBody, worldPos, qParentWorld) {

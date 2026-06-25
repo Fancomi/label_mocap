@@ -70,6 +70,9 @@ export class RootHandle {
 
   update() { /* TransformControls auto-updates against the camera */ }
 
+  // 场景中由本手柄 add 的对象(供 ViewportManager 注册为仅 active 视口可见)。
+  sceneObjects() { return [this._proxy, this._tc]; }
+
   setCamera(camera) { if (camera && this._tc) this._tc.camera = camera; }
 
   // 多视口:用 active 视口子矩形把指针重映射为 NDC(覆写 vendored TransformControls 的整块-canvas getPointer)。
