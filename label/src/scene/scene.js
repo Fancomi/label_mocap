@@ -24,6 +24,10 @@ export class LabelScene {
     key.position.set(3, 5, -2);
     this._scene.add(key);
     this._scene.add(new THREE.AmbientLight(0xffffff, 0.15));
+    this._headLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    this._scene.add(this._headLight);
+    this._scene.add(this._headLight.target);
+    this._followCenter = null;
 
     this._cam = null;
     this._mesh = null;
@@ -120,6 +124,14 @@ export class LabelScene {
 
   setFlag(key, value) { this._flags[key] = value; this._applyVisibility(); }
 
+  setMeshOpacity(v) {
+    if (!this._mesh) return;
+    const m = this._mesh.material;
+    if (v >= 1) { m.transparent = false; m.opacity = 1; m.depthWrite = true; }
+    else { m.transparent = true; m.opacity = Math.max(0.05, v); m.depthWrite = false; }
+    m.needsUpdate = true;
+  }
+
   // Person-visibility gate independent of display flags. Hides the posed
   // mesh/joints/bones for empty frames (e.g. after deleting an annotation).
   setPersonVisible(v) { this._personVisible = v; this._applyVisibility(); }
@@ -147,7 +159,7 @@ export class LabelScene {
     geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
     geom.setIndex(new THREE.BufferAttribute(new Uint32Array(faces), 1));
     this._mesh = new THREE.Mesh(geom, new THREE.MeshLambertMaterial({
-      color: 0xf0f0f0, side: THREE.DoubleSide, transparent: false, opacity: 1, depthWrite: true,
+      color: 0xfafafa, side: THREE.DoubleSide, transparent: false, opacity: 1, depthWrite: true,
     }));
     this._mesh.frustumCulled = false;
     this._mesh.renderOrder = 5;
@@ -249,6 +261,16 @@ export class LabelScene {
   }
 
   setBackgroundTexture(texture) {
+    if (!texture) {
+      // 清屏:清掉背景面的贴图(加载失败/空数据集复位)。_applyVisibility 每帧按 _flags.bg
+      // 重设 .visible,故这里清 material.map 而非只设 visible,避免旧底图残留。
+      this._pendingTex = null;
+      this._bgTex = null;
+      for (const plane of [this._bgFar, this._bgNear]) {
+        if (plane) { plane.material.map = null; plane.material.needsUpdate = true; }
+      }
+      return;
+    }
     if (!this._cam) {
       // Defer until render() when cam is available
       this._pendingTex = texture;
@@ -295,7 +317,17 @@ export class LabelScene {
     }
 
     this._applyVisibility();
+    this.setLightFromCamera(this._cam.camera, this._followCenter);
     this._cam.update();
     this._renderer.render(this._scene, this._cam.camera);
+  }
+
+  setFollowCenter(c) { this._followCenter = c; }
+  // 头灯:光从相机方向打向人体中心,使面向相机的面受光。
+  setLightFromCamera(cam, center) {
+    if (!this._headLight || !cam) return;
+    const c = center || [0, 0, 0];
+    this._headLight.target.position.set(c[0], c[1], c[2]);
+    this._headLight.position.copy(cam.position);
   }
 }

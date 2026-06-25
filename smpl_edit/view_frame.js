@@ -25,6 +25,14 @@ export function axisVec(name) {
   return v.slice();
 }
 
+// 单位向量 → 最接近的轴字母('X'|'Y'|'Z',取绝对值最大分量)。axisVec 的逆向。
+// 用于从 viewFrame(up,front).right 反推侧视的正对轴。
+export function axisName(v) {
+  const a = [Math.abs(v[0]), Math.abs(v[1]), Math.abs(v[2])];
+  const i = a[0] >= a[1] && a[0] >= a[2] ? 0 : (a[1] >= a[2] ? 1 : 2);
+  return ['X', 'Y', 'Z'][i];
+}
+
 // 给定上轴,返回与之垂直、可作为前轴的另两个轴(供 UI 下拉联动)。
 export const FRONT_OPTIONS = { X: ['Y', 'Z'], Y: ['X', 'Z'], Z: ['X', 'Y'] };
 

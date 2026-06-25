@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { tightenTranslatePicker } from './transform_picker.js';
+import { setTcCamera, setTcNdcMapper } from './tc_multiview.js';
 
 // 造一个统一风格的标识 mesh(始终可见于深度之上,便于点选)。
 export function makeHandleMarker(geometry, color) {
@@ -75,7 +76,13 @@ export class DragHandle {
 
   markerMesh() { return this._marker; }
 
+  // 场景中由本手柄 add 的对象(供 ViewportManager 注册为仅 active 视口可见;marker 是 _proxy 子节点随之隐藏)。
+  sceneObjects() { return [this._proxy, this._tc]; }
+
   update() { /* TransformControls 自动跟随相机更新 */ }
+
+  setCamera(camera) { setTcCamera(this._tc, camera); }
+  setNdcMapper(fn) { setTcNdcMapper(this._tc, fn); } // 多视口:指针→active 视口子矩形 NDC
 
   // isEngaged:悬停或拖拽(渲染循环据此提早锁住 OrbitControls);
   // isDragging:仅真正拖拽(用于拦截模式/标签切换)。

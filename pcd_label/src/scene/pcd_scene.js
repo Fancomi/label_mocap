@@ -24,8 +24,13 @@ export class PcdScene {
     const key = new THREE.DirectionalLight(0xffffff, 0.8); key.position.set(3, 5, 2);
     this._scene.add(key);
     this._scene.add(new THREE.AmbientLight(0xffffff, 0.2));
+    this._headLight = new THREE.DirectionalLight(0xffffff, 0.55);
+    this._scene.add(this._headLight);
+    this._scene.add(this._headLight.target);
+    this._followCenter = null;
 
     this._cam = null;
+    this._manager = null;
     this._mesh = null; this._jointsGroup = null; this._bonesGroup = null;
     this._lastJoints = null; this._personVisible = false;
     this._flags = { points: true, mesh: true, joints: true, bones: true, grid: true, axes: false };
@@ -40,6 +45,7 @@ export class PcdScene {
 
   threeScene() { return this._scene; }
   setCamera(cam) { this._cam = cam; }
+  setManager(mgr) { this._manager = mgr; }
 
   // 地面网格朝向随「上轴」对齐(纯视觉:网格只是地平面参考,不旋转任何数据/SMPL)。
   // GridHelper 默认在 XZ 平面(法线 +Y)。Z-up → 绕 X 转 90° 使其落在 XY 平面;
@@ -67,7 +73,7 @@ export class PcdScene {
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
     geom.setIndex(new THREE.BufferAttribute(new Uint32Array(faces), 1));
-    this._mesh = new THREE.Mesh(geom, new THREE.MeshLambertMaterial({ color: 0xf0c0a0, side: THREE.DoubleSide }));
+    this._mesh = new THREE.Mesh(geom, new THREE.MeshLambertMaterial({ color: 0xf2ddd0, side: THREE.DoubleSide }));
     this._mesh.frustumCulled = false; this._mesh.renderOrder = 5; this._scene.add(this._mesh);
 
     this._jointsGroup = new THREE.Group(); this._jointsGroup.frustumCulled = false;
@@ -112,6 +118,14 @@ export class PcdScene {
   setPersonVisible(v) { this._personVisible = v; this._applyVisibility(); }
   setFlag(key, v) { this._flags[key] = v; this._applyVisibility(); }
 
+  setMeshOpacity(v) {
+    if (!this._mesh) return;
+    const m = this._mesh.material;
+    if (v >= 1) { m.transparent = false; m.opacity = 1; m.depthWrite = true; }
+    else { m.transparent = true; m.opacity = Math.max(0.05, v); m.depthWrite = false; }
+    m.needsUpdate = true;
+  }
+
   _applyVisibility() {
     this.pointCloud.setVisible(this._flags.points);
     if (this._mesh) this._mesh.visible = this._flags.mesh && this._personVisible;
@@ -128,12 +142,28 @@ export class PcdScene {
     this._canvas.style.width = `${w}px`; this._canvas.style.height = `${h}px`;
     this._renderer.setSize(w, h, false);
     this._cam.resize(w, h);
+    if (this._manager) this._manager.resize();
   }
 
   render() {
-    if (!this._cam) return;
     this._applyVisibility();
+    if (this._manager) {
+      this.setLightFromCamera(this._manager.activeCamera(), this._followCenter);
+      this._manager.render(this._renderer, this._scene);
+      return;
+    }
+    if (!this._cam) return;
+    this.setLightFromCamera(this._cam.camera, this._followCenter);
     this._cam.update();
     this._renderer.render(this._scene, this._cam.camera);
+  }
+
+  setFollowCenter(c) { this._followCenter = c; }
+  // 头灯:光从相机方向打向人体中心,使面向相机的面受光。
+  setLightFromCamera(cam, center) {
+    if (!this._headLight || !cam) return;
+    const c = center || [0, 0, 0];
+    this._headLight.target.position.set(c[0], c[1], c[2]);
+    this._headLight.position.copy(cam.position);
   }
 }

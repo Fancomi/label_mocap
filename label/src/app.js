@@ -4,6 +4,7 @@ import { forwardSmpl } from '../../smpl_core/lbs.js';
 import { mat3ToQuat } from '../../smpl_core/rotations.js';
 import { JOINT_NAMES } from '../../smpl_core/joint_names.js';
 import { CocoDocument } from '../../smpl_edit/coco_document.js';
+import { bodyBounds } from '../../smpl_edit/framing.js';
 import { assertHasContent, isPortrait } from './io/source_loader.js';
 import { orderedImageNames, basename } from './io/image_order.js';
 import { AnnotationStore } from '../../smpl_edit/annotation_store.js';
@@ -103,7 +104,15 @@ const bboxShownNow = () => !!ui && twoDOnlyModes.has(ui.mode);
 // 顺序即 tab 顺序;modes[0]('root')是默认进入的模式,需与 index.html 里 .tab.on 一致。
 const editorModes = ['root', 'pose', 'bbox', 'beta'];
 
-function isJpeg(name) { return /\.(jpe?g)$/i.test(name); }
+function isImageName(name) { return /\.(jpe?g|png|bmp)$/i.test(name); }
+
+// 2D viewOffset 假缩放下 TC 的 size 公式不吃 viewOffset,手柄屏幕尺寸不随缩放变。
+// 按 1/zoom 反向缩放手柄抵消(3D 用真相机,size 公式自适应 → 复位为 1)。
+function syncHandleScale() {
+  const s = (cam && cam.mode === '2d') ? 1 / Math.max(1e-3, cam.getZoom()) : 1;
+  poseGizmo?.setHandleScale(s);
+  rootHandle?.setHandleScale(s);
+}
 
 function setPlaying(on) {
   playing = on && store && store.frameCount() > 0;
@@ -115,10 +124,10 @@ function setPlaying(on) {
 // 两条 open 路径(目录/视频 与 本地文件)的公共尾段:校验内容、竖拍 gate、装配
 // store/ui/slider/right/model/scene,并显示首帧。调用方各自先准备好 coco/background
 // 以及 images(Map)或 videoSource(模块级变量),mountDataset 不触碰它们。
-async function mountDataset({ coco, background }) {
+async function mountDataset({ coco, background, hint = {} }) {
   const ids = coco.imageIds();
   const dataFrameIndices = ids.map((id, idx) => (coco.getAnnotation(id) ? idx : -1)).filter((x) => x >= 0);
-  assertHasContent({ bgCount: background ? background.count : 0, dataFrameIndices });
+  assertHasContent({ bgCount: background ? background.count : 0, dataFrameIndices, hint });
   const info = coco.imageInfo(ids[0]);
   readOnly = info ? isPortrait(info) : false;
   if (readOnly) setStatus('⚠ 该数据为竖拍/旋转,标注器仅支持查看;请用其他软件转正后再标注');
@@ -177,7 +186,7 @@ async function openFiles(fileList) {
   const files = Array.from(fileList ?? []);
   const jsonFile = files.find((f) => f.name.endsWith('.json'));
   loadedJsonFile = jsonFile ?? null;
-  const imageFiles = files.filter((f) => isJpeg(f.name));
+  const imageFiles = files.filter((f) => isImageName(f.name));
   // basename -> File lookup (no positional ordering; ordering comes from
   // orderedImageNames so the background follows the json's images[] order).
   const byName = new Map(imageFiles.map((f) => [basename(f.name), f]));
@@ -202,7 +211,8 @@ async function openFiles(fileList) {
   const bgCount = names.length;
   const background = bgCount ? { kind: 'image_sequence', count: bgCount } : null;
 
-  await mountDataset({ coco, background });
+  const hasManifest = files.some((f) => basename(f.webkitRelativePath || f.name) === 'manifest.json');
+  await mountDataset({ coco, background, hint: { hasManifest } });
 }
 
 async function openFromDirSource(opts = {}) {
@@ -245,7 +255,7 @@ async function openFromDirSource(opts = {}) {
     coco = new CocoDocument({ images: Array.from({ length: bgCount }, (_, i) => ({ id: i })), annotations: [], categories: [] });
   }
 
-  await mountDataset({ coco, background });
+  await mountDataset({ coco, background, hint: { hasManifest: !!cls.hasManifest } });
 }
 
 async function openDirectoryData() {
@@ -278,6 +288,7 @@ function applyAnnotation() {
   lastWorldRot = out.worldRot;
   scene.updateMesh(out.vertices, out.joints);
   cam.set3DFollowTarget(new THREE.Vector3(out.joints[0], out.joints[1], out.joints[2]));
+  scene.setFollowCenter(lastJoints ? (bodyBounds(lastJoints)?.center ?? null) : null);
   if (panels) panels.syncFromState();
   if (bboxOverlay) bboxOverlay.render(store.current()?.bbox ?? null);
 }
@@ -307,7 +318,7 @@ function renderAnnoActions() {
 async function showFrame(i) {
   store.setFrame(i);
   $('slider').value = String(i);
-  $('frame-info').textContent = `${i} / ${store.frameCount() - 1}`;
+  $('frame-info').textContent = `${i + 1} / ${store.frameCount()}`; // 1-based 显示;内部仍 0-based(对齐不变)
   const a = store.current();
   if (a && store.hasSmpl()) {
     rotation = RotationState.fromAxisAngle({ root_rota: a.root_rota, body_pose: a.body_pose });
@@ -429,16 +440,23 @@ function boot() {
     if (!e.target.closest('.menu-anchor')) m.hidden = true;
   });
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { const m = $('open-menu'); if (m) m.hidden = true; } });
+  // 加载失败:除提示外把场景复位成「明确空白」,避免半初始化的黑屏被当成卡死。
+  const onLoadError = (e) => {
+    if (e?.name === 'AbortError') return;
+    setStatus(String(e?.message ?? e));
+    if (scene) { scene.setBackgroundTexture(null); scene.setPersonVisible(false); }
+    $('right').classList.add('disabled');
+  };
   $('open-dir').addEventListener('click', () => {
     $('open-menu').hidden = true;
-    openDirectoryData().catch((e) => { if (e?.name !== 'AbortError') setStatus(String(e)); });
+    openDirectoryData().catch(onLoadError);
   });
   $('open-video').addEventListener('click', () => {
     $('open-menu').hidden = true;
     if (!videoOpenSupported()) { setStatus('当前浏览器不支持打开视频文件,请用 Chrome/Edge'); return; }
-    openVideoData().catch((e) => { if (e?.name !== 'AbortError') setStatus(String(e)); });
+    openVideoData().catch(onLoadError);
   });
-  $('dir-input').addEventListener('change', (e) => openFiles(e.target.files).catch((err) => setStatus(String(err))));
+  $('dir-input').addEventListener('change', (e) => openFiles(e.target.files).catch(onLoadError));
   $('btn-2d').addEventListener('click', () => { if (dragGuards.some((g) => g.isDragging())) return; cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); refreshTabAvailability(); if (syncUI) syncUI(); });
   $('btn-3d').addEventListener('click', () => { if (dragGuards.some((g) => g.isDragging())) return; cam.switchTo('3d'); $('btn-3d').classList.add('on'); $('btn-2d').classList.remove('on'); leave2dOnlyModeIfNeeded(); refreshTabAvailability(); if (syncUI) syncUI(); });
   $('slider').addEventListener('input', (e) => { if (!store) return; setPlaying(false); showFrame(+e.target.value); });
@@ -449,6 +467,17 @@ function boot() {
 
   $('btn-undo').addEventListener('click', () => { if (store) { store.undo(); showFrame(store.currentFrame()); } });
   window.addEventListener('keydown', (e) => { if (store && !isBusy() && (e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); store.undo(); showFrame(store.currentFrame()); } });
+  window.addEventListener('keydown', (e) => {
+    if (!store || isBusy() || e.target.matches('input,select,textarea')) return;
+    if (e.key !== 'f' && e.key !== 'F') return;
+    const b = bodyBounds(lastJoints);
+    if (!b) { setStatus('无人体可聚焦'); return; }
+    if (!cam.focusOn(b.center, b.radius)) setStatus('2D 模式不聚焦，切到 3D 后按 F');
+  });
+  $('kbd-hint-toggle').addEventListener('click', () => {
+    const min = $('kbd-hint').classList.toggle('min');
+    $('kbd-hint-toggle').textContent = min ? '▸' : '▾';
+  });
 
   const toggle = (id, key) => $(id).addEventListener('click', () => {
     const on = !$(id).classList.contains('on');
@@ -457,6 +486,7 @@ function boot() {
   });
   toggle('t-mesh', 'mesh'); toggle('t-points', 'points'); toggle('t-bones', 'bones');
   toggle('t-grid', 'grid'); toggle('t-axes', 'axes'); toggle('t-bg', 'bg');
+  $('mesh-opacity').addEventListener('input', (e) => scene.setMeshOpacity(+e.target.value));
 
   // --- Task 8: panels, gizmos, tabs, joint grid, canvas picking ---
   panels = new Panels({
@@ -615,6 +645,7 @@ function boot() {
       rootHandle.detach();
     }
     bboxOverlay.render(bboxShownNow() ? (store?.current()?.bbox ?? null) : null);
+    syncHandleScale(); // gizmo 刚 attach 后按当前 2D 缩放校正手柄大小(3D 复位为 1)
     renderAnnoActions();
     panels.syncFromState();
   };
@@ -680,6 +711,7 @@ function boot() {
       e.preventDefault();
       const factor = Math.exp(-dy * 0.0015); // 上滚放大、下滚缩小
       cam.zoomAt(u, v, factor);
+      syncHandleScale(); // 2D viewOffset 假缩放下,手柄按 1/zoom 反向缩放保持屏幕大小恒定
       if (bboxOverlay) bboxOverlay.render(store?.current()?.bbox ?? null);
       return;
     }

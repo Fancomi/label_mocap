@@ -58,6 +58,13 @@
       background:#262b33; border:1px solid #3a4150; border-radius:6px;
       box-shadow:0 6px 18px rgba(0,0,0,.5); }
     #open-menu[hidden] { display:none; }
+    .kbd-hint { position:absolute; right:8px; bottom:8px; z-index:6; background:#111922; border:1px solid #2a3340; border-radius:6px; color:#bcd; font-size:11px; min-width:120px; }
+    .kbd-hint-head { display:flex; justify-content:space-between; align-items:center; padding:4px 8px; border-bottom:1px solid #2a3340; }
+    .kbd-hint-head button { background:none; border:none; color:#8ab; cursor:pointer; font-size:12px; }
+    .kbd-hint-body { padding:6px 8px; }
+    .kbd-hint-body b { color:#2fd6e0; }
+    .kbd-hint.min .kbd-hint-body { display:none; }
+    .kbd-hint.min { min-width:0; }
   </style>
 </head>
 <body>
@@ -100,6 +107,7 @@
         <button id="t-bones" class="on">骨骼</button><button id="t-grid" class="on">底网</button>
         <button id="t-axes">轴</button><button id="t-bg" class="on">底图</button>
       </div>
+      <div class="row" style="align-items:center;gap:6px"><label style="font-size:11px;color:#aaa">网格透明度</label><input id="mesh-opacity" type="range" min="0.1" max="1" step="0.05" value="1" style="flex:1"></div>
     </div>
 
     <div class="card">
@@ -114,7 +122,12 @@
     </div>
   </aside>
 
-  <div id="stage"><canvas id="c"></canvas><div id="status">就绪 — 请先打开数据</div><div id="loading" hidden><div id="loading-text">加载模型…</div><div id="loading-track"><div id="loading-bar"></div></div></div></div>
+  <div id="stage"><canvas id="c"></canvas>
+    <div id="kbd-hint" class="kbd-hint">
+      <div class="kbd-hint-head"><span>快捷键</span><button id="kbd-hint-toggle" title="最小化">▾</button></div>
+      <div class="kbd-hint-body"><div><b>F</b> 聚焦人体中心(3D)</div></div>
+    </div>
+    <div id="status">就绪 — 请先打开数据</div><div id="loading" hidden><div id="loading-text">加载模型…</div><div id="loading-track"><div id="loading-bar"></div></div></div></div>
 
   <aside id="right" class="disabled">
     <div id="tabs">

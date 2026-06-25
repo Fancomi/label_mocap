@@ -23,6 +23,7 @@ export function installIK(ctx) {
   const _ray = new THREE.Raycaster();
   let _down = null;                  // pointerdown 起点 {x,y,moved}
   let _hitMarker = null;             // pointerdown 命中的标识 mesh(null=未命中);驱动切换与 JointPicker 让位
+  let _activeCam = ctx.camera;       // 当前 active 视口相机(多视口下经 registerCameraConsumer 更新);marker 命中 raycast 用
 
   // 反解控制器:依赖注入,parents 通过 getParents 按需读取(不再 setParents)。
   const ikController = new IKController({
@@ -62,6 +63,17 @@ export function installIK(ctx) {
     onEnd: () => ikController.endPoleDrag(),
   });
   ctx.registerGuard(poleHandle);
+
+  // active 视口切换时,两柄也要换相机(多视口下 TransformControls 须跟随 active 相机)。
+  // 其它 app(单视口)不传 registerCameraConsumer 时 ?. 静默跳过。
+  ctx.registerCameraConsumer?.((c) => { _activeCam = c; ikHandle.setCamera(c); poleHandle.setCamera(c); });
+
+  // 多视口:把两柄的场景对象注册为「仅 active 视口可见」(单视口 app 不传时 ?. 跳过)。
+  ctx.registerHandleObjects?.([...ikHandle.sceneObjects(), ...poleHandle.sceneObjects()]);
+
+  // 多视口:把两柄 TC 的指针→NDC 重映射成 active 视口子矩形(覆写整块-canvas getPointer)。
+  // 单视口 app 不传 ndcMapper 时跳过,走整块 canvas 旧路径(零回归)。
+  if (ctx.ndcMapper) { ikHandle.setNdcMapper?.(ctx.ndcMapper); poleHandle.setNdcMapper?.(ctx.ndcMapper); }
 
   // 占位标识点击守卫:按在 marker 上的瞬间 isEngaged=true,使 JointPicker 的 canPick 失效,
   // 避免它把「点 marker」当作 miss 而清掉关节选中(否则切换会被它抢先清选打断)。
@@ -115,12 +127,14 @@ export function installIK(ctx) {
   // 不复用 JointPicker:标识 mesh 不是关节球,且语义(切换 vs 选关节)不同。
   const canvas = ctx.canvas;
   const markerUnder = (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const ndc = new THREE.Vector2(
-      ((e.clientX - rect.left) / rect.width) * 2 - 1,
-      -((e.clientY - rect.top) / rect.height) * 2 + 1,
-    );
-    _ray.setFromCamera(ndc, ctx.camera);
+    let nx, ny;
+    if (ctx.ndcMapper) { const p = ctx.ndcMapper(e); nx = p.x; ny = p.y; } // 多视口:active 视口子矩形 NDC
+    else {
+      const rect = canvas.getBoundingClientRect();
+      nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      ny = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    }
+    _ray.setFromCamera(new THREE.Vector2(nx, ny), _activeCam); // 用 active 视口相机(单视口下即主相机)
     const hits = _ray.intersectObjects([ikHandle.markerMesh(), poleHandle.markerMesh()], false);
     return hits.length ? hits[0].object : null;
   };

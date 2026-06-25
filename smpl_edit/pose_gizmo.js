@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { worldGizmoFromLocal, localFromWorldGizmo } from './gizmo_frame.js';
+import { setTcCamera, setTcNdcMapper, setTcSize } from './tc_multiview.js';
 
 // Per-joint rotation gizmo. Displays at the joint's WORLD orientation and maps
 // drags back to the joint LOCAL quaternion using the parent world rotation, so
@@ -25,9 +26,13 @@ export class PoseGizmo {
       else this._getStore().commitEdit();
     });
     this._tc.addEventListener('objectChange', () => this._onDrag());
-    this._scene.add(this._tc.getHelper ? this._tc.getHelper() : this._tc);
+    this._helper = this._tc.getHelper ? this._tc.getHelper() : this._tc;
+    this._scene.add(this._helper);
     this.detach();
   }
+
+  // 场景中由本 gizmo add 的对象(供 ViewportManager 注册为仅 active 视口可见)。
+  sceneObjects() { return [this._proxy, this._helper]; }
 
   // qParentWorld: [x,y,z,w] parent joint world rotation. worldPos: [x,y,z].
   attach(jointBody, worldPos, qParentWorld) {
@@ -50,6 +55,10 @@ export class PoseGizmo {
 
   isEngaged() { return !!(this._tc && (this._tc.dragging || this._tc.axis != null)); }
   isDragging() { return !!(this._tc && this._tc.dragging); }
+
+  setCamera(camera) { setTcCamera(this._tc, camera); }
+  setHandleScale(s) { setTcSize(this._tc, s); }     // label 2D 假缩放下按 1/zoom 反向抵消
+  setNdcMapper(fn) { setTcNdcMapper(this._tc, fn); } // 多视口:指针→active 视口子矩形 NDC
 
   _setVisible(v) {
     const helper = this._tc.getHelper ? this._tc.getHelper() : this._tc;

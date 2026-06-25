@@ -17,7 +17,10 @@ import { PcdPanels } from './ui/pcd_panels.js';
 import { decodeXYZ } from './scene/point_cloud_decode.js';
 import { decodePngFile } from './io/png_pixels.js';
 import { PcdDirSource, FileListSource, fsAccessSupported, pickDirectory } from './io/pcd_dir_source.js';
-import { FRONT_OPTIONS } from '../../smpl_edit/view_frame.js';
+import { FRONT_OPTIONS, viewFrame, axisName } from '../../smpl_edit/view_frame.js';
+import { Viewport } from '../../smpl_edit/viewport.js';
+import { ViewportManager } from '../../smpl_edit/viewport_manager.js';
+import { bodyBounds } from '../../smpl_edit/framing.js';
 
 const $ = (id) => document.getElementById(id);
 const setStatus = (t) => { $('status').textContent = t; };
@@ -30,6 +33,9 @@ let rootHandle = null, poseGizmo = null, jointPicker = null;
 let jointGridButtons = [];
 let lastVertices = null, lastJoints = null, lastWorldRot = null;
 let syncUI = null, syncHooks = [], dragGuards = [], engageGuards = [];
+let mgr = null;
+let placeBordersAndCaps = () => {}; // boot2 赋值;onActiveChange 可在赋值前安全调(占位)
+const camConsumers = []; // active 视口切换时,把新相机推给各交互组件(运行时填充)
 let playing = false, fps = 10, lastTick = 0, acc = 0;
 // 坐标轴(上轴/前轴)只影响观察者相机,不旋转点云/SMPL。AXIS_TO_IDX 给「高度配色」用。
 let axisUp = 'Z', axisFront = 'X';
@@ -59,6 +65,7 @@ function applyAnnotation() {
   const out = forwardSmpl(model, buildFrame(), { worldRot: true });
   lastVertices = out.vertices; lastJoints = out.joints; lastWorldRot = out.worldRot;
   scene.updateMesh(out.vertices, out.joints);
+  scene.setFollowCenter(lastJoints ? (bodyBounds(lastJoints)?.center ?? null) : null);
   if (panels) panels.syncFromState();
 }
 
@@ -74,12 +81,32 @@ async function renderPointCloud(i) {
   scene.pointCloud.setData(lastDecoded);
 }
 
-// 上轴/前轴变化:只动相机(up 向量 + 环绕方位)与地面网格朝向,几何不变。
+// 三视口统一取景源:有人体用人体包围,无人体用点云包围。开新数据与 R 共用,保证一致。
+function viewBounds() {
+  return bodyBounds(lastJoints) ?? scene.pointCloud.bounds(); // 两者皆 {center,radius}|null
+}
+
+// 三视口重置取景:三视(主/侧/正)都按同一 center+radius 重置位置+距离。
+// recenter=false 时只重算 frustum/朝向、不挪 center(尺寸变化用)。
+function frameViewports(recenter) {
+  const b = viewBounds();
+  const center = recenter && b ? b.center : null;
+  const radius = b ? b.radius : null;
+  cam.setFrame(axisUp, axisFront, center, radius); // 主视(与下方 setResetAxes 同轴,R 走同一 cameraPlacement)
+  const rightAxis = axisName(viewFrame(axisUp, axisFront).right);
+  const main = mgr.viewport('main'), side = mgr.viewport('side'), front = mgr.viewport('front');
+  // 三视基准轴同步;换坐标轴/开新数据时清掉用户锁定方位(回标准朝向),三视一致重置距离。
+  if (main) main.setResetAxes(axisFront, axisUp);
+  if (side) { side.setResetAxes(rightAxis, axisUp); side.clearResetBearing(); side.resetOrientation(center ?? undefined, radius ?? undefined); }
+  if (front) { front.setResetAxes(axisFront, axisUp); front.clearResetBearing(); front.resetOrientation(center ?? undefined, radius ?? undefined); }
+  mgr.syncControlsEnabled();
+}
+
+// 上轴/前轴变化 / 开新数据:只动相机(up 向量 + 环绕方位)与地面网格朝向,几何不变。
 function applyAxisFrame(recenter) {
   scene.orientGroundTo(axisUp);
   scene.pointCloud.setHeightAxis(AXIS_TO_IDX[axisUp]); // 高度配色取上轴分量(若为 height 模式会自动重算)
-  const b = scene.pointCloud.bounds();
-  cam.setFrame(axisUp, axisFront, recenter && b ? b.center : null, b ? b.radius : null);
+  frameViewports(recenter);
 }
 
 function renderAnnoActions() {
@@ -102,7 +129,7 @@ function renderAnnoActions() {
 async function showFrame(i) {
   store.setFrame(i);
   $('slider').value = String(i);
-  $('frame-info').textContent = `${i} / ${store.frameCount() - 1}`;
+  $('frame-info').textContent = `${i + 1} / ${store.frameCount()}`; // 1-based 显示;内部仍 0-based(对齐不变)
   const a = store.current();
   if (a) {
     rotation = RotationState.fromAxisAngle({ root_rota: a.root_rota, body_pose: a.body_pose });
@@ -157,7 +184,18 @@ async function saveAnnotation() {
 function boot() {
   scene = new PcdScene($('c'));
   cam = new OrbitCam({ canvas: $('c') });
-  scene.setCamera(cam);
+
+  // 三视口装配:主视复用 OrbitCam 的相机+控件(透视);侧/正新建正交视口。
+  const rightAxis = axisName(viewFrame(axisUp, axisFront).right);
+  const vpMain = new Viewport({ name: 'main', kind: 'perspective', dirAxis: axisFront, upAxis: axisUp, camera: cam.camera, controls: cam.controls });
+  const vpSide = new Viewport({ name: 'side', kind: 'ortho', canvas: $('c'), dirAxis: rightAxis, upAxis: axisUp });
+  const vpFront = new Viewport({ name: 'front', kind: 'ortho', canvas: $('c'), dirAxis: axisFront, upAxis: axisUp });
+  mgr = new ViewportManager({
+    viewports: [vpMain, vpSide, vpFront], canvas: $('c'),
+    onActiveChange: () => { const c = mgr.activeCamera(); camConsumers.forEach((fn) => fn(c)); placeBordersAndCaps(); },
+  });
+  scene.setManager(mgr);
+  scene.setCamera(cam); // resize 防 null + 单视口回退仍走 cam
   scene.resize();
 
   $('btn-open').addEventListener('click', () => {
@@ -207,6 +245,7 @@ function boot2() {
   $('color-mode').addEventListener('change', (e) => scene.pointCloud.setColorMode(e.target.value));
   $('decimation').addEventListener('input', (e) => scene.pointCloud.setDecimation(+e.target.value));
   $('point-size').addEventListener('input', (e) => scene.pointCloud.setPointSize(+e.target.value));
+  $('mesh-opacity').addEventListener('input', (e) => scene.setMeshOpacity(+e.target.value));
   populateFrontAxis();
   $('axis-up').addEventListener('change', (e) => { axisUp = e.target.value; populateFrontAxis(); applyAxisFrame(false); });
   $('axis-front').addEventListener('change', (e) => { axisFront = e.target.value; applyAxisFrame(false); });
@@ -225,6 +264,89 @@ function boot2() {
     if (ui) ui.setMode(btn.dataset.mode);
   }));
 
+  // 视口工具条:分隔条拖动 + 布局预设 + 锁侧/正 + F聚焦/R重置朝向。
+  const placeSplits = () => {
+    const stage = $('stage'); const W = stage.clientWidth, H = stage.clientHeight;
+    const sv = $('vp-split-v'), sh = $('vp-split-h');
+    const s = mgr._splits;
+    const single = mgr._preset === 'single';
+    sv.style.left = `${W * s.v - 3}px`; sv.style.display = single ? 'none' : 'block';
+    sh.style.top = `${H * s.h - 3}px`; sh.style.left = `${W * s.v}px`; sh.style.right = '0'; sh.style.display = single ? 'none' : 'block';
+  };
+  const setPreset = (p, btn) => {
+    mgr.setLayout(p);
+    ['vp-single', 'vp-tri'].forEach((id) => $(id).classList.toggle('on', id === btn));
+    placeSplits(); placeBordersAndCaps();
+  };
+  $('vp-single').addEventListener('click', () => setPreset('single', 'vp-single'));
+  $('vp-tri').addEventListener('click', () => setPreset('tri', 'vp-tri'));
+  // DOM 视口边框(active 高亮)+ 各视口右上角「⊙ 锁定为重置视角」按钮的定位。
+  placeBordersAndCaps = () => {
+    const stage = $('stage'); const W = stage.clientWidth, H = stage.clientHeight;
+    const host = $('vp-borders'); if (!host) return; host.innerHTML = '';
+    const rects = mgr.visibleRects();
+    const active = mgr.activeViewport()?.name;
+    for (const r of rects) {
+      const d = document.createElement('div');
+      d.className = 'vp-border' + (r.name === active ? ' active' : '');
+      d.style.left = `${r.x * W}px`; d.style.top = `${r.y * H}px`;
+      d.style.width = `${r.w * W}px`; d.style.height = `${r.h * H}px`;
+      host.appendChild(d);
+    }
+    for (const [capId, vpName] of [['vp-cap-side', 'side'], ['vp-cap-front', 'front']]) {
+      const cap = $(capId); const rect = rects.find((x) => x.name === vpName);
+      if (!rect) { cap.style.display = 'none'; continue; }
+      cap.style.display = 'block';
+      cap.style.left = `${(rect.x + rect.w) * W - 24}px`;
+      cap.style.top = `${rect.y * H + 4}px`;
+    }
+  };
+  const dragSplit = (el, axis) => {
+    el.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); const stage = $('stage');
+      const move = (ev) => {
+        const r = stage.getBoundingClientRect();
+        if (axis === 'v') mgr.setSplits({ v: Math.min(0.92, Math.max(0.4, (ev.clientX - r.left) / r.width)) });
+        else mgr.setSplits({ h: Math.min(0.85, Math.max(0.15, (ev.clientY - r.top) / r.height)) });
+        placeSplits(); placeBordersAndCaps();
+      };
+      const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+      window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+    });
+  };
+  dragSplit($('vp-split-v'), 'v'); dragSplit($('vp-split-h'), 'h');
+  // ⊙ 角按钮:把该视口当前相机相对人体中心的方位记为「重置视角」(R 据此还原)。
+  const capBtn = (id, name) => $(id).addEventListener('click', () => {
+    const vp = mgr.viewport(name); if (!vp) return;
+    const b = bodyBounds(lastJoints);
+    vp.captureAsReset(b ? b.center : undefined);
+    $(id).classList.add('on'); setTimeout(() => $(id).classList.remove('on'), 400);
+    setStatus(`已锁定${name === 'side' ? '侧' : '正'}视为重置视角`);
+  });
+  capBtn('vp-cap-side', 'side'); capBtn('vp-cap-front', 'front');
+  window.addEventListener('resize', () => { placeSplits(); placeBordersAndCaps(); });
+  placeSplits(); placeBordersAndCaps();
+
+  // 快捷键提示面板最小化。
+  $('kbd-hint-toggle').addEventListener('click', () => {
+    const min = $('kbd-hint').classList.toggle('min');
+    $('kbd-hint-toggle').textContent = min ? '▸' : '▾';
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (!store || e.target.matches('input,select,textarea')) return;
+    if (dragGuards.some((g) => g.isDragging()) || playing) return;
+    const vp = mgr.activeViewport(); if (!vp) return;
+    const b = viewBounds();
+    if (e.key === 'f' || e.key === 'F') {
+      if (!b) { setStatus('无人体/点云可聚焦'); return; }
+      vp.focus(b.center, b.radius);
+    } else if (e.key === 'r' || e.key === 'R') {
+      // R 重置当前视口朝向+距离,走与「开新数据」同一取景源(viewBounds)。
+      vp.resetOrientation(b ? b.center : undefined, b ? b.radius : undefined);
+    }
+  });
+
   boot3();
 }
 
@@ -234,10 +356,25 @@ function boot3() {
     onPick: (smpl) => { setPlaying(false); if (smpl === 0) ui.setMode('root'); else if (smpl >= 1 && smpl <= 21) ui.selectJoint(smpl - 1); },
     onMiss: () => { if (ui && ui.mode === 'pose') ui.clearSelection(); },
     canPick: () => !engageGuards.some((g) => g.isEngaged()),
+    getNdc: (e) => mgr.pointerToNdc(e), // 多视口:按 active 视口子矩形算 NDC(单视口时等价整块 canvas)
   });
   rootHandle = new RootHandle({ scene: scene.threeScene(), camera: cam.camera, canvas: $('c'), controls: cam.controls, getMode: () => cam.mode, getStore: () => store, getRotation: () => rotation, onEdit: applyAnnotation });
   poseGizmo = new PoseGizmo({ scene: scene.threeScene(), camera: cam.camera, canvas: $('c'), controls: cam.controls, getMode: () => cam.mode, getRotation: () => rotation, getStore: () => store, onEdit: applyAnnotation });
   dragGuards.push(poseGizmo, rootHandle); engageGuards.push(poseGizmo, rootHandle);
+
+  // 多视口:把指针按 active 视口子矩形重映射成 NDC(覆写 TC 的整块-canvas getPointer)。
+  // mapper 只依赖 mgr,不随 active 相机变化,固定设一次即可。
+  const ndcMapper = (e) => mgr.pointerToNdc(e);
+  poseGizmo.setNdcMapper(ndcMapper);
+  rootHandle.setNdcMapper(ndcMapper);
+
+  // active 视口切换时把新相机推给各交互组件(此刻三件套已建好,可安全注册)。
+  camConsumers.push((c) => poseGizmo.setCamera(c));
+  camConsumers.push((c) => rootHandle.setCamera(c));
+  camConsumers.push((c) => jointPicker.setCamera(c));
+
+  // 注册手柄场景对象给 manager:逐区渲染时仅 active 视口那一遍可见(否则三视口都画出 gizmo)。
+  mgr.registerHandleObjects([...poseGizmo.sceneObjects(), ...rootHandle.sceneObjects()]);
 
   syncUI = () => {
     if (!ui) return;
@@ -279,10 +416,26 @@ function boot4() {
       toggleButton: $('ik-toggle'),
       registerSyncHook: (fn) => syncHooks.push(fn),
       registerGuard: (g) => { dragGuards.push(g); engageGuards.push(g); },
+      registerCameraConsumer: (fn) => camConsumers.push(fn),
+      registerHandleObjects: (objs) => mgr.registerHandleObjects(objs),
+      ndcMapper: (e) => mgr.pointerToNdc(e), // 多视口:IK 两柄的指针→NDC 重映射(单视口等价整块 canvas)
     });
   }
 
   window.addEventListener('resize', () => scene.resize());
+  // 首屏 #stage 可能从 0→非零(布局未就绪时 scene.resize 早退 → canvas 0×0 → scissor 全黑)。
+  // ResizeObserver 兜底:stage 尺寸一就绪/变化即重新 resize,并按当前坐标轴重取景。
+  if (typeof ResizeObserver !== 'undefined') {
+    let lastW = 0, lastH = 0;
+    const ro = new ResizeObserver(() => {
+      const st = $('stage'); const w = st.clientWidth, h = st.clientHeight;
+      if (w === lastW && h === lastH) return;
+      lastW = w; lastH = h;
+      scene.resize();
+      if (store && mgr) applyAxisFrame(false); // 尺寸变 → 正交 frustum/aspect 重算,几何不动
+    });
+    ro.observe($('stage'));
+  }
 
   function loop(now) {
     if (playing && store && store.frameCount() > 0) {
@@ -292,7 +445,7 @@ function boot4() {
     }
     lastTick = now;
     const gizmoBusy = engageGuards.some((g) => g.isEngaged());
-    if (cam) cam.controls.enabled = !gizmoBusy;
+    mgr.setActiveControlsEnabled(!gizmoBusy);
     scene.render();
     requestAnimationFrame(loop);
   }

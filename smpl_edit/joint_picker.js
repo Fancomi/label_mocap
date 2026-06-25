@@ -8,13 +8,14 @@ const CLICK_THRESH = 4;
 // Raycast a pointer event against the scene's joint spheres.
 // Returns the SMPL joint index (0..23) or null. onPick(smplIndex) is called on hit.
 export class JointPicker {
-  constructor({ canvas, camera, getJointMeshes, onPick, onMiss, canPick }) {
+  constructor({ canvas, camera, getJointMeshes, onPick, onMiss, canPick, getNdc }) {
     this._canvas = canvas;
     this._camera = camera;
     this._getJointMeshes = getJointMeshes;
     this._onPick = onPick;
     this._onMiss = onMiss;
     this._canPick = canPick || (() => true);
+    this._getNdc = getNdc || null; // 多视口:注入则按 active 视口子矩形算 NDC;缺省走整块 canvas(单视口零回归)。
     this._ray = new THREE.Raycaster();
     this._enabled = false;
     this._start = null; // pointerdown 起点 {x,y};拖拽过程累计位移用
@@ -27,6 +28,8 @@ export class JointPicker {
   }
 
   setEnabled(v) { this._enabled = v; }
+
+  setCamera(camera) { if (camera) this._camera = camera; }
 
   _onPointerDown(e) {
     if (!this._enabled) { this._start = null; return; }
@@ -47,11 +50,15 @@ export class JointPicker {
     if (!this._enabled || !start) return;
     if (start.moved) return; // 拖拽:不触发选中/取消
     if (this._canPick && !this._canPick()) return; // 拖手柄等情形不选
-    const rect = this._canvas.getBoundingClientRect();
-    const ndc = new THREE.Vector2(
-      ((e.clientX - rect.left) / rect.width) * 2 - 1,
-      -((e.clientY - rect.top) / rect.height) * 2 + 1
-    );
+    let ndc;
+    if (this._getNdc) { const p = this._getNdc(e); ndc = new THREE.Vector2(p.x, p.y); }
+    else {
+      const rect = this._canvas.getBoundingClientRect();
+      ndc = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1,
+      );
+    }
     this._ray.setFromCamera(ndc, this._camera);
     const meshes = this._getJointMeshes();
     const hits = this._ray.intersectObjects(meshes, false);

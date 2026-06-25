@@ -26,3 +26,12 @@ test('frameFileName formats %06d', () => {
 test('parseManifest throws on wrong format', () => {
   assert.throws(() => parseManifest({ format: 'avi' }), /png-sequence/);
 });
+
+test('parseManifest throws naming each missing required field', () => {
+  const bad = { ...RAW }; delete bad.frame_count; delete bad.scale;
+  assert.throws(() => parseManifest(bad), /frame_count.*scale|scale.*frame_count/);
+});
+
+test('parseManifest throws on frame_count <= 0 (empty sequence not silently黑屏)', () => {
+  assert.throws(() => parseManifest({ ...RAW, frame_count: 0 }), /frame_count/);
+});

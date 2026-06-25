@@ -8,7 +8,9 @@ export const DATA_JSON_PATH = 'json_results/player_0/player_0.json';
 export { basename } from './image_order.js';
 import { basename } from './image_order.js';
 
-const isJpeg = (p) => /\.(jpe?g)$/i.test(p);
+// 支持的图像背景格式:jpg/jpeg/png/bmp(普通图像;webp 略去以免与视频 .webm 混淆边界)。
+// 点云目录的 png 帧另由 hasManifest 拦截(劝退到 pcd),不靠扩展名区分。
+const isImage = (p) => /\.(jpe?g|png|bmp)$/i.test(p);
 const VIDEO_EXT = ['.mp4', '.webm', '.mov', '.m4v'];
 function stripExt(name) { return name.replace(/\.[^.]+$/, ''); }
 function topSegment(p) { const i = p.indexOf('/'); return i < 0 ? '' : p.slice(0, i); }
@@ -23,8 +25,8 @@ const videoRank = (p) => {
 // opts.rootName: P's own directory name (FileSystemDirectoryHandle.name).
 // opts.videoName: basename of a video the user picked explicitly (video flow).
 export function classifyEntries(paths, opts = {}) {
-  const jpgs = paths.filter(isJpeg);
-  const imagePaths = [...jpgs].sort((a, b) => basename(a).localeCompare(basename(b), undefined, { numeric: true }));
+  const imgs = paths.filter(isImage);
+  const imagePaths = [...imgs].sort((a, b) => basename(a).localeCompare(basename(b), undefined, { numeric: true }));
 
   // best video already inside P
   let videoPath = null; let bestRank = Infinity;
@@ -32,8 +34,8 @@ export function classifyEntries(paths, opts = {}) {
 
   // image container: the common top-level subfolder of the images, or '' if loose at root.
   let imageDir = null;
-  if (jpgs.length) {
-    const segs = new Set(jpgs.map(topSegment));
+  if (imgs.length) {
+    const segs = new Set(imgs.map(topSegment));
     imageDir = (segs.size === 1) ? [...segs][0] : ''; // single subfolder name, or '' (loose/mixed)
   }
 
@@ -42,7 +44,7 @@ export function classifyEntries(paths, opts = {}) {
   if (opts.videoName) dataItemName = stripExt(basename(opts.videoName));
   else if (videoPath) dataItemName = stripExt(basename(videoPath));
   else if (imageDir) dataItemName = imageDir;             // non-empty subfolder name
-  else if (jpgs.length && opts.rootName) dataItemName = opts.rootName; // loose images → parent name
+  else if (imgs.length && opts.rootName) dataItemName = opts.rootName; // loose images → parent name
   else if (opts.rootName) dataItemName = opts.rootName;
 
   // existing json (read): diving path, then any player_0.json, then sibling <dataItemName>.json
@@ -57,5 +59,8 @@ export function classifyEntries(paths, opts = {}) {
 
   const writeJsonPath = jsonPath ?? siblingJson ?? DATA_JSON_PATH;
 
-  return { jsonPath, writeJsonPath, dataItemName, imageDir, imagePaths, videoPath };
+  // 误把点云序列目录(含 manifest.json)喂给图像标注器时,供上层给出明确提示。
+  const hasManifest = paths.some((p) => basename(p) === 'manifest.json');
+
+  return { jsonPath, writeJsonPath, dataItemName, imageDir, imagePaths, videoPath, hasManifest };
 }

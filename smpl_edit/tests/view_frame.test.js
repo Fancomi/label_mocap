@@ -1,7 +1,7 @@
 // smpl_edit/tests/view_frame.test.js
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { viewFrame, cameraPlacement, axisVec, FRONT_OPTIONS } from '../view_frame.js';
+import { viewFrame, cameraPlacement, axisVec, axisName, FRONT_OPTIONS } from '../view_frame.js';
 
 const close = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) <= eps, `${a} != ${b}`);
 const vclose = (a, b) => a.forEach((v, i) => close(v, b[i]));
@@ -49,4 +49,10 @@ test('cameraPlacement distance grows with radius', () => {
 test('axisVec returns unit axis, throws on unknown', () => {
   vclose(axisVec('Y'), [0, 1, 0]);
   assert.throws(() => axisVec('W'), /unknown axis/);
+});
+
+test('axisName returns the dominant-abs axis letter (inverse of axisVec)', () => {
+  assert.equal(axisName([0, 1, 0]), 'Y');
+  assert.equal(axisName([-0.98, 0.1, 0.05]), 'X'); // 近似轴仍判 X
+  assert.equal(axisName([0.1, 0.2, -0.9]), 'Z');
 });
