@@ -279,6 +279,7 @@ function applyAnnotation() {
   lastWorldRot = out.worldRot;
   scene.updateMesh(out.vertices, out.joints);
   cam.set3DFollowTarget(new THREE.Vector3(out.joints[0], out.joints[1], out.joints[2]));
+  scene.setFollowCenter(lastJoints ? [lastJoints[0], lastJoints[1], lastJoints[2]] : null);
   if (panels) panels.syncFromState();
   if (bboxOverlay) bboxOverlay.render(store.current()?.bbox ?? null);
 }

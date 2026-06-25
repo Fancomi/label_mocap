@@ -71,6 +71,7 @@ function applyAnnotation() {
   const out = forwardSmpl(model, buildFrame(), { worldRot: true });
   lastVertices = out.vertices; lastJoints = out.joints; lastWorldRot = out.worldRot;
   scene.updateMesh(out.vertices, out.joints);
+  scene.setFollowCenter(lastJoints ? (bodyBounds(lastJoints)?.center ?? null) : null);
   if (panels) panels.syncFromState();
 }
 

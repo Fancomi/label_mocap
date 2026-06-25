@@ -24,6 +24,10 @@ export class PcdScene {
     const key = new THREE.DirectionalLight(0xffffff, 0.8); key.position.set(3, 5, 2);
     this._scene.add(key);
     this._scene.add(new THREE.AmbientLight(0xffffff, 0.2));
+    this._headLight = new THREE.DirectionalLight(0xffffff, 0.55);
+    this._scene.add(this._headLight);
+    this._scene.add(this._headLight.target);
+    this._followCenter = null;
 
     this._cam = null;
     this._manager = null;
@@ -69,7 +73,7 @@ export class PcdScene {
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
     geom.setIndex(new THREE.BufferAttribute(new Uint32Array(faces), 1));
-    this._mesh = new THREE.Mesh(geom, new THREE.MeshLambertMaterial({ color: 0xf0c0a0, side: THREE.DoubleSide }));
+    this._mesh = new THREE.Mesh(geom, new THREE.MeshLambertMaterial({ color: 0xf2ddd0, side: THREE.DoubleSide }));
     this._mesh.frustumCulled = false; this._mesh.renderOrder = 5; this._scene.add(this._mesh);
 
     this._jointsGroup = new THREE.Group(); this._jointsGroup.frustumCulled = false;
@@ -143,9 +147,23 @@ export class PcdScene {
 
   render() {
     this._applyVisibility();
-    if (this._manager) { this._manager.render(this._renderer, this._scene); return; }
+    if (this._manager) {
+      this.setLightFromCamera(this._manager.activeCamera(), this._followCenter);
+      this._manager.render(this._renderer, this._scene);
+      return;
+    }
     if (!this._cam) return;
+    this.setLightFromCamera(this._cam.camera, this._followCenter);
     this._cam.update();
     this._renderer.render(this._scene, this._cam.camera);
+  }
+
+  setFollowCenter(c) { this._followCenter = c; }
+  // 头灯:光从相机方向打向人体中心,使面向相机的面受光。
+  setLightFromCamera(cam, center) {
+    if (!this._headLight || !cam) return;
+    const c = center || [0, 0, 0];
+    this._headLight.target.position.set(c[0], c[1], c[2]);
+    this._headLight.position.copy(cam.position);
   }
 }

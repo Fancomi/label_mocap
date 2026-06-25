@@ -24,6 +24,10 @@ export class LabelScene {
     key.position.set(3, 5, -2);
     this._scene.add(key);
     this._scene.add(new THREE.AmbientLight(0xffffff, 0.15));
+    this._headLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    this._scene.add(this._headLight);
+    this._scene.add(this._headLight.target);
+    this._followCenter = null;
 
     this._cam = null;
     this._mesh = null;
@@ -155,7 +159,7 @@ export class LabelScene {
     geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
     geom.setIndex(new THREE.BufferAttribute(new Uint32Array(faces), 1));
     this._mesh = new THREE.Mesh(geom, new THREE.MeshLambertMaterial({
-      color: 0xf0f0f0, side: THREE.DoubleSide, transparent: false, opacity: 1, depthWrite: true,
+      color: 0xfafafa, side: THREE.DoubleSide, transparent: false, opacity: 1, depthWrite: true,
     }));
     this._mesh.frustumCulled = false;
     this._mesh.renderOrder = 5;
@@ -303,7 +307,17 @@ export class LabelScene {
     }
 
     this._applyVisibility();
+    this.setLightFromCamera(this._cam.camera, this._followCenter);
     this._cam.update();
     this._renderer.render(this._scene, this._cam.camera);
+  }
+
+  setFollowCenter(c) { this._followCenter = c; }
+  // 头灯:光从相机方向打向人体中心,使面向相机的面受光。
+  setLightFromCamera(cam, center) {
+    if (!this._headLight || !cam) return;
+    const c = center || [0, 0, 0];
+    this._headLight.target.position.set(c[0], c[1], c[2]);
+    this._headLight.position.copy(cam.position);
   }
 }
