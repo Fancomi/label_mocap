@@ -178,6 +178,10 @@ export class CameraModes {
     this._setZoomPan(1, 0, 0);
   }
 
+  // 当前 2D 视图缩放倍率(setViewOffset 的「假缩放」,camera.zoom 恒为 1)。
+  // 供手柄按 1/zoom 反向缩放以抵消 viewOffset 放大(TC 的 size 公式不吃 viewOffset)。
+  getZoom() { return this._zoom; }
+
   // 图像像素 → 画布归一化(考虑当前缩放窗口)。
   imageToCanvasNorm(ix, iy) {
     if (!this._win) this._applyViewOffset();

@@ -106,6 +106,14 @@ const editorModes = ['root', 'pose', 'bbox', 'beta'];
 
 function isImageName(name) { return /\.(jpe?g|png|bmp)$/i.test(name); }
 
+// 2D viewOffset 假缩放下 TC 的 size 公式不吃 viewOffset,手柄屏幕尺寸不随缩放变。
+// 按 1/zoom 反向缩放手柄抵消(3D 用真相机,size 公式自适应 → 复位为 1)。
+function syncHandleScale() {
+  const s = (cam && cam.mode === '2d') ? 1 / Math.max(1e-3, cam.getZoom()) : 1;
+  poseGizmo?.setHandleScale(s);
+  rootHandle?.setHandleScale(s);
+}
+
 function setPlaying(on) {
   playing = on && store && store.frameCount() > 0;
   if (playing) { poseGizmo?.detach(); rootHandle?.detach(); }
@@ -637,6 +645,7 @@ function boot() {
       rootHandle.detach();
     }
     bboxOverlay.render(bboxShownNow() ? (store?.current()?.bbox ?? null) : null);
+    syncHandleScale(); // gizmo 刚 attach 后按当前 2D 缩放校正手柄大小(3D 复位为 1)
     renderAnnoActions();
     panels.syncFromState();
   };
@@ -702,6 +711,7 @@ function boot() {
       e.preventDefault();
       const factor = Math.exp(-dy * 0.0015); // 上滚放大、下滚缩小
       cam.zoomAt(u, v, factor);
+      syncHandleScale(); // 2D viewOffset 假缩放下,手柄按 1/zoom 反向缩放保持屏幕大小恒定
       if (bboxOverlay) bboxOverlay.render(store?.current()?.bbox ?? null);
       return;
     }

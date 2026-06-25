@@ -57,6 +57,10 @@ export class PoseGizmo {
 
   setCamera(camera) { if (camera && this._tc) this._tc.camera = camera; }
 
+  // 手柄屏幕尺寸缩放(label 2D setViewOffset 假缩放下,TC size 公式不吃 viewOffset,
+  // 需按 1/zoom 反向缩放抵消)。s 直接喂 TransformControls.size。
+  setHandleScale(s) { if (this._tc && s > 0) this._tc.setSize(s); }
+
   // 多视口:用 active 视口子矩形把指针重映射为 NDC(覆写 vendored TransformControls 的整块-canvas getPointer)。
   setNdcMapper(fn) {
     if (!this._tc) return;

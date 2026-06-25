@@ -95,6 +95,23 @@ export class Viewport {
     else { this.camera.aspect = aspect; this.camera.updateProjectionMatrix(); }
   }
 
+  // 手动缩放(滚轮直接驱动,绕开 OrbitControls 的 enabled 博弈):
+  // 透视沿(相机→target)方向推拉相机;正交改 camera.zoom。factor<1 拉近、>1 推远。
+  dollyBy(factor) {
+    if (this.kind === 'ortho') {
+      this.camera.zoom = Math.max(1e-3, this.camera.zoom / factor); // factor<1 → zoom 变大 → 拉近
+      this.camera.updateProjectionMatrix();
+    } else {
+      const t = this.controls.target;
+      this.camera.position.set(
+        t.x + (this.camera.position.x - t.x) * factor,
+        t.y + (this.camera.position.y - t.y) * factor,
+        t.z + (this.camera.position.z - t.z) * factor,
+      );
+    }
+    this.controls.update();
+  }
+
   // 在 renderer 上设 viewport+scissor 到像素矩形 {x,y,w,h}(GL 坐标,左下原点)。
   applyScissor(renderer, px) {
     renderer.setViewport(px.x, px.y, px.w, px.h);

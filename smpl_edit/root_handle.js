@@ -75,6 +75,9 @@ export class RootHandle {
 
   setCamera(camera) { if (camera && this._tc) this._tc.camera = camera; }
 
+  // 手柄屏幕尺寸缩放(label 2D setViewOffset 假缩放下需按 1/zoom 反向抵消)。
+  setHandleScale(s) { if (this._tc && s > 0) this._tc.setSize(s); }
+
   // 多视口:用 active 视口子矩形把指针重映射为 NDC(覆写 vendored TransformControls 的整块-canvas getPointer)。
   setNdcMapper(fn) {
     if (!this._tc) return;
