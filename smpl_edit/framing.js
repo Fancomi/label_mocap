@@ -36,3 +36,20 @@ export function focusPlacement(view, center, radius) {
     position: [center[0]-ux*dist, center[1]-uy*dist, center[2]-uz*dist],
   };
 }
+
+// 相机相对人体中心的「方位」:单位方向(target→cam)+ 距离。供「锁定为重置视角」记忆。
+export function relativeBearing(camPos, target) {
+  let dx = camPos[0]-target[0], dy = camPos[1]-target[1], dz = camPos[2]-target[2];
+  let L = Math.hypot(dx, dy, dz);
+  if (L < 1e-9) { dx = 0; dy = 0; dz = 1; L = 1; } // 退化:默认 +Z,距离 1
+  return { dir: [dx/L, dy/L, dz/L], dist: L };
+}
+
+// 由方位 + 人体中心还原相机位置(target 即 center)。
+export function placeFromBearing(bearing, center) {
+  const { dir, dist } = bearing;
+  return {
+    position: [center[0]+dir[0]*dist, center[1]+dir[1]*dist, center[2]+dir[2]*dist],
+    target: center.slice(),
+  };
+}
