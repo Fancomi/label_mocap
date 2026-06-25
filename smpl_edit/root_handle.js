@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { tightenTranslatePicker } from './transform_picker.js';
+import { setTcCamera, setTcNdcMapper, setTcSize } from './tc_multiview.js';
 
 export class RootHandle {
   constructor({ scene, camera, canvas, controls, getMode, getStore, getRotation, onEdit }) {
@@ -73,17 +74,9 @@ export class RootHandle {
   // 场景中由本手柄 add 的对象(供 ViewportManager 注册为仅 active 视口可见)。
   sceneObjects() { return [this._proxy, this._tc]; }
 
-  setCamera(camera) { if (camera && this._tc) this._tc.camera = camera; }
-
-  // 手柄屏幕尺寸缩放(label 2D setViewOffset 假缩放下需按 1/zoom 反向抵消)。
-  setHandleScale(s) { if (this._tc && s > 0) this._tc.setSize(s); }
-
-  // 多视口:用 active 视口子矩形把指针重映射为 NDC(覆写 vendored TransformControls 的整块-canvas getPointer)。
-  setNdcMapper(fn) {
-    if (!this._tc) return;
-    if (!fn) return;
-    this._tc._getPointer = (event) => { const p = fn(event); return { x: p.x, y: p.y, button: event.button }; };
-  }
+  setCamera(camera) { setTcCamera(this._tc, camera); }
+  setHandleScale(s) { setTcSize(this._tc, s); }     // label 2D 假缩放下按 1/zoom 反向抵消
+  setNdcMapper(fn) { setTcNdcMapper(this._tc, fn); } // 多视口:指针→active 视口子矩形 NDC
 
   // isEngaged: hover OR drag — used by the render loop to lock orbit early.
   // isDragging: real drag only — used to block mode/tab switches. `axis` (hover)

@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { worldGizmoFromLocal, localFromWorldGizmo } from './gizmo_frame.js';
+import { setTcCamera, setTcNdcMapper, setTcSize } from './tc_multiview.js';
 
 // Per-joint rotation gizmo. Displays at the joint's WORLD orientation and maps
 // drags back to the joint LOCAL quaternion using the parent world rotation, so
@@ -55,18 +56,9 @@ export class PoseGizmo {
   isEngaged() { return !!(this._tc && (this._tc.dragging || this._tc.axis != null)); }
   isDragging() { return !!(this._tc && this._tc.dragging); }
 
-  setCamera(camera) { if (camera && this._tc) this._tc.camera = camera; }
-
-  // 手柄屏幕尺寸缩放(label 2D setViewOffset 假缩放下,TC size 公式不吃 viewOffset,
-  // 需按 1/zoom 反向缩放抵消)。s 直接喂 TransformControls.size。
-  setHandleScale(s) { if (this._tc && s > 0) this._tc.setSize(s); }
-
-  // 多视口:用 active 视口子矩形把指针重映射为 NDC(覆写 vendored TransformControls 的整块-canvas getPointer)。
-  setNdcMapper(fn) {
-    if (!this._tc) return;
-    if (!fn) return;
-    this._tc._getPointer = (event) => { const p = fn(event); return { x: p.x, y: p.y, button: event.button }; };
-  }
+  setCamera(camera) { setTcCamera(this._tc, camera); }
+  setHandleScale(s) { setTcSize(this._tc, s); }     // label 2D 假缩放下按 1/zoom 反向抵消
+  setNdcMapper(fn) { setTcNdcMapper(this._tc, fn); } // 多视口:指针→active 视口子矩形 NDC
 
   _setVisible(v) {
     const helper = this._tc.getHelper ? this._tc.getHelper() : this._tc;

@@ -42,11 +42,14 @@ export class ViewportManager {
     return { x: ((e.clientX - r.left) / r.width) * 2 - 1, y: -((e.clientY - r.top) / r.height) * 2 + 1 };
   }
 
-  _routePointer(e) {
+  // 指针事件命中的视口名(归一坐标 → hitTest),无则 null。
+  _hitName(e) {
     const r = this._canvas.getBoundingClientRect();
-    const nx = (e.clientX - r.left) / r.width;
-    const ny = (e.clientY - r.top) / r.height;
-    const name = hitTest(nx, ny, this._rects);
+    return hitTest((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, this._rects);
+  }
+
+  _routePointer(e) {
+    const name = this._hitName(e);
     if (name && name !== this._active && this._vps.has(name)) {
       this._active = name;
       this._syncControlsEnabled(); // 切 active → 只让该视口的 controls 响应本次拖拽
@@ -56,17 +59,13 @@ export class ViewportManager {
 
   // 滚轮/双指缩放:作用于「指针所在视口」(不限 active,无需先点选)。
   // 直接手动 dolly 命中视口,绕开 OrbitControls 的 enabled 闸门与 damping 单帧稀释;
-  // 并 preventDefault 阻止 OrbitControls 自身的 wheel 再缩 active 视口(避免双重缩放)。
+  // 并 preventDefault/stopPropagation 阻止 OrbitControls 自身的 wheel 再缩 active 视口(避免双重缩放)。
   _routeWheel(e) {
-    const r = this._canvas.getBoundingClientRect();
-    const nx = (e.clientX - r.left) / r.width;
-    const ny = (e.clientY - r.top) / r.height;
-    const name = hitTest(nx, ny, this._rects);
+    const name = this._hitName(e);
     if (!name || !this._vps.has(name)) return;
     e.preventDefault();
-    e.stopPropagation(); // 拦掉 OrbitControls 的 bubble 阶段 wheel,统一由这里手动缩放
-    const factor = Math.exp(e.deltaY * 0.001); // deltaY>0(下滚)→ factor>1 → 推远
-    this._vps.get(name).dollyBy(factor);
+    e.stopPropagation();
+    this._vps.get(name).dollyBy(Math.exp(e.deltaY * 0.001)); // deltaY>0(下滚)→ factor>1 → 推远
   }
 
   // 多套 OrbitControls 共用一个 canvas:只开 active 视口的 controls,其余关掉,
@@ -96,18 +95,22 @@ export class ViewportManager {
   render(renderer, scene) {
     const W = this._canvas.width, H = this._canvas.height;
     if (!W || !H) return;
-    for (const rect of this._rects) {
-      const vp = this._vps.get(rect.name); if (!vp) continue;
-      const isActive = rect.name === this._active;
-      // 手柄只在 active 视口那一遍可见(共享 scene,逐对象切 visible)。
-      for (const o of this._handleObjects) { o._wasVisible ??= o.visible; o.visible = isActive ? o._wasVisible : false; }
-      vp.update();
-      vp.applyScissor(renderer, this._pxRect(rect, W, H));
-      renderer.render(scene, vp.camera);
+    // 手柄仅 active 视口可见:渲染前记下各对象「意图可见性」,逐区切换,finally 保证还原
+    // (即便渲染抛异常也不会把手柄永久隐藏)。不往对象挂临时属性。
+    const wantVisible = this._handleObjects.map((o) => o.visible);
+    try {
+      for (const rect of this._rects) {
+        const vp = this._vps.get(rect.name); if (!vp) continue;
+        const isActive = rect.name === this._active;
+        this._handleObjects.forEach((o, i) => { o.visible = isActive && wantVisible[i]; });
+        vp.update();
+        vp.applyScissor(renderer, this._pxRect(rect, W, H));
+        renderer.render(scene, vp.camera);
+      }
+    } finally {
+      this._handleObjects.forEach((o, i) => { o.visible = wantVisible[i]; });
+      renderer.setScissorTest(false);
     }
-    // 渲染结束恢复各对象的「意图可见性」,不影响下帧/单视口逻辑。
-    for (const o of this._handleObjects) { if (o._wasVisible !== undefined) { o.visible = o._wasVisible; o._wasVisible = undefined; } }
-    renderer.setScissorTest(false);
   }
 
   // 注册「仅 active 视口可见」的手柄对象(TransformControls helper + marker 等)。

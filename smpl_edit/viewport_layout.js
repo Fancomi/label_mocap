@@ -16,8 +16,7 @@ function triRects(v, h) {
 export function computeRects(preset, splits) {
   const v = splits?.v ?? 0.7, h = splits?.h ?? 0.5;
   if (preset === 'single') return [{ name: 'main', x: 0, y: 0, w: 1, h: 1 }];
-  if (preset === 'main-big') return triRects(Math.max(v, 0.82), h);
-  return triRects(v, h);
+  return triRects(v, h); // 'tri';宽度由分隔条 v 自由调,不再单列 main-big 预设
 }
 
 // 命中:返回归一化点 (nx,ny) 落在的矩形 name,无则 null。

@@ -17,7 +17,7 @@ import { PcdPanels } from './ui/pcd_panels.js';
 import { decodeXYZ } from './scene/point_cloud_decode.js';
 import { decodePngFile } from './io/png_pixels.js';
 import { PcdDirSource, FileListSource, fsAccessSupported, pickDirectory } from './io/pcd_dir_source.js';
-import { FRONT_OPTIONS, viewFrame } from '../../smpl_edit/view_frame.js';
+import { FRONT_OPTIONS, viewFrame, axisName } from '../../smpl_edit/view_frame.js';
 import { Viewport } from '../../smpl_edit/viewport.js';
 import { ViewportManager } from '../../smpl_edit/viewport_manager.js';
 import { bodyBounds } from '../../smpl_edit/framing.js';
@@ -41,13 +41,6 @@ let playing = false, fps = 10, lastTick = 0, acc = 0;
 let axisUp = 'Z', axisFront = 'X';
 const AXIS_TO_IDX = { X: 0, Y: 1, Z: 2 };
 let lastDecoded = null;
-
-// 单位向量 → 轴字母。viewFrame(up,front).right 用于推侧视的正对轴。
-function axisName(v) {
-  const ax = [Math.abs(v[0]), Math.abs(v[1]), Math.abs(v[2])];
-  const i = ax[0] >= ax[1] && ax[0] >= ax[2] ? 0 : (ax[1] >= ax[2] ? 1 : 2);
-  return ['X', 'Y', 'Z'][i];
-}
 
 async function loadModelWithProgress() {
   const box = $('loading'), bar = $('loading-bar'), txt = $('loading-text');
@@ -90,10 +83,7 @@ async function renderPointCloud(i) {
 
 // 三视口统一取景源:有人体用人体包围,无人体用点云包围。开新数据与 R 共用,保证一致。
 function viewBounds() {
-  const bj = bodyBounds(lastJoints);
-  if (bj) return bj;
-  const bp = scene.pointCloud.bounds();
-  return bp ? { center: bp.center, radius: bp.radius } : null;
+  return bodyBounds(lastJoints) ?? scene.pointCloud.bounds(); // 两者皆 {center,radius}|null
 }
 
 // 三视口重置取景:三视(主/侧/正)都按同一 center+radius 重置位置+距离。

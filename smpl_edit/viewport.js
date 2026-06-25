@@ -35,7 +35,6 @@ export class Viewport {
 
   // 设标准朝向轴(上轴/前轴变化时调用)。
   setResetAxes(dirAxis, upAxis) { this._dirAxis = dirAxis; this._upAxis = upAxis; }
-  setOrientationAxes(d, u) { this.setResetAxes(d, u); } // 兼容旧调用名
 
   // 清掉用户锁定的相对方位 → R 回标准朝向。换坐标轴时调(旧 up 下记的 bearing 已不自洽)。
   clearResetBearing() { this._resetBearing = null; }

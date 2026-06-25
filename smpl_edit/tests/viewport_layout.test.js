@@ -21,11 +21,10 @@ test('tri preset → main left, side top-right, front bottom-right; widths/heigh
   assert.ok(Math.abs(front.y - 0.5) < 1e-9); assert.ok(Math.abs(front.h - 0.5) < 1e-9);
 });
 
-test('main-big preset → references occupy a thin right strip', () => {
-  const rects = computeRects('main-big', { v: 0.7, h: 0.5 });
-  const main = rects.find((r) => r.name === 'main');
-  assert.ok(main.w >= 0.8);
+test('unknown preset falls back to tri', () => {
+  const rects = computeRects('whatever', { v: 0.7, h: 0.5 });
   assert.equal(rects.length, 3);
+  assert.ok(rects.find((r) => r.name === 'main'));
 });
 
 test('hitTest returns the rect name under a normalized point', () => {
