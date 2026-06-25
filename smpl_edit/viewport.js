@@ -3,8 +3,8 @@
 // 不持有 renderer/scene(由 ViewportManager 统一渲染)。browser-only。
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { focusPlacement } from './framing.js';
-import { cameraPlacement } from './view_frame.js';
+import { focusPlacement, relativeBearing, placeFromBearing } from './framing.js';
+import { cameraPlacement, axisVec } from './view_frame.js';
 
 // kind: 'perspective' | 'ortho'。dirAxis/upAxis: 标准朝向(R 重置用),'X'|'Y'|'Z'。
 // camera/controls 可注入(主视复用既有 OrbitCam);否则自建。
@@ -14,7 +14,7 @@ export class Viewport {
     this.kind = kind;
     this._dirAxis = dirAxis;
     this._upAxis = upAxis;
-    this.locked = false;
+    this._resetBearing = null; // null=用标准朝向;非空=用户锁定的相对方位
     if (camera) {
       this.camera = camera;
     } else if (kind === 'ortho') {
@@ -34,22 +34,34 @@ export class Viewport {
   }
 
   // 设标准朝向轴(上轴/前轴变化时调用)。
-  setOrientationAxes(dirAxis, upAxis) { this._dirAxis = dirAxis; this._upAxis = upAxis; }
+  setResetAxes(dirAxis, upAxis) { this._dirAxis = dirAxis; this._upAxis = upAxis; }
+  setOrientationAxes(d, u) { this.setResetAxes(d, u); } // 兼容旧调用名
 
-  setLocked(v) { this.locked = !!v; this.controls.enabled = !v; }
+  // 锁定为重置视角:把当前相机相对人体中心的方位记为重置基准。center 缺省用当前 target。
+  captureAsReset(center) {
+    const c = center ?? this.controls.target.toArray();
+    this._resetBearing = relativeBearing(this.camera.position.toArray(), c);
+  }
 
-  // 回标准朝向(沿 dirAxis 退开看向 center),并强制解锁。center/radius 缺省用上次值。
+  // R 重置:有记忆基准则按它(以当前 center/radius 还原);否则回标准正交朝向。
+  // 始终设 camera.up = 当前上轴 → 坐标轴是重置的前提。
   resetOrientation(center, radius) {
     const c = center ?? this.controls.target.toArray();
     const r = (radius && radius > 0) ? radius : this._lastRadius;
     this._lastRadius = r;
-    const place = cameraPlacement(this._upAxis, this._dirAxis, c, r);
-    this.camera.up.set(place.up[0], place.up[1], place.up[2]);
-    this.camera.position.set(place.position[0], place.position[1], place.position[2]);
+    let pos, up;
+    if (this._resetBearing) {
+      pos = placeFromBearing(this._resetBearing, c).position;
+      up = axisVec(this._upAxis); // 上轴为前提:记忆方位在当前上轴下解释
+    } else {
+      const place = cameraPlacement(this._upAxis, this._dirAxis, c, r);
+      pos = place.position; up = place.up;
+    }
+    this.camera.up.set(up[0], up[1], up[2]);
+    this.camera.position.set(pos[0], pos[1], pos[2]);
     this.controls.target.set(c[0], c[1], c[2]);
     if (this.kind === 'ortho') this._fitOrtho(r);
     this.camera.lookAt(this.controls.target);
-    this.setLocked(false); // 重置后无锁可微调
     this.controls.update();
   }
 
