@@ -458,6 +458,10 @@ function boot() {
     if (!b) { setStatus('无人体可聚焦'); return; }
     if (!cam.focusOn(b.center, b.radius)) setStatus('2D 模式不聚焦，切到 3D 后按 F');
   });
+  $('kbd-hint-toggle').addEventListener('click', () => {
+    const min = $('kbd-hint').classList.toggle('min');
+    $('kbd-hint-toggle').textContent = min ? '▸' : '▾';
+  });
 
   const toggle = (id, key) => $(id).addEventListener('click', () => {
     const on = !$(id).classList.contains('on');
