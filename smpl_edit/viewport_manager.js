@@ -16,6 +16,7 @@ export class ViewportManager {
     this._handleObjects = [];
     this._rects = computeRects(this._preset, this._splits);
     canvas.addEventListener('pointerdown', (e) => this._routePointer(e), true);
+    canvas.addEventListener('wheel', (e) => this._routeWheel(e), true); // 滚轮/缩放:指针所在视口即可,不限 active
     this._syncControlsEnabled(); // 初始只开 active 视口的 controls
   }
 
@@ -51,6 +52,21 @@ export class ViewportManager {
       this._syncControlsEnabled(); // 切 active → 只让该视口的 controls 响应本次拖拽
       this._onActiveChange(name);
     }
+  }
+
+  // 滚轮/双指缩放:允许作用于「指针所在视口」,无需先点选切 active(点击类才必须在 active)。
+  // 做法:capture 阶段(先于 OrbitControls 的 wheel)临时开启该视口 controls,
+  // 事件冒泡到其 wheel 处理后于下一微任务还原 enabled 状态。
+  _routeWheel(e) {
+    const r = this._canvas.getBoundingClientRect();
+    const nx = (e.clientX - r.left) / r.width;
+    const ny = (e.clientY - r.top) / r.height;
+    const name = hitTest(nx, ny, this._rects);
+    if (!name || name === this._active || !this._vps.has(name)) return; // active 视口本就开着,无需处理
+    const vp = this._vps.get(name);
+    const prev = vp.controls.enabled;
+    vp.controls.enabled = true;              // 临时开,让该视口的 wheel 缩放生效
+    queueMicrotask(() => { vp.controls.enabled = prev; }); // wheel 同步处理完即还原(不影响点击作用域)
   }
 
   // 多套 OrbitControls 共用一个 canvas:只开 active 视口的 controls,其余关掉,

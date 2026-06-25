@@ -261,6 +261,16 @@ export class LabelScene {
   }
 
   setBackgroundTexture(texture) {
+    if (!texture) {
+      // 清屏:清掉背景面的贴图(加载失败/空数据集复位)。_applyVisibility 每帧按 _flags.bg
+      // 重设 .visible,故这里清 material.map 而非只设 visible,避免旧底图残留。
+      this._pendingTex = null;
+      this._bgTex = null;
+      for (const plane of [this._bgFar, this._bgNear]) {
+        if (plane) { plane.material.map = null; plane.material.needsUpdate = true; }
+      }
+      return;
+    }
     if (!this._cam) {
       // Defer until render() when cam is available
       this._pendingTex = texture;

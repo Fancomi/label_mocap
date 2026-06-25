@@ -104,7 +104,7 @@ const bboxShownNow = () => !!ui && twoDOnlyModes.has(ui.mode);
 // 顺序即 tab 顺序;modes[0]('root')是默认进入的模式,需与 index.html 里 .tab.on 一致。
 const editorModes = ['root', 'pose', 'bbox', 'beta'];
 
-function isJpeg(name) { return /\.(jpe?g)$/i.test(name); }
+function isImageName(name) { return /\.(jpe?g|png|bmp)$/i.test(name); }
 
 function setPlaying(on) {
   playing = on && store && store.frameCount() > 0;
@@ -178,7 +178,7 @@ async function openFiles(fileList) {
   const files = Array.from(fileList ?? []);
   const jsonFile = files.find((f) => f.name.endsWith('.json'));
   loadedJsonFile = jsonFile ?? null;
-  const imageFiles = files.filter((f) => isJpeg(f.name));
+  const imageFiles = files.filter((f) => isImageName(f.name));
   // basename -> File lookup (no positional ordering; ordering comes from
   // orderedImageNames so the background follows the json's images[] order).
   const byName = new Map(imageFiles.map((f) => [basename(f.name), f]));
@@ -310,7 +310,7 @@ function renderAnnoActions() {
 async function showFrame(i) {
   store.setFrame(i);
   $('slider').value = String(i);
-  $('frame-info').textContent = `${i} / ${store.frameCount() - 1}`;
+  $('frame-info').textContent = `${i + 1} / ${store.frameCount()}`; // 1-based 显示;内部仍 0-based(对齐不变)
   const a = store.current();
   if (a && store.hasSmpl()) {
     rotation = RotationState.fromAxisAngle({ root_rota: a.root_rota, body_pose: a.body_pose });
@@ -432,16 +432,23 @@ function boot() {
     if (!e.target.closest('.menu-anchor')) m.hidden = true;
   });
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { const m = $('open-menu'); if (m) m.hidden = true; } });
+  // 加载失败:除提示外把场景复位成「明确空白」,避免半初始化的黑屏被当成卡死。
+  const onLoadError = (e) => {
+    if (e?.name === 'AbortError') return;
+    setStatus(String(e?.message ?? e));
+    if (scene) { scene.setBackgroundTexture(null); scene.setPersonVisible(false); }
+    $('right').classList.add('disabled');
+  };
   $('open-dir').addEventListener('click', () => {
     $('open-menu').hidden = true;
-    openDirectoryData().catch((e) => { if (e?.name !== 'AbortError') setStatus(String(e)); });
+    openDirectoryData().catch(onLoadError);
   });
   $('open-video').addEventListener('click', () => {
     $('open-menu').hidden = true;
     if (!videoOpenSupported()) { setStatus('当前浏览器不支持打开视频文件,请用 Chrome/Edge'); return; }
-    openVideoData().catch((e) => { if (e?.name !== 'AbortError') setStatus(String(e)); });
+    openVideoData().catch(onLoadError);
   });
-  $('dir-input').addEventListener('change', (e) => openFiles(e.target.files).catch((err) => setStatus(String(err))));
+  $('dir-input').addEventListener('change', (e) => openFiles(e.target.files).catch(onLoadError));
   $('btn-2d').addEventListener('click', () => { if (dragGuards.some((g) => g.isDragging())) return; cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); refreshTabAvailability(); if (syncUI) syncUI(); });
   $('btn-3d').addEventListener('click', () => { if (dragGuards.some((g) => g.isDragging())) return; cam.switchTo('3d'); $('btn-3d').classList.add('on'); $('btn-2d').classList.remove('on'); leave2dOnlyModeIfNeeded(); refreshTabAvailability(); if (syncUI) syncUI(); });
   $('slider').addEventListener('input', (e) => { if (!store) return; setPlaying(false); showFrame(+e.target.value); });

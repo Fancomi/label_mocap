@@ -88,23 +88,35 @@ async function renderPointCloud(i) {
   scene.pointCloud.setData(lastDecoded);
 }
 
-// 上轴/前轴变化:只动相机(up 向量 + 环绕方位)与地面网格朝向,几何不变。
+// 三视口统一取景源:有人体用人体包围,无人体用点云包围。开新数据与 R 共用,保证一致。
+function viewBounds() {
+  const bj = bodyBounds(lastJoints);
+  if (bj) return bj;
+  const bp = scene.pointCloud.bounds();
+  return bp ? { center: bp.center, radius: bp.radius } : null;
+}
+
+// 三视口重置取景:三视(主/侧/正)都按同一 center+radius 重置位置+距离。
+// recenter=false 时只重算 frustum/朝向、不挪 center(尺寸变化用)。
+function frameViewports(recenter) {
+  const b = viewBounds();
+  const center = recenter && b ? b.center : null;
+  const radius = b ? b.radius : null;
+  cam.setFrame(axisUp, axisFront, center, radius); // 主视(与下方 setResetAxes 同轴,R 走同一 cameraPlacement)
+  const rightAxis = axisName(viewFrame(axisUp, axisFront).right);
+  const main = mgr.viewport('main'), side = mgr.viewport('side'), front = mgr.viewport('front');
+  // 三视基准轴同步;换坐标轴/开新数据时清掉用户锁定方位(回标准朝向),三视一致重置距离。
+  if (main) main.setResetAxes(axisFront, axisUp);
+  if (side) { side.setResetAxes(rightAxis, axisUp); side.clearResetBearing(); side.resetOrientation(center ?? undefined, radius ?? undefined); }
+  if (front) { front.setResetAxes(axisFront, axisUp); front.clearResetBearing(); front.resetOrientation(center ?? undefined, radius ?? undefined); }
+  mgr.syncControlsEnabled();
+}
+
+// 上轴/前轴变化 / 开新数据:只动相机(up 向量 + 环绕方位)与地面网格朝向,几何不变。
 function applyAxisFrame(recenter) {
   scene.orientGroundTo(axisUp);
   scene.pointCloud.setHeightAxis(AXIS_TO_IDX[axisUp]); // 高度配色取上轴分量(若为 height 模式会自动重算)
-  const b = scene.pointCloud.bounds();
-  const center = recenter && b ? b.center : null;
-  const radius = b ? b.radius : null;
-  cam.setFrame(axisUp, axisFront, center, radius); // 主视
-  // 三视口同步「重置基准轴」:侧视沿 right 轴看,正视沿 front 轴看,均以 up 为上。
-  // 主视也须同步,否则换坐标轴后按 R 仍用旧轴摆位(与坐标轴冲突)。
-  // 换坐标轴时清掉用户锁定的相对方位(bearing 是旧 up 下记的,换轴后语义不自洽),回标准朝向。
-  const rightAxis = axisName(viewFrame(axisUp, axisFront).right);
-  const main = mgr.viewport('main'), side = mgr.viewport('side'), front = mgr.viewport('front');
-  if (main) main.setResetAxes(axisFront, axisUp); // 主视 R 基准跟随坐标轴(取景已由 cam.setFrame 完成)
-  if (side) { side.setResetAxes(rightAxis, axisUp); side.clearResetBearing(); side.resetOrientation(center ?? undefined, radius ?? undefined); }
-  if (front) { front.setResetAxes(axisFront, axisUp); front.clearResetBearing(); front.resetOrientation(center ?? undefined, radius ?? undefined); }
-  mgr.syncControlsEnabled(); // resetOrientation 会解锁视口,重同步 controls 启停
+  frameViewports(recenter);
 }
 
 function renderAnnoActions() {
@@ -127,7 +139,7 @@ function renderAnnoActions() {
 async function showFrame(i) {
   store.setFrame(i);
   $('slider').value = String(i);
-  $('frame-info').textContent = `${i} / ${store.frameCount() - 1}`;
+  $('frame-info').textContent = `${i + 1} / ${store.frameCount()}`; // 1-based 显示;内部仍 0-based(对齐不变)
   const a = store.current();
   if (a) {
     rotation = RotationState.fromAxisAngle({ root_rota: a.root_rota, body_pose: a.body_pose });
@@ -335,11 +347,12 @@ function boot2() {
     if (!store || e.target.matches('input,select,textarea')) return;
     if (dragGuards.some((g) => g.isDragging()) || playing) return;
     const vp = mgr.activeViewport(); if (!vp) return;
-    const b = bodyBounds(lastJoints);
+    const b = viewBounds();
     if (e.key === 'f' || e.key === 'F') {
-      if (!b) { setStatus('无人体可聚焦'); return; }
+      if (!b) { setStatus('无人体/点云可聚焦'); return; }
       vp.focus(b.center, b.radius);
     } else if (e.key === 'r' || e.key === 'R') {
+      // R 重置当前视口朝向+距离,走与「开新数据」同一取景源(viewBounds)。
       vp.resetOrientation(b ? b.center : undefined, b ? b.radius : undefined);
     }
   });
