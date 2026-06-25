@@ -7,7 +7,8 @@ import { turbo, normalizeRange } from './colormap.js';
 export class PointCloud {
   constructor() {
     this._geom = new THREE.BufferGeometry();
-    this._mat = new THREE.PointsMaterial({ size: 0.03, vertexColors: true, sizeAttenuation: true });
+    // sizeAttenuation:false → 屏幕像素恒定大小,不随 scissor 子视口高度错算(三视口一致)。
+    this._mat = new THREE.PointsMaterial({ size: 3, vertexColors: true, sizeAttenuation: false });
     this.object = new THREE.Points(this._geom, this._mat);
     this.object.frustumCulled = false;
     this._raw = null;
