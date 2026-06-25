@@ -13,6 +13,7 @@ export class ViewportManager {
     this._preset = 'tri';
     this._splits = { v: 0.7, h: 0.5 };
     this._active = 'main';
+    this._handleObjects = [];
     this._rects = computeRects(this._preset, this._splits);
     canvas.addEventListener('pointerdown', (e) => this._routePointer(e), true);
     this._syncControlsEnabled(); // 初始只开 active 视口的 controls
@@ -53,12 +54,10 @@ export class ViewportManager {
   }
 
   // 多套 OrbitControls 共用一个 canvas:只开 active 视口的 controls,其余关掉,
-  // 否则一次拖拽会同时驱动三个视口。锁定的视口始终关。capture 阶段先于
-  // OrbitControls 的 pointerdown 执行,故同一次按下即对非 active 视口生效。
+  // 否则一次拖拽会同时驱动三个视口。capture 阶段先于 OrbitControls 的
+  // pointerdown 执行,故同一次按下即对非 active 视口生效。
   _syncControlsEnabled() {
-    for (const vp of this._vps.values()) {
-      vp.controls.enabled = (vp.name === this._active) && !vp.locked;
-    }
+    for (const vp of this._vps.values()) vp.controls.enabled = (vp.name === this._active);
   }
 
   // 像素矩形(GL 左下原点):由归一矩形(左上原点)翻 Y 得到。
@@ -83,19 +82,27 @@ export class ViewportManager {
     if (!W || !H) return;
     for (const rect of this._rects) {
       const vp = this._vps.get(rect.name); if (!vp) continue;
+      const isActive = rect.name === this._active;
+      // 手柄只在 active 视口那一遍可见(共享 scene,逐对象切 visible)。
+      for (const o of this._handleObjects) { o._wasVisible ??= o.visible; o.visible = isActive ? o._wasVisible : false; }
       vp.update();
       vp.applyScissor(renderer, this._pxRect(rect, W, H));
       renderer.render(scene, vp.camera);
     }
+    // 渲染结束恢复各对象的「意图可见性」,不影响下帧/单视口逻辑。
+    for (const o of this._handleObjects) { if (o._wasVisible !== undefined) { o.visible = o._wasVisible; o._wasVisible = undefined; } }
     renderer.setScissorTest(false);
   }
 
-  // gizmo engaged 时锁 active 视口的 controls;松开后恢复。锁定视口不开。
+  // 注册「仅 active 视口可见」的手柄对象(TransformControls helper + marker 等)。
+  registerHandleObjects(objs) { this._handleObjects.push(...objs); }
+
+  // gizmo engaged 时锁 active 视口的 controls;松开后恢复。
   setActiveControlsEnabled(enabled) {
     const vp = this.activeViewport();
-    if (vp && !vp.locked) vp.controls.enabled = enabled;
+    if (vp) vp.controls.enabled = enabled;
   }
 
-  // 锁/解锁某视口后,重新同步 controls 启停(解锁的 active 视口要恢复响应)。
+  // 布局/active 变化后,重新同步各视口 controls 启停(app 仍调用)。
   syncControlsEnabled() { this._syncControlsEnabled(); }
 }
