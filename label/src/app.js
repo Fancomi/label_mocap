@@ -116,10 +116,10 @@ function setPlaying(on) {
 // 两条 open 路径(目录/视频 与 本地文件)的公共尾段:校验内容、竖拍 gate、装配
 // store/ui/slider/right/model/scene,并显示首帧。调用方各自先准备好 coco/background
 // 以及 images(Map)或 videoSource(模块级变量),mountDataset 不触碰它们。
-async function mountDataset({ coco, background }) {
+async function mountDataset({ coco, background, hint = {} }) {
   const ids = coco.imageIds();
   const dataFrameIndices = ids.map((id, idx) => (coco.getAnnotation(id) ? idx : -1)).filter((x) => x >= 0);
-  assertHasContent({ bgCount: background ? background.count : 0, dataFrameIndices });
+  assertHasContent({ bgCount: background ? background.count : 0, dataFrameIndices, hint });
   const info = coco.imageInfo(ids[0]);
   readOnly = info ? isPortrait(info) : false;
   if (readOnly) setStatus('⚠ 该数据为竖拍/旋转,标注器仅支持查看;请用其他软件转正后再标注');
@@ -203,7 +203,8 @@ async function openFiles(fileList) {
   const bgCount = names.length;
   const background = bgCount ? { kind: 'image_sequence', count: bgCount } : null;
 
-  await mountDataset({ coco, background });
+  const hasManifest = files.some((f) => basename(f.webkitRelativePath || f.name) === 'manifest.json');
+  await mountDataset({ coco, background, hint: { hasManifest } });
 }
 
 async function openFromDirSource(opts = {}) {
@@ -246,7 +247,7 @@ async function openFromDirSource(opts = {}) {
     coco = new CocoDocument({ images: Array.from({ length: bgCount }, (_, i) => ({ id: i })), annotations: [], categories: [] });
   }
 
-  await mountDataset({ coco, background });
+  await mountDataset({ coco, background, hint: { hasManifest: !!cls.hasManifest } });
 }
 
 async function openDirectoryData() {

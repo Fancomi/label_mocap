@@ -37,6 +37,9 @@ export class Viewport {
   setResetAxes(dirAxis, upAxis) { this._dirAxis = dirAxis; this._upAxis = upAxis; }
   setOrientationAxes(d, u) { this.setResetAxes(d, u); } // 兼容旧调用名
 
+  // 清掉用户锁定的相对方位 → R 回标准朝向。换坐标轴时调(旧 up 下记的 bearing 已不自洽)。
+  clearResetBearing() { this._resetBearing = null; }
+
   // 锁定为重置视角:把当前相机相对人体中心的方位记为重置基准。center 缺省用当前 target。
   captureAsReset(center) {
     const c = center ?? this.controls.target.toArray();

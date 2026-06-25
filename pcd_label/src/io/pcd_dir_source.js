@@ -15,7 +15,9 @@ export class PcdDirSource {
   constructor(dirHandle) { this._dir = dirHandle; this._manifest = null; }
 
   async readManifest() {
-    const fh = await this._dir.getFileHandle('manifest.json');
+    let fh;
+    try { fh = await this._dir.getFileHandle('manifest.json'); }
+    catch { throw new Error('该目录不是点云序列:缺少 manifest.json(点云序列请用导出工具生成,图像标注请用 label)'); }
     const raw = JSON.parse(await (await fh.getFile()).text());
     this._manifest = parseManifest(raw);
     return this._manifest;

@@ -11,7 +11,14 @@ test('有数据无背景 → 通过校验', () => {
 });
 
 test('既无背景也无数据 → 抛错', () => {
-  assert.throws(() => assertHasContent({ bgCount: 0, dataFrameIndices: [] }), /no content/i);
+  assert.throws(() => assertHasContent({ bgCount: 0, dataFrameIndices: [] }), /无可标注内容/);
+});
+
+test('空目录含 manifest.json → 提示用点云标注器', () => {
+  assert.throws(
+    () => assertHasContent({ bgCount: 0, dataFrameIndices: [], hint: { hasManifest: true } }),
+    /点云/,
+  );
 });
 
 test('isPortrait true when image height > width', () => {

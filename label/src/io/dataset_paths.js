@@ -57,5 +57,8 @@ export function classifyEntries(paths, opts = {}) {
 
   const writeJsonPath = jsonPath ?? siblingJson ?? DATA_JSON_PATH;
 
-  return { jsonPath, writeJsonPath, dataItemName, imageDir, imagePaths, videoPath };
+  // 误把点云序列目录(含 manifest.json)喂给图像标注器时,供上层给出明确提示。
+  const hasManifest = paths.some((p) => basename(p) === 'manifest.json');
+
+  return { jsonPath, writeJsonPath, dataItemName, imageDir, imagePaths, videoPath, hasManifest };
 }

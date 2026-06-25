@@ -96,11 +96,14 @@ function applyAxisFrame(recenter) {
   const center = recenter && b ? b.center : null;
   const radius = b ? b.radius : null;
   cam.setFrame(axisUp, axisFront, center, radius); // 主视
-  // 侧/正视口同步标准朝向:侧视沿 right 轴看,正视沿 front 轴看,均以 up 为上。
+  // 三视口同步「重置基准轴」:侧视沿 right 轴看,正视沿 front 轴看,均以 up 为上。
+  // 主视也须同步,否则换坐标轴后按 R 仍用旧轴摆位(与坐标轴冲突)。
+  // 换坐标轴时清掉用户锁定的相对方位(bearing 是旧 up 下记的,换轴后语义不自洽),回标准朝向。
   const rightAxis = axisName(viewFrame(axisUp, axisFront).right);
-  const side = mgr.viewport('side'), front = mgr.viewport('front');
-  if (side) { side.setOrientationAxes(rightAxis, axisUp); side.resetOrientation(center ?? undefined, radius ?? undefined); }
-  if (front) { front.setOrientationAxes(axisFront, axisUp); front.resetOrientation(center ?? undefined, radius ?? undefined); }
+  const main = mgr.viewport('main'), side = mgr.viewport('side'), front = mgr.viewport('front');
+  if (main) main.setResetAxes(axisFront, axisUp); // 主视 R 基准跟随坐标轴(取景已由 cam.setFrame 完成)
+  if (side) { side.setResetAxes(rightAxis, axisUp); side.clearResetBearing(); side.resetOrientation(center ?? undefined, radius ?? undefined); }
+  if (front) { front.setResetAxes(axisFront, axisUp); front.clearResetBearing(); front.resetOrientation(center ?? undefined, radius ?? undefined); }
   mgr.syncControlsEnabled(); // resetOrientation 会解锁视口,重同步 controls 启停
 }
 
@@ -417,6 +420,19 @@ function boot4() {
   }
 
   window.addEventListener('resize', () => scene.resize());
+  // 首屏 #stage 可能从 0→非零(布局未就绪时 scene.resize 早退 → canvas 0×0 → scissor 全黑)。
+  // ResizeObserver 兜底:stage 尺寸一就绪/变化即重新 resize,并按当前坐标轴重取景。
+  if (typeof ResizeObserver !== 'undefined') {
+    let lastW = 0, lastH = 0;
+    const ro = new ResizeObserver(() => {
+      const st = $('stage'); const w = st.clientWidth, h = st.clientHeight;
+      if (w === lastW && h === lastH) return;
+      lastW = w; lastH = h;
+      scene.resize();
+      if (store && mgr) applyAxisFrame(false); // 尺寸变 → 正交 frustum/aspect 重算,几何不动
+    });
+    ro.observe($('stage'));
+  }
 
   function loop(now) {
     if (playing && store && store.frameCount() > 0) {
