@@ -56,7 +56,7 @@ function render() {
   if (!state.bitmap) return;
   const w = win();
   drawImage(ctx, state.bitmap, w, canvas.width, canvas.height);
-  if (state.store) drawPersons(ctx, state.store.persons(), state.store.selectedId(), skel, w, canvas.width, canvas.height);
+  if (state.store) drawPersons(ctx, state.store.persons(), state.store.selectedId(), skel, w, canvas.width, canvas.height, state.armed);
 }
 
 function syncUI() {
@@ -71,7 +71,7 @@ function syncUI() {
     el.className = 'item' + (p.id === state.store.selectedId() ? ' on' : '');
     const nk = p.keypoints.filter((k) => k[2] > 0).length;
     el.innerHTML = `<span>Person ${p.id}</span><span>${p.bbox ? '▢' : '·'} ${nk}/${skel.names.length}</span>`;
-    el.addEventListener('click', () => { state.store.select(p.id); refresh(); });
+    el.addEventListener('click', () => { state.store.select(p.id); state.armed = -1; refresh(); });
     list.appendChild(el);
   }
   const sel = state.store?.selected();
@@ -193,8 +193,9 @@ canvas.addEventListener('pointerdown', (ev) => {
   if (ev.shiftKey) { drag = { kind: 'pan', x: ev.clientX, y: ev.clientY, panX: state.panX, panY: state.panY }; canvas.setPointerCapture(ev.pointerId); return; }
   const sel = state.store.selected();
   if (sel) {
+    // 命中已标关节：选中它（=SVG 点它，进入 armed），并预备拖动微调。move 超阈值才算拖。
     const ki = hitKeypoint(sel, [ix, iy], r);
-    if (ki >= 0 && state.mode === 'pose') { state.store.beginEdit(); drag = { kind: 'kpt', idx: ki }; canvas.setPointerCapture(ev.pointerId); return; }
+    if (ki >= 0) { armKeypoint(ki); state.store.beginEdit(); drag = { kind: 'kpt', idx: ki, moved: false, x: ev.clientX, y: ev.clientY }; canvas.setPointerCapture(ev.pointerId); return; }
     const corner = hitBboxCorner(sel, [ix, iy], r);
     if (corner && state.mode === 'bbox') { state.store.beginEdit(); drag = { kind: 'corner', corner }; canvas.setPointerCapture(ev.pointerId); return; }
   }
@@ -205,7 +206,7 @@ canvas.addEventListener('pointerdown', (ev) => {
   }
   if (state.mode === 'bbox' && sel) { state.store.beginEdit(); drag = { kind: 'bbox', x0: ix, y0: iy }; canvas.setPointerCapture(ev.pointerId); return; }
   const hid = hitPerson(state.store.persons(), [ix, iy], r);
-  if (hid != null) { state.store.select(hid); refresh(); }
+  if (hid != null) { state.store.select(hid); state.armed = -1; refresh(); }
 });
 
 canvas.addEventListener('pointermove', (ev) => {
@@ -219,32 +220,32 @@ canvas.addEventListener('pointermove', (ev) => {
     state.panX = c.panX; state.panY = c.panY; render(); return;
   }
   const [ix, iy] = eventToImage(ev);
-  if (drag.kind === 'kpt') { state.store.applyKeypoint(drag.idx, ix, iy, state.store.selected().keypoints[drag.idx][2] || 2); render(); }
+  if (drag.kind === 'kpt') {
+    if (!drag.moved && Math.hypot(ev.clientX - drag.x, ev.clientY - drag.y) < 3) return;  // 阈值内只算点选不微调
+    drag.moved = true;
+    state.store.applyKeypoint(drag.idx, ix, iy, state.store.selected().keypoints[drag.idx][2] || 2); render();
+  }
   else if (drag.kind === 'corner') { state.store.applyBbox(resizeBboxByCorner(state.store.selected().bbox, drag.corner, [ix, iy])); render(); }
   else if (drag.kind === 'bbox') { state.store.applyBbox(normRect(drag.x0, drag.y0, ix, iy)); render(); }
 });
 
 canvas.addEventListener('pointerup', (ev) => {
+  // kpt 若没真正拖动（moved=false），提交的是空事务——commit 仍安全（无变化的快照）。
   if (drag && drag.kind !== 'pan') state.store.commitEdit();
   if (drag) { try { canvas.releasePointerCapture(ev.pointerId); } catch {} }
   drag = null; refresh();
 });
 
-// 右键切已标关键点的可见性 2(可见)→1(遮挡)→0(清除)。
-// 监听挂 stage（含 canvas 的容器），统一 preventDefault，避免系统菜单漏出。
+// 右键切可见性：优先作用于命中的已标点，否则作用于当前 armed 关节。统一入口 cycleVisibility。
 $('stage').addEventListener('contextmenu', (ev) => {
   ev.preventDefault();
   const sel = state.store?.selected();
   if (!sel) { $('status').textContent = '右键切可见性：请先选中一个人'; return; }
   const [ix, iy] = eventToImage(ev);
-  const ki = hitKeypoint(sel, [ix, iy], hitRadius(12));   // 比左键更宽容
-  if (ki < 0) { $('status').textContent = '右键未命中已标关键点（v=0 的点不显示也不可命中）'; return; }
-  const cur = sel.keypoints[ki][2];
-  const nv = cur === 2 ? 1 : cur === 1 ? 0 : 2;
-  if (nv === 0) state.store.setKeypoint(ki, 0, 0, 0);
-  else state.store.setKeypoint(ki, sel.keypoints[ki][0], sel.keypoints[ki][1], nv);
-  $('status').textContent = `${skel.names[ki]} → ${nv === 2 ? '可见' : nv === 1 ? '遮挡' : '清除'}`;
-  refresh();
+  const ki = hitKeypoint(sel, [ix, iy], hitRadius(12));
+  const target = ki >= 0 ? ki : state.armed;
+  if (target < 0) { $('status').textContent = '右键未命中关键点；先在人体图选一个关节'; return; }
+  cycleVisibility(target);
 });
 
 // 按 skeleton.order（深度优先）找 from 之后的下一个未标关节；都标完返回 -1。
@@ -256,6 +257,23 @@ function nextUnset(person, from) {
     if (person.keypoints[j][2] === 0) return j;
   }
   return -1;
+}
+
+// —— 关节统一操作入口：SVG 点击 / 图上点中 / 右键 都走这两个函数 ——
+// 选中（armed）某关节：切到 pose 模式并高亮；需已有选中人。
+function armKeypoint(idx) {
+  if (!state.store?.selected()) { $('status').textContent = '请先新建/选中一个人'; return; }
+  state.mode = 'pose'; state.armed = idx; refresh();
+}
+// 切某关节可见性 2(可见)→1(遮挡)→0(清除)；保留原坐标。
+function cycleVisibility(idx) {
+  const sel = state.store?.selected(); if (!sel) return;
+  const [x, y, v] = sel.keypoints[idx];
+  const nv = v === 2 ? 1 : v === 1 ? 0 : 2;
+  if (nv === 0) state.store.setKeypoint(idx, 0, 0, 0);
+  else state.store.setKeypoint(idx, x, y, nv);
+  $('status').textContent = `${skel.names[idx]} → ${nv === 2 ? '可见' : nv === 1 ? '遮挡' : '清除'}`;
+  refresh();
 }
 
 // 「选择数据」下拉菜单（对齐 label）。
@@ -292,8 +310,8 @@ window.addEventListener('keydown', (ev) => {
   else if (ev.key === 'c' || ev.key === 'C') { copyPrev(); }
   else if (ev.key === 's' || ev.key === 'S') { saveProject().catch(reportErr); }
   else if (ev.key === 'Tab') { ev.preventDefault(); cycleSelect(); }
-  else if (ev.key === '1') { state.mode = 'bbox'; state.armed = -1; refresh(); }
-  else if (ev.key === '2') { state.mode = 'pose'; refresh(); }
+  else if (ev.key === 'b' || ev.key === 'B') { state.mode = 'bbox'; state.armed = -1; refresh(); }
+  else if (ev.key === 'k' || ev.key === 'K') { state.mode = 'pose'; refresh(); }
   else if (ev.key === 'f' || ev.key === 'F') focusSelected();
   else if (ev.key === 'r' || ev.key === 'R') { state.zoom = ZOOM_MIN; state.panX = 0; state.panY = 0; render(); }
   else if (ev.key === 'z' || ev.key === 'Z') { state.store.undo(); refresh(); }
@@ -366,9 +384,10 @@ function triggerDownload(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-state.diagram = new BodyDiagram($('diagram-host'), skel, (idx) => {
-  if (!state.store?.selected()) { $('status').textContent = '请先新建/选中一个人'; return; }
-  state.mode = 'pose'; state.armed = idx; refresh();
+state.diagram = new BodyDiagram($('diagram-host'), skel, {
+  onPick: (idx) => armKeypoint(idx),       // SVG 左键选关节 = 图上点中关节
+  onToggle: (idx) => { armKeypoint(idx); cycleVisibility(idx); },  // SVG 右键切可见性
 });
+$('show-kpt-label').addEventListener('change', (e) => state.diagram.setLabelVisible(e.target.checked));
 window.addEventListener('resize', () => { if (state.bitmap) { fitCanvas(); render(); } });
 syncUI();

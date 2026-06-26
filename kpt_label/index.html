@@ -82,13 +82,15 @@
     <div class="card">
       <h3>编辑模式</h3>
       <div id="tabs">
-        <button class="tab on" data-mode="pose">关键点<span class="keycap">2</span></button>
-        <button class="tab" data-mode="bbox">框<span class="keycap">1</span></button>
+        <button class="tab on" data-mode="pose">关键点</button>
+        <button class="tab" data-mode="bbox">框</button>
       </div>
+      <div class="hint" style="background:none;padding:2px 0">快捷键 <span class="keycap">K</span> 关键点 · <span class="keycap">B</span> 框</div>
     </div>
     <div class="card" id="diagram-card">
-      <h3>选关节打点</h3>
-      <div class="hint">① 点下方人体图选关节 → ② 在<b>中间图像</b>上单击放置，自动跳下一关节。<br>在<b>图像</b>上左键拖动已有点可微调；<b>右键</b>已标点循环 可见→遮挡→清除。</div>
+      <h3>选关节打点 <span style="color:#778;font-weight:normal">（人体面向你，左右已镜像；蓝=左 橙=右）</span></h3>
+      <div class="hint">① 点人体图（或图上已标点）选关节 → ② 在<b>中间图像</b>单击放置，自动跳下一关节。<br>左键拖动已标点微调；<b>右键</b>（图上或人体图）循环 可见→遮挡→清除。</div>
+      <label class="inline" style="margin:2px 0"><input id="show-kpt-label" type="checkbox"> 显示当前关节名</label>
       <div id="diagram-host"></div>
     </div>
   </div>

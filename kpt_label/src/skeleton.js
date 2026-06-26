@@ -46,3 +46,23 @@ const REGISTRY = { coco17: COCO17 };
 export function getSkeleton(id = 'coco17') {
   return REGISTRY[id] ?? COCO17;
 }
+
+// —— 左右/中线着色：图上画布与 SVG 人体图共用同一套配色（单一真相）——
+// 人物左半身蓝 / 右半身橙 / 中线（鼻等）灰白。
+export const SIDE_COLOR = { L: '#4493f8', R: '#e67e22', C: '#cdd' };
+
+// 由关节名前缀判定所属侧：left_* → L，right_* → R，其余 → C（中线）。
+export function sideOf(name) {
+  return name.startsWith('left_') ? 'L' : name.startsWith('right_') ? 'R' : 'C';
+}
+
+export function jointColor(skel, i) { return SIDE_COLOR[sideOf(skel.names[i])]; }
+
+// 连线着色：两端同侧取该侧；一端为中线取另一端侧；左右横连（肩/髋）取中线色。
+export function edgeColor(skel, a, b) {
+  const sa = sideOf(skel.names[a]), sb = sideOf(skel.names[b]);
+  if (sa === sb) return SIDE_COLOR[sa];
+  if (sa === 'C') return SIDE_COLOR[sb];
+  if (sb === 'C') return SIDE_COLOR[sa];
+  return SIDE_COLOR.C;
+}
