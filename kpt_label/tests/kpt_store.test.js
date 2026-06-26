@@ -97,3 +97,37 @@ test('fromJSON ⟷ serialize 往返一致', () => {
   const s2 = KptStore.fromJSON(obj, 17);
   assert.deepEqual(s2.serialize(), obj);
 });
+
+test('copyFromPrevForEmpty：仅空帧可复制最近非空帧，id 本帧重排', () => {
+  const s = mk();
+  s.addPerson(); s.setBbox([1, 2, 3, 4]); s.setKeypoint(0, 5, 6, 2);  // 帧0：1 人
+  s.setFrame(1);
+  assert.equal(s.copyFromPrevForEmpty(), true);
+  const ps = s.persons();
+  assert.equal(ps.length, 1);
+  assert.deepEqual(ps[0].bbox, [1, 2, 3, 4]);
+  assert.deepEqual(ps[0].keypoints[0], [5, 6, 2]);
+  assert.equal(ps[0].id, 1);              // 本帧首个 id 从 1 起
+  assert.equal(s.selectedId(), 1);
+});
+
+test('copyFromPrevForEmpty：当前帧非空 → 不动返回 false', () => {
+  const s = mk();
+  s.addPerson();
+  s.setFrame(1); s.addPerson();           // 帧1 已有人
+  assert.equal(s.copyFromPrevForEmpty(), false);
+  assert.equal(s.persons().length, 1);
+});
+
+test('copyFromPrevForEmpty：前方无非空帧 → false', () => {
+  const s = mk();
+  assert.equal(s.copyFromPrevForEmpty(), false);   // 帧0 前无帧
+});
+
+test('copyFromPrevForEmpty 可被 undo 撤销', () => {
+  const s = mk();
+  s.addPerson();
+  s.setFrame(1); s.copyFromPrevForEmpty();
+  s.undo();
+  assert.equal(s.persons().length, 0);
+});

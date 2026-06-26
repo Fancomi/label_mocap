@@ -28,6 +28,7 @@
     .body-diagram { width:100%; height:260px; background:#11151c; border:1px solid #333; border-radius:4px; }
     input[type=range] { width:100%; }
     label.inline { display:flex; align-items:center; gap:6px; }
+    code { background:#11151c; padding:1px 4px; border-radius:3px; color:#cde; }
   </style>
 </head>
 <body>
@@ -44,14 +45,16 @@
       <div class="row"><button id="prev">◀ 上一帧</button><button id="next">下一帧 ▶</button></div>
       <input id="frame-slider" type="range" min="0" max="0" value="0">
       <div id="frame-label" class="status">— / —</div>
+      <button id="copy-prev">⎘ 复制上一帧标注（仅空帧）</button>
     </div>
     <div class="card">
-      <h3>导出 YOLO-pose</h3>
+      <h3>保存 / 导出</h3>
+      <button id="save-json" class="primary">💾 保存工程（可再次载入续标）</button>
+      <button id="export">⬇ 导出 YOLO-pose 训练集（单向）</button>
       <label class="inline">val 比例 <input id="val-ratio" type="number" min="0" max="0.5" step="0.1" value="0" style="width:60px"></label>
-      <button id="export">导出数据集</button>
-      <button id="save-json">保存中间 JSON</button>
+      <div class="hint">保存=写回目录 <code>kpt_label_project.json</code>，下次打开此目录自动续标；导出=单向生成 <code>images/ labels/ dataset.yaml</code> 供训练，不可再载入。</div>
     </div>
-    <div class="card"><div class="hint">快捷键：N 新建人 · Del 删人 · Tab 切人 · 1/2 框/点 · F 聚焦 · R 重置 · Z 撤销</div></div>
+    <div class="card"><div class="hint">快捷键：N 新建人 · C 复制上一帧 · Del 删人 · Tab 切人 · 1/2 框/点 · F 聚焦 · R 重置 · Z 撤销 · S 保存</div></div>
   </div>
 
   <div id="stage">

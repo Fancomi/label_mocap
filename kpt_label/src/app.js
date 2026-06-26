@@ -15,6 +15,7 @@ import { buildExport } from './yolo_export.js';
 
 const $ = (id) => document.getElementById(id);
 const skel = getSkeleton('coco17');
+const PROJECT_FILE = 'kpt_label_project.json';   // 工程文件（可载入续标）；区别于 export 的单向产物
 
 const state = {
   store: null, dirSource: null, video: null, images: null /* Map<idx,File> */,
@@ -123,18 +124,24 @@ async function openDirectory() {
   state.video?.dispose();
   state.dirSource = src; state.video = null;
   await mountImages(src, cls);
-  // 目录内若有既存中间 JSON，载入续标（fromJSON 往返保真）。
-  try {
-    const existing = await src.readJson();
-    if (existing?.schema === 'kpt-label/v1') {
-      state.store = KptStore.fromJSON(existing, skel.names.length);
-      $('frame-slider').max = String(state.store.frameCount() - 1);
-      await loadFrame(0);
-      $('status').textContent = '已加载图像目录 + 续接既有标注';
-      return;
-    }
-  } catch { /* 无既存 JSON，全新标注 */ }
+  // 目录内若有本工具的工程文件，载入续标（fromJSON 往返保真）。
+  const proj = await readProjectFile(src);
+  if (proj?.schema === 'kpt-label/v1') {
+    state.store = KptStore.fromJSON(proj, skel.names.length);
+    $('frame-slider').max = String(state.store.frameCount() - 1);
+    await loadFrame(0);
+    $('status').textContent = `已加载图像目录 + 续接工程（${PROJECT_FILE}）`;
+    return;
+  }
   $('status').textContent = '已加载图像目录';
+}
+
+// 直接按固定文件名读工程，不走 DirSource 的 SMPL 命名约定。
+async function readProjectFile(src) {
+  const file = await src.readFile(PROJECT_FILE);
+  if (!file) return null;
+  try { return JSON.parse(await file.text()); }
+  catch { return null; }
 }
 
 async function openVideo() {
@@ -242,14 +249,23 @@ $('next').addEventListener('click', () => state.store && loadFrame(Math.min(stat
 $('frame-slider').addEventListener('input', (e) => state.store && loadFrame(Number(e.target.value)));
 $('add-person').addEventListener('click', () => { if (!state.store) return; state.store.addPerson(); state.armed = state.mode === 'pose' ? 0 : -1; refresh(); });
 $('del-person').addEventListener('click', () => { if (!state.store) return; state.store.deletePerson(); state.armed = -1; refresh(); });
+$('copy-prev').addEventListener('click', () => copyPrev());
 for (const t of document.querySelectorAll('#tabs .tab')) t.addEventListener('click', () => { state.mode = t.dataset.mode; state.armed = -1; refresh(); });
-$('save-json').addEventListener('click', () => downloadJson());
+$('save-json').addEventListener('click', () => saveProject().catch((e) => $('status').textContent = String(e.message || e)));
 $('export').addEventListener('click', () => exportYolo().catch((e) => $('status').textContent = String(e.message || e)));
+
+function copyPrev() {
+  if (!state.store) return;
+  if (state.store.copyFromPrevForEmpty()) { state.armed = -1; refresh(); }
+  else $('status').textContent = '仅空帧可复制，且前方需有已标注帧';
+}
 
 window.addEventListener('keydown', (ev) => {
   if (!state.store || ev.target.tagName === 'INPUT') return;
   if (ev.key === 'n' || ev.key === 'N') { state.store.addPerson(); state.armed = state.mode === 'pose' ? 0 : -1; refresh(); }
   else if (ev.key === 'Delete') { state.store.deletePerson(); state.armed = -1; refresh(); }
+  else if (ev.key === 'c' || ev.key === 'C') { copyPrev(); }
+  else if (ev.key === 's' || ev.key === 'S') { saveProject().catch((e) => $('status').textContent = String(e.message || e)); }
   else if (ev.key === 'Tab') { ev.preventDefault(); cycleSelect(); }
   else if (ev.key === '1') { state.mode = 'bbox'; state.armed = -1; refresh(); }
   else if (ev.key === '2') { state.mode = 'pose'; refresh(); }
@@ -285,10 +301,17 @@ function focusSelected() {
   state.panX = c.panX; state.panY = c.panY; render();
 }
 
-function downloadJson() {
+// 保存工程（可再次载入续标）：优先原地写回目录的 PROJECT_FILE，否则下载。
+async function saveProject() {
   if (!state.store) return;
-  const blob = new Blob([JSON.stringify(state.store.serialize(), null, 2)], { type: 'application/json' });
-  triggerDownload(blob, 'kpt_label.json');
+  const text = JSON.stringify(state.store.serialize(), null, 2);
+  if (state.dirSource) {
+    await state.dirSource.writeFile(PROJECT_FILE, new Blob([text], { type: 'application/json' }));
+    $('status').textContent = `已原地保存工程：${PROJECT_FILE}（下次打开此目录自动续标）`;
+  } else {
+    triggerDownload(new Blob([text], { type: 'application/json' }), PROJECT_FILE);
+    $('status').textContent = `已下载 ${PROJECT_FILE}（视频源无目录权限，载入续标需用图像目录）`;
+  }
 }
 
 async function exportYolo() {

@@ -111,4 +111,10 @@ export class DirSource {
     await w.close();
     return relPath;
   }
+
+  // 按相对路径读任意文件（与 writeFile 对称）；不存在返回 null。
+  async readFile(relPath) {
+    try { return await fileAt(this._dir, relPath); }
+    catch { return null; }
+  }
 }

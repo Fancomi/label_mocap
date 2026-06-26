@@ -241,6 +241,8 @@ yolo pose train data=dataset.yaml model=yolo11n-pose.pt epochs=1 imgsz=320
 | 多人选择 | 列表 + 画面双向联动 |
 | 人体图图例 | SVG 示意人体图 |
 | 落盘 | 目录内存 + 一键导出 |
-| 缺框处理 | 点包围盒 + 5% 边距自动生成 |
+| 缺框处理 | 点包围盒 + 5% 边距自动生成（含退化保底 minPad） |
 | 拖动 | 单点独立拖动 |
 | train/val | 导出选项让用户选择 |
+| 复制上一帧 | 仅当前帧为空时，复制最近非空更早帧的全部人物（id 本帧重排），可撤销 |
+| 保存 vs 导出 | **保存**=原地写回目录 `kpt_label_project.json`（可再次载入续标，双向）；**导出**=单向生成 `images/ labels/ dataset.yaml`（供训练，不可载入）。两者按钮与文件名都区分，不复用 `player_0.json` |

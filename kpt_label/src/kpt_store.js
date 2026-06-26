@@ -66,6 +66,28 @@ export class KptStore {
     });
   }
 
+  // 仅当当前帧为空时，从最近的非空更早帧复制全部人物（id 在本帧重新分配）。
+  // 返回是否复制成功；当前帧已有标注或前方无非空帧则不动、返回 false。
+  copyFromPrevForEmpty() {
+    if (this.persons().length) return false;
+    let src = null;
+    for (let i = this._frame - 1; i >= 0; i--) {
+      if (this._frames[i].persons.length) { src = this._frames[i].persons; break; }
+    }
+    if (!src) return false;
+    this._txn(() => {
+      for (const p of src) {
+        this.persons().push({
+          id: this._nextId[this._frame]++,
+          bbox: p.bbox ? p.bbox.slice() : null,
+          keypoints: p.keypoints.map((k) => k.slice()),
+        });
+      }
+      this._sel = this.persons()[0]?.id ?? null;
+    });
+    return true;
+  }
+
   setBbox(bbox) {
     if (this._sel == null) return;
     this._txn(() => { this.selected().bbox = bbox ? bbox.slice() : null; });
