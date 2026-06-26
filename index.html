@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SMPL 工具集 · SMPL Tools</title>
+<title>SMPL 工具集</title>
 <style>
   html,body { height:100%; margin:0; background:#1a1f2a; color:#eee;
     font-family:system-ui,-apple-system,"PingFang SC",monospace; }
@@ -26,21 +26,21 @@
     <h1>SMPL 工具集</h1>
     <p class="sub">浏览器内运行 · 数据全程留在本地,不上传 · 多人同时使用互不影响</p>
     <div class="cards">
-      <a class="card" href="./label/">
-        <h2>🏷 标注器 Annotator</h2>
-        <p>增删改 SMPL 姿态 / 位置 / 体型 / 2D 框,支持图像序列与视频,原地保存 JSON。建议用 Chrome / Edge。</p>
+      <a class="card" href="./kpt_label/">
+        <h2>📍 2D 关键点标注器</h2>
+        <p>多人 2D 框 + COCO-17 关键点,人体图选关节、视口缩放支持 30+ 人。一键导出 Ultralytics YOLO-pose 训练集。建议用 Chrome / Edge。</p>
       </a>
       <a class="card" href="./smpl_viewer/viewer.html">
-        <h2>👁 查看器 Viewer</h2>
+        <h2>👁 查看器</h2>
         <p>只读播放 SMPL 数据,2D 对齐 / 3D 自由视角。可加载标注器产出的 JSON。</p>
       </a>
-      <a class="card" href="./pcd_label/">
-        <h2>🟢 点云标注器 PCD Annotator</h2>
-        <p>3D LiDAR 点云 + SMPL 标注,纯本地。多种点云配色、上轴/前轴切换,Root/姿势/IK/体型编辑。建议用 Chrome / Edge。</p>
+      <a class="card" href="./label/">
+        <h2>🏷 SMPL 图像标注器</h2>
+        <p>增删改 SMPL 姿态 / 位置 / 体型 / 2D 框,支持图像序列与视频,原地保存 JSON。建议用 Chrome / Edge。</p>
       </a>
-      <a class="card" href="./kpt_label/">
-        <h2>📍 2D 关键点标注器 Keypoint Annotator</h2>
-        <p>多人 2D 框 + COCO-17 关键点标注,人体图选关节、视口缩放支持 30+ 人。一键导出 Ultralytics YOLO-pose 训练集。建议用 Chrome / Edge。</p>
+      <a class="card" href="./pcd_label/">
+        <h2>🟢 SMPL 点云标注器</h2>
+        <p>3D LiDAR 点云 + SMPL 标注,纯本地。多种点云配色、上轴/前轴切换,Root/姿势/IK/体型编辑。建议用 Chrome / Edge。</p>
       </a>
     </div>
     <p class="note">标注器原地保存的 player_0.json 与查看器读取的格式一致 —— 标完即可在查看器中加载查看。
