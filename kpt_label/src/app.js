@@ -2,7 +2,8 @@
 // 2D 关键点标注器装配层（DOM/canvas 耦合，浏览器内验证）。
 import { orderedImageNames } from '../../label/src/io/image_order.js';
 import { isPortrait } from '../../label/src/io/source_loader.js';
-import { DirSource, fsAccessSupported, pickDirectory, videoOpenSupported, pickVideoFile } from '../../label/src/io/dir_source.js';
+import { DirSource, fsAccessSupported, pickDirectory, videoOpenSupported, pickVideoFile, jsonOpenSupported, pickJsonFile } from '../../label/src/io/dir_source.js';
+import { isKptProject } from '../../label/src/io/anno_validate.js';
 import { getSkeleton } from './skeleton.js';
 import { KptStore } from './kpt_store.js';
 import { resizeBboxByCorner, normRect } from './bbox_geom.js';
@@ -297,6 +298,16 @@ $('btn-open').addEventListener('click', () => { $('open-menu').hidden = !$('open
 document.addEventListener('click', (e) => { if (!e.target.closest('.menu-anchor')) $('open-menu').hidden = true; });
 $('open-dir').addEventListener('click', () => { $('open-menu').hidden = true; openDirectory().catch(reportErr); });
 $('open-video').addEventListener('click', () => { $('open-menu').hidden = true; openVideo().catch(reportErr); });
+$('open-json').addEventListener('click', () => {
+  $('open-menu').hidden = true;
+  if (!state.store) { $('status').textContent = '请先打开数据（图像目录/视频）'; return; }
+  if (jsonOpenSupported()) { pickJsonFile().then((f) => loadProjectJson(f)).catch(reportErr); }
+  else { $('json-input').click(); }
+});
+$('json-input').addEventListener('change', (e) => {
+  const f = e.target.files?.[0]; if (f) loadProjectJson(f).catch(reportErr);
+  e.target.value = '';
+});
 $('prev').addEventListener('click', () => state.store && loadFrame(Math.max(0, state.store.currentFrame() - 1)));
 $('next').addEventListener('click', () => state.store && loadFrame(Math.min(state.store.frameCount() - 1, state.store.currentFrame() + 1)));
 $('frame-slider').addEventListener('input', (e) => state.store && loadFrame(Number(e.target.value)));
@@ -370,6 +381,19 @@ async function saveProject() {
     triggerDownload(new Blob([text], { type: 'application/json' }), PROJECT_FILE);
     $('status').textContent = '工程已下载（载入续标需用图像目录）';
   }
+}
+
+// 手动加载 kpt 工程 JSON：覆盖内存，保存仍写回已打开目录的 PROJECT_FILE。
+// 需先打开数据；用工程的 images[] 重建（fromJSON 往返保真），保留当前帧。
+async function loadProjectJson(file) {
+  if (!state.store) { $('status').textContent = '请先打开数据（图像目录/视频）'; return; }
+  const obj = JSON.parse(await file.text());
+  if (!isKptProject(obj)) { $('status').textContent = '该文件不是 kpt 工程（schema 不符），未加载'; return; }
+  const at = state.store.currentFrame();
+  state.store = KptStore.fromJSON(obj, skel.names.length);
+  $('frame-slider').max = String(state.store.frameCount() - 1);
+  await loadFrame(Math.min(at, state.store.frameCount() - 1));
+  $('status').textContent = `已加载工程（${file.name}）`;
 }
 
 async function exportYolo() {
