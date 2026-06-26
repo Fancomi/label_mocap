@@ -73,6 +73,8 @@ export async function writeFileResilient(dirHandle, relPath, data) {
     await writeVia(fh);
   } catch (e) {
     if (e?.name === 'NoModificationAllowedError' || e?.name === 'InvalidStateError') {
+      // 删重建窗口：removeEntry 成功但随后 create/write 失败时，磁盘上原文件已没、
+      // 新文件未写成 → 该文件在磁盘上丢失。调用方持有内存数据可重试/退回下载，故可接受。
       await dir.removeEntry(name);
       const fresh = await dir.getFileHandle(name, { create: true });
       await writeVia(fresh);

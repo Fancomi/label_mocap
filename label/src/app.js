@@ -376,17 +376,24 @@ async function saveJson() {
     doc.setAnnotation(id, { keypoints, occlution_joint: occ });
   }
   const obj = doc.serialize();
+  // 原地写回（已具抗只读重建）；写入仍抛异常时退回下载，避免标注丢失。
   if (dirSource) {
-    const path = await dirSource.saveJson(obj);
-    setStatus(`已保存 ${path}`);
-  } else {
-    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url; link.download = 'player_0.json'; link.click();
-    URL.revokeObjectURL(url);
-    setStatus('⚠ 当前浏览器不支持原地保存,已下载 player_0.json — 请手动覆盖回数据目录(原地保存请用 Chrome/Edge)');
+    try {
+      const path = await dirSource.saveJson(obj);
+      setStatus(`已保存 ${path}`);
+      return;
+    } catch (e) {
+      console.warn('原地保存失败，退回下载：', e);
+      setStatus(`⚠ 原地保存失败（${e?.name || e}），改为下载 player_0.json — 请手动覆盖回数据目录`);
+    }
   }
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url; link.download = 'player_0.json'; link.click();
+  URL.revokeObjectURL(url);
+  if (!dirSource) setStatus('⚠ 当前浏览器不支持原地保存,已下载 player_0.json — 请手动覆盖回数据目录(原地保存请用 Chrome/Edge)');
+}
 }
 
 // 手动加载标注 JSON：覆盖内存的标注，保存仍写回已打开目录的标准 json。
@@ -395,11 +402,12 @@ async function loadAnnotationJson(file) {
   if (!store) { setStatus('请先打开数据（目录/视频）'); return; }
   const raw = JSON.parse(await file.text());
   if (!isCocoDoc(raw)) { setStatus('该文件不是 SMPL 标注（COCO）格式，未加载'); return; }
+  const at = store.currentFrame();   // 新 store 从 0 帧起，先记住当前帧再重建以保留
   store = new AnnotationStore(new CocoDocument(raw));
   ui = new UIController({ readOnly, modes: editorModes });
   if (syncUI) ui.onChange(syncUI);
   $('slider').max = String(Math.max(0, store.frameCount() - 1));
-  await showFrame(Math.min(store.currentFrame(), store.frameCount() - 1));
+  await showFrame(Math.min(at, store.frameCount() - 1));
   setStatus(`已加载标注 JSON（${file.name}）`);
 }
 

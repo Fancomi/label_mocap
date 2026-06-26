@@ -370,17 +370,25 @@ function focusSelected() {
   clampView(); render();
 }
 
-// 保存工程（可再次载入续标）：优先原地写回目录的 PROJECT_FILE，否则下载。
+// 保存工程（可再次载入续标）：优先原地写回目录的 PROJECT_FILE，否则下载；
+// 原地写入仍抛异常时退回下载，避免标注丢失。
 async function saveProject() {
   if (!state.store) return;
   const text = JSON.stringify(state.store.serialize(), null, 2);
   if (state.dirSource) {
-    await state.dirSource.writeFile(PROJECT_FILE, new Blob([text], { type: 'application/json' }));
-    $('status').textContent = '工程已原地保存';
-  } else {
-    triggerDownload(new Blob([text], { type: 'application/json' }), PROJECT_FILE);
-    $('status').textContent = '工程已下载（载入续标需用图像目录）';
+    try {
+      await state.dirSource.writeFile(PROJECT_FILE, new Blob([text], { type: 'application/json' }));
+      $('status').textContent = '工程已原地保存';
+      return;
+    } catch (e) {
+      console.warn('原地保存失败，退回下载：', e);
+      $('status').textContent = `⚠ 原地保存失败（${e?.name || e}），改为下载 ${PROJECT_FILE}`;
+      triggerDownload(new Blob([text], { type: 'application/json' }), PROJECT_FILE);
+      return;
+    }
   }
+  triggerDownload(new Blob([text], { type: 'application/json' }), PROJECT_FILE);
+  $('status').textContent = '工程已下载（载入续标需用图像目录）';
 }
 
 // 手动加载 kpt 工程 JSON：覆盖内存，保存仍写回已打开目录的 PROJECT_FILE。
