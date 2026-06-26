@@ -34,7 +34,7 @@ export class KptStore {
   }
 
   frameCount() { return this._frames.length; }
-  setFrame(i) { this._frame = i; this._sel = null; }
+  setFrame(i) { this._frame = Math.max(0, Math.min(i, this._frames.length - 1)); this._sel = null; }
   currentFrame() { return this._frame; }
   imageInfo(i = this._frame) { return this._images[i]; }
   persons() { return this._frames[this._frame].persons; }

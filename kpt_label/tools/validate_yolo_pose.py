@@ -73,6 +73,8 @@ def validate_dataset(root):
                         if not (0.0 <= v <= 1.0):
                             errors.append(f"{where}: bbox out of range [0,1]")
                             break
+                    if vals[3] == 0 or vals[4] == 0:
+                        errors.append(f"{where}: zero-area bbox (w=0 or h=0)")
                     for k in range(n):
                         x, y, vis = vals[5 + k * 3:8 + k * 3]
                         if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):

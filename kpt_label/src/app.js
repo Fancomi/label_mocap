@@ -128,6 +128,7 @@ async function openDirectory() {
     const existing = await src.readJson();
     if (existing?.schema === 'kpt-label/v1') {
       state.store = KptStore.fromJSON(existing, skel.names.length);
+      $('frame-slider').max = String(state.store.frameCount() - 1);
       await loadFrame(0);
       $('status').textContent = '已加载图像目录 + 续接既有标注';
       return;
@@ -239,7 +240,7 @@ $('open-video').addEventListener('click', () => openVideo().catch((e) => $('stat
 $('prev').addEventListener('click', () => state.store && loadFrame(Math.max(0, state.store.currentFrame() - 1)));
 $('next').addEventListener('click', () => state.store && loadFrame(Math.min(state.store.frameCount() - 1, state.store.currentFrame() + 1)));
 $('frame-slider').addEventListener('input', (e) => state.store && loadFrame(Number(e.target.value)));
-$('add-person').addEventListener('click', () => { if (!state.store) return; state.store.addPerson(); state.armed = 0; refresh(); });
+$('add-person').addEventListener('click', () => { if (!state.store) return; state.store.addPerson(); state.armed = state.mode === 'pose' ? 0 : -1; refresh(); });
 $('del-person').addEventListener('click', () => { if (!state.store) return; state.store.deletePerson(); state.armed = -1; refresh(); });
 for (const t of document.querySelectorAll('#tabs .tab')) t.addEventListener('click', () => { state.mode = t.dataset.mode; state.armed = -1; refresh(); });
 $('save-json').addEventListener('click', () => downloadJson());
@@ -247,7 +248,7 @@ $('export').addEventListener('click', () => exportYolo().catch((e) => $('status'
 
 window.addEventListener('keydown', (ev) => {
   if (!state.store || ev.target.tagName === 'INPUT') return;
-  if (ev.key === 'n' || ev.key === 'N') { state.store.addPerson(); state.armed = 0; refresh(); }
+  if (ev.key === 'n' || ev.key === 'N') { state.store.addPerson(); state.armed = state.mode === 'pose' ? 0 : -1; refresh(); }
   else if (ev.key === 'Delete') { state.store.deletePerson(); state.armed = -1; refresh(); }
   else if (ev.key === 'Tab') { ev.preventDefault(); cycleSelect(); }
   else if (ev.key === '1') { state.mode = 'bbox'; state.armed = -1; refresh(); }

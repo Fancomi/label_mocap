@@ -47,6 +47,13 @@ class T(unittest.TestCase):
             write(d, "labels/train/a.txt", line + "\n")
             self.assertTrue(any("visibility" in e for e in validate_dataset(d)))
 
+    def test_zero_area_bbox_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            write(d, "dataset.yaml", YAML)
+            line = "0 0.5 0.5 0.0 0.2 " + " ".join(["0.5", "0.5", "2"] * 17)  # w=0
+            write(d, "labels/train/a.txt", line + "\n")
+            self.assertTrue(any("zero-area" in e for e in validate_dataset(d)))
+
     def test_empty_label_is_valid(self):
         with tempfile.TemporaryDirectory() as d:
             write(d, "dataset.yaml", YAML)

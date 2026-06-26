@@ -17,8 +17,10 @@ export function normRect(ax, ay, bx, by) {
   return [Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay)];
 }
 
-// 由 v>0 的关键点求包围盒 + margin（占点云跨度比例），裁剪到图像内。无可见点返回 null。
-export function bboxFromKeypoints(keypoints, { width, height, margin = 0.05 }) {
+// 由 v>0 的关键点求包围盒，裁剪到图像内。无可见点返回 null。
+// margin 为跨度比例的外扩；minPad 保证退化情形（单点/共线）仍有正的宽高，
+// 否则 YOLO 训练 log(w) 会得到 -Infinity 而崩溃。
+export function bboxFromKeypoints(keypoints, { width, height, margin = 0.05, minPad = 4 }) {
   const pts = keypoints.filter((k) => k[2] > 0);
   if (!pts.length) return null;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -26,8 +28,8 @@ export function bboxFromKeypoints(keypoints, { width, height, margin = 0.05 }) {
     minX = Math.min(minX, x); minY = Math.min(minY, y);
     maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
   }
-  const mx = (maxX - minX) * margin;
-  const my = (maxY - minY) * margin;
+  const mx = Math.max((maxX - minX) * margin, minPad);
+  const my = Math.max((maxY - minY) * margin, minPad);
   const x0 = clamp(minX - mx, 0, width);
   const y0 = clamp(minY - my, 0, height);
   const x1 = clamp(maxX + mx, 0, width);
