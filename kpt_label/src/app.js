@@ -210,8 +210,14 @@ canvas.addEventListener('pointerdown', (ev) => {
     if (corner) { state.store.beginEdit(); drag = { kind: 'corner', corner }; canvas.setPointerCapture(ev.pointerId); return; }
   }
   if (state.mode === 'pose' && state.armed >= 0 && sel) {
-    state.store.setKeypoint(state.armed, ix, iy, 2);
-    state.armed = nextUnset(sel, state.armed);
+    if (sel.keypoints[state.armed][2] === 0) {
+      // 待标关节：点图放置，自动跳下一未标关节。
+      state.store.setKeypoint(state.armed, ix, iy, 2);
+      state.armed = nextUnset(sel, state.armed);
+    } else {
+      // 已标关节被选中、却点到其命中范围外的空白 → 取消选中（不把点挪过去；挪点请直接拖该点）。
+      state.armed = -1;
+    }
     refresh(); return;
   }
   if (state.mode === 'bbox' && sel) { state.store.beginEdit(); drag = { kind: 'bbox', x0: ix, y0: iy }; canvas.setPointerCapture(ev.pointerId); return; }
