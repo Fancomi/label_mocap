@@ -65,7 +65,7 @@
       <button id="export" class="btn-sub">⬇ 导出训练集<small>生成 YOLO-pose，仅供训练</small></button>
       <label class="inline">val 比例 <input id="val-ratio" type="number" min="0" max="0.5" step="0.1" value="0" style="width:60px"></label>
     </div>
-    <div class="card"><div class="hint">N 新建人 · C 复制上一帧 · Del 删人 · Tab 切人 · 1/2 框/点 · F 聚焦 · R 重置 · Z 撤销 · S 保存</div></div>
+    <div class="card"><div class="hint">N 新建人 · C 复制上一帧 · Del 删关键点 · Shift+Del 删人 · Tab 切人 · K/B 点/框 · F 聚焦 · R 重置 · Z 撤销 · S 保存</div></div>
   </div>
 
   <div id="stage">
@@ -76,7 +76,7 @@
   <div id="right">
     <div class="card">
       <h3>人物</h3>
-      <div class="row"><button id="add-person" class="primary">+ 新建<span class="keycap">N</span></button><button id="del-person">删除<span class="keycap">Del</span></button></div>
+      <div class="row"><button id="add-person" class="primary">+ 新建<span class="keycap">N</span></button><button id="del-person">删除人<span class="keycap">⇧Del</span></button></div>
       <div id="person-list"></div>
     </div>
     <div class="card">
@@ -89,7 +89,8 @@
     </div>
     <div class="card" id="diagram-card">
       <h3>选关节打点 <span style="color:#778;font-weight:normal">（人体面向你，左右已镜像；蓝=左 橙=右）</span></h3>
-      <div class="hint">① 点人体图（或图上已标点）选关节 → ② 在<b>中间图像</b>单击放置，自动跳下一关节。<br>左键拖动已标点微调；<b>右键</b>（图上或人体图）循环 可见→遮挡→清除。</div>
+      <div class="hint">① 点人体图（或图上已标点）选关节 → ② 在<b>中间图像</b>单击放置，自动跳下一关节。<br>左键拖动已标点微调；在<b>人体图上右键</b>已标点切 可见↔遮挡。</div>
+      <div class="row"><button id="del-kpt">删除选中关键点<span class="keycap">Del</span></button></div>
       <label class="inline" style="margin:2px 0"><input id="show-kpt-label" type="checkbox"> 显示当前关节名</label>
       <div id="diagram-host"></div>
     </div>

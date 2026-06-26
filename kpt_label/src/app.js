@@ -200,12 +200,14 @@ canvas.addEventListener('pointerdown', (ev) => {
   const r = hitRadius();
   if (ev.shiftKey) { drag = { kind: 'pan', x: ev.clientX, y: ev.clientY, cx: state.cx, cy: state.cy }; canvas.setPointerCapture(ev.pointerId); return; }
   const sel = state.store.selected();
-  if (sel) {
+  if (sel && state.mode === 'pose') {
     // 命中已标关节：选中它（=SVG 点它，进入 armed），并预备拖动微调。move 超阈值才算拖。
     const ki = hitKeypoint(sel, [ix, iy], r);
     if (ki >= 0) { armKeypoint(ki); state.store.beginEdit(); drag = { kind: 'kpt', idx: ki, moved: false, x: ev.clientX, y: ev.clientY }; canvas.setPointerCapture(ev.pointerId); return; }
+  }
+  if (sel && state.mode === 'bbox') {
     const corner = hitBboxCorner(sel, [ix, iy], r);
-    if (corner && state.mode === 'bbox') { state.store.beginEdit(); drag = { kind: 'corner', corner }; canvas.setPointerCapture(ev.pointerId); return; }
+    if (corner) { state.store.beginEdit(); drag = { kind: 'corner', corner }; canvas.setPointerCapture(ev.pointerId); return; }
   }
   if (state.mode === 'pose' && state.armed >= 0 && sel) {
     state.store.setKeypoint(state.armed, ix, iy, 2);
@@ -243,17 +245,8 @@ canvas.addEventListener('pointerup', (ev) => {
   drag = null; refresh();
 });
 
-// 右键切可见性：优先作用于命中的已标点，否则作用于当前 armed 关节。统一入口 cycleVisibility。
-$('stage').addEventListener('contextmenu', (ev) => {
-  ev.preventDefault();
-  const sel = state.store?.selected();
-  if (!sel) { $('status').textContent = '右键切可见性：请先选中一个人'; return; }
-  const [ix, iy] = eventToImage(ev);
-  const ki = hitKeypoint(sel, [ix, iy], hitRadius(12));
-  const target = ki >= 0 ? ki : state.armed;
-  if (target < 0) { $('status').textContent = '右键未命中关键点；先在人体图选一个关节'; return; }
-  cycleVisibility(target);
-});
+// 图像画布右键：仅阻止系统菜单，不做任何标注操作（切可见性收敛到 SVG 人体图）。
+$('stage').addEventListener('contextmenu', (ev) => ev.preventDefault());
 
 // 按 skeleton.order（深度优先）找 from 之后的下一个未标关节；都标完返回 -1。
 function nextUnset(person, from) {
@@ -266,20 +259,30 @@ function nextUnset(person, from) {
   return -1;
 }
 
-// —— 关节统一操作入口：SVG 点击 / 图上点中 / 右键 都走这两个函数 ——
-// 选中（armed）某关节：切到 pose 模式并高亮；需已有选中人。
+// —— 关节统一操作入口：SVG 点击 / 图上点中 都走 armKeypoint；右键/按钮走下面两个 ——
+// 选中（armed）某关节：切到 pose 模式并高亮；需已有选中人。用于打点流程。
 function armKeypoint(idx) {
   if (!state.store?.selected()) { $('status').textContent = '请先新建/选中一个人'; return; }
   state.mode = 'pose'; state.armed = idx; refresh();
 }
-// 切某关节可见性 2(可见)→1(遮挡)→0(清除)；保留原坐标。
-function cycleVisibility(idx) {
-  const sel = state.store?.selected(); if (!sel) return;
+// 右键切可见性：仅在已标点(v>0)上 2(可见)↔1(遮挡) 切换；不触碰未标点、不清除、不影响 armed/打点流程。
+function toggleVisibility(idx) {
+  const sel = state.store?.selected();
+  if (!sel) { $('status').textContent = '请先选中一个人'; return; }
   const [x, y, v] = sel.keypoints[idx];
-  const nv = v === 2 ? 1 : v === 1 ? 0 : 2;
-  if (nv === 0) state.store.setKeypoint(idx, 0, 0, 0);
-  else state.store.setKeypoint(idx, x, y, nv);
-  $('status').textContent = `${skel.names[idx]} → ${nv === 2 ? '可见' : nv === 1 ? '遮挡' : '清除'}`;
+  if (v === 0) { $('status').textContent = `${skel.names[idx]} 尚未标注，右键仅切换已标点的可见/遮挡`; return; }
+  const nv = v === 2 ? 1 : 2;
+  state.store.setKeypoint(idx, x, y, nv);
+  $('status').textContent = `${skel.names[idx]} → ${nv === 2 ? '可见' : '遮挡'}`;
+  refresh();
+}
+// 删除当前 armed 选中的关键点（置回未标 [0,0,0]）。
+function deleteKeypoint() {
+  const sel = state.store?.selected();
+  if (!sel) { $('status').textContent = '请先选中一个人'; return; }
+  if (state.armed < 0) { $('status').textContent = '请先选中一个关键点（点人体图或图上已标点）'; return; }
+  state.store.setKeypoint(state.armed, 0, 0, 0);
+  $('status').textContent = `已删除 ${skel.names[state.armed]}`;
   refresh();
 }
 
@@ -293,6 +296,7 @@ $('next').addEventListener('click', () => state.store && loadFrame(Math.min(stat
 $('frame-slider').addEventListener('input', (e) => state.store && loadFrame(Number(e.target.value)));
 $('add-person').addEventListener('click', () => { if (!state.store) return; state.store.addPerson(); state.armed = state.mode === 'pose' ? 0 : -1; refresh(); });
 $('del-person').addEventListener('click', () => { if (!state.store) return; state.store.deletePerson(); state.armed = -1; refresh(); });
+$('del-kpt').addEventListener('click', () => deleteKeypoint());
 $('copy-prev').addEventListener('click', () => copyPrev());
 for (const t of document.querySelectorAll('#tabs .tab')) t.addEventListener('click', () => { state.mode = t.dataset.mode; state.armed = -1; refresh(); });
 $('save-json').addEventListener('click', () => saveProject().catch(reportErr));
@@ -313,7 +317,10 @@ function copyPrev() {
 window.addEventListener('keydown', (ev) => {
   if (!state.store || ev.target.tagName === 'INPUT') return;
   if (ev.key === 'n' || ev.key === 'N') { state.store.addPerson(); state.armed = state.mode === 'pose' ? 0 : -1; refresh(); }
-  else if (ev.key === 'Delete') { state.store.deletePerson(); state.armed = -1; refresh(); }
+  else if (ev.key === 'Delete' || ev.key === 'Backspace') {
+    if (ev.shiftKey) { state.store.deletePerson(); state.armed = -1; refresh(); }  // Shift+Del 删整个人
+    else deleteKeypoint();                                                          // Del 删选中关键点
+  }
   else if (ev.key === 'c' || ev.key === 'C') { copyPrev(); }
   else if (ev.key === 's' || ev.key === 'S') { saveProject().catch(reportErr); }
   else if (ev.key === 'Tab') { ev.preventDefault(); cycleSelect(); }
@@ -387,8 +394,8 @@ function triggerDownload(blob, name) {
 }
 
 state.diagram = new BodyDiagram($('diagram-host'), skel, {
-  onPick: (idx) => armKeypoint(idx),       // SVG 左键选关节 = 图上点中关节
-  onToggle: (idx) => { armKeypoint(idx); cycleVisibility(idx); },  // SVG 右键切可见性
+  onPick: (idx) => armKeypoint(idx),         // SVG 左键选关节 = 图上点中关节，进入打点流程
+  onToggle: (idx) => toggleVisibility(idx),  // SVG 右键仅切已标点可见/遮挡，不 armed、不延续打点
 });
 $('show-kpt-label').addEventListener('change', (e) => state.diagram.setLabelVisible(e.target.checked));
 window.addEventListener('resize', () => { if (state.bitmap) { fitCanvas(); render(); } });

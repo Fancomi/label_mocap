@@ -57,6 +57,7 @@ export class BodyDiagram {
       title.textContent = names[i];
       c.appendChild(title);
       c.addEventListener('click', () => this._onPick?.(i));
+      // 右键：仅切换该关节可见性（仅对已标点生效），不阻断/延续打点流程。
       c.addEventListener('contextmenu', (e) => { e.preventDefault(); this._onToggle?.(i); });
       this._svg.appendChild(c);
       this._dots[i] = c;
