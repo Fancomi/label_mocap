@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>2D 关键点标注器</title>
+  <style>
+    html,body { height:100%; margin:0; background:#1a1f2a; color:#eee; font-family:system-ui,monospace; font-size:12px; }
+    body { display:flex; }
+    #left, #right { width:280px; background:#1a1a1a; padding:10px; display:flex; flex-direction:column; gap:8px; overflow-y:auto; }
+    #left { border-right:1px solid #333; } #right { border-left:1px solid #333; }
+    #stage { position:relative; flex:1; background:#0f1216; overflow:hidden; min-width:0; }
+    canvas { display:block; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); cursor:crosshair; }
+    #status { position:absolute; top:8px; left:8px; background:rgba(0,0,0,.6); padding:5px 9px; border-radius:3px; }
+    h2 { font-size:14px; color:#7df; margin:0 0 4px; }
+    h3 { font-size:11px; color:#8ab; margin:0 0 2px; }
+    .card { border-top:1px solid #2a2a2a; padding-top:8px; display:flex; flex-direction:column; gap:5px; }
+    button { padding:6px 8px; background:#2a2a2a; border:1px solid #444; color:#eee; border-radius:4px; cursor:pointer; font:inherit; }
+    button:hover { background:#3a3a3a; }
+    button.on { background:#0066cc; border-color:#3399ff; }
+    button.primary { background:#1f6f43; border-color:#2e9e60; }
+    .row { display:flex; gap:5px; } .row > * { flex:1; }
+    .hint { color:#9ab; font-size:11px; line-height:1.5; background:#222b33; padding:6px 8px; border-radius:4px; }
+    .status { background:#222; border:1px solid #333; color:#ffa; padding:4px 6px; border-radius:3px; min-height:16px; }
+    #tabs { display:flex; gap:3px; } #tabs .tab { flex:1; border-radius:4px 4px 0 0; }
+    #person-list { display:flex; flex-direction:column; gap:2px; max-height:200px; overflow-y:auto; }
+    #person-list .item { padding:4px 6px; border:1px solid #333; border-radius:3px; cursor:pointer; display:flex; justify-content:space-between; }
+    #person-list .item.on { background:#0066cc; border-color:#3399ff; }
+    .body-diagram { width:100%; height:260px; background:#11151c; border:1px solid #333; border-radius:4px; }
+    input[type=range] { width:100%; }
+    label.inline { display:flex; align-items:center; gap:6px; }
+  </style>
+</head>
+<body>
+  <div id="left">
+    <h2>2D 关键点标注器</h2>
+    <div class="hint">打开图像目录或视频。框与关键点为同一人的两个独立属性，可只标其一。</div>
+    <div class="card">
+      <h3>数据</h3>
+      <button id="open-dir" class="primary">打开图像目录</button>
+      <button id="open-video">打开视频</button>
+      <input id="file-input" type="file" accept="image/*" multiple hidden>
+    </div>
+    <div class="card">
+      <h3>帧</h3>
+      <div class="row"><button id="prev">◀ 上一帧</button><button id="next">下一帧 ▶</button></div>
+      <input id="frame-slider" type="range" min="0" max="0" value="0">
+      <div id="frame-label" class="status">— / —</div>
+    </div>
+    <div class="card">
+      <h3>导出 YOLO-pose</h3>
+      <label class="inline">val 比例 <input id="val-ratio" type="number" min="0" max="0.9" step="0.1" value="0" style="width:60px"></label>
+      <button id="export">导出数据集</button>
+      <button id="save-json">保存中间 JSON</button>
+    </div>
+    <div class="card"><div class="hint">快捷键：N 新建人 · Del 删人 · Tab 切人 · 1/2 框/点 · F 聚焦 · R 重置 · Z 撤销</div></div>
+  </div>
+
+  <div id="stage">
+    <canvas id="canvas"></canvas>
+    <div id="status">未加载</div>
+  </div>
+
+  <div id="right">
+    <div class="card">
+      <h3>人物</h3>
+      <div class="row"><button id="add-person" class="primary">+ 新建(N)</button><button id="del-person">删除(Del)</button></div>
+      <div id="person-list"></div>
+    </div>
+    <div class="card">
+      <h3>编辑模式</h3>
+      <div id="tabs">
+        <button class="tab on" data-mode="pose">关键点(2)</button>
+        <button class="tab" data-mode="bbox">框(1)</button>
+      </div>
+    </div>
+    <div class="card" id="diagram-card">
+      <h3>选关节打点</h3>
+      <div class="hint">点下方关节 → 在图上单击放置。右键点切 可见/遮挡/清除。</div>
+      <div id="diagram-host"></div>
+    </div>
+  </div>
+
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
