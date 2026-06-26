@@ -1,6 +1,5 @@
 // kpt_label/src/app.js
 // 2D 关键点标注器装配层（DOM/canvas 耦合，浏览器内验证）。
-import { computeWindow, zoomAtSolve, canvasNormToImage, clampPan, ZOOM_MIN } from '../../label/src/scene/view_zoom.js';
 import { orderedImageNames } from '../../label/src/io/image_order.js';
 import { isPortrait } from '../../label/src/io/source_loader.js';
 import { DirSource, fsAccessSupported, pickDirectory, videoOpenSupported, pickVideoFile } from '../../label/src/io/dir_source.js';
@@ -12,6 +11,7 @@ import { drawImage, drawPersons } from './render.js';
 import { BodyDiagram } from './body_diagram.js';
 import { VideoFrames } from './video_frames.js';
 import { buildExport } from './yolo_export.js';
+import { transform, clampCenter, screenToImg, zoomAt, ZOOM_MIN } from './viewport.js';
 
 const $ = (id) => document.getElementById(id);
 const skel = getSkeleton('coco17');
@@ -20,7 +20,7 @@ const PROJECT_FILE = 'kpt_label_project.json';   // 工程文件（可载入续�
 const state = {
   store: null, dirSource: null, video: null, images: null /* Map<idx,File> */,
   imgW: 1920, imgH: 1080, bitmap: null,
-  zoom: 1, panX: 0, panY: 0,
+  zoom: 1, cx: 960, cy: 540,        // zoom≥1（1=fit）；(cx,cy)=显示在视口中心的图像点
   mode: 'pose', armed: -1,
   diagram: null,
 };
@@ -28,35 +28,39 @@ const state = {
 const canvas = $('canvas');
 const ctx = canvas.getContext('2d');
 
-function win() {
-  return computeWindow({ imageW: state.imgW, imageH: state.imgH, cx: state.imgW / 2, cy: state.imgH / 2,
-    zoom: state.zoom, panX: state.panX, panY: state.panY });
+// 视口几何参数（视口尺寸即 canvas 像素尺寸，铺满 stage）。
+function vp() {
+  return { vw: canvas.width, vh: canvas.height, imgW: state.imgW, imgH: state.imgH, zoom: state.zoom, cx: state.cx, cy: state.cy };
 }
+function xform() { return transform(vp()); }
+// 把中心点钳制回有效区间（图像不完全移出、无黑边）并写回 state。
+function clampView() {
+  const { cx, cy } = clampCenter(vp());
+  state.cx = cx; state.cy = cy;
+}
+// 鼠标事件 → 图像像素坐标。
 function eventToImage(ev) {
   const r = canvas.getBoundingClientRect();
-  const u = (ev.clientX - r.left) / r.width;
-  const v = (ev.clientY - r.top) / r.height;
-  return canvasNormToImage(u, v, win());
+  // canvas CSS 尺寸=绘制像素尺寸（无 DPR 缩放），rect 与像素一一对应。
+  return screenToImg(ev.clientX - r.left, ev.clientY - r.top, xform());
 }
-function hitRadius(px = 8) {
-  const w = win();
-  return px * (w.winW / canvas.width);
-}
+// 屏幕命中半径(px) → 图像像素半径（除以当前 scale）。
+function hitRadius(px = 8) { return px / xform().scale; }
 
+// canvas 铺满整个 stage（不再按图像宽高比 letterbox）。fit 由 viewport 内部处理：
+// zoom=1 时图像长边顶住 canvas、短边在 canvas 内留黑边；放大后图像覆盖超出区域可见。
 function fitCanvas() {
   const stage = $('stage');
-  const sw = stage.clientWidth, sh = stage.clientHeight;
-  const ar = state.imgW / state.imgH;
-  let cw = sw, ch = sw / ar;
-  if (ch > sh) { ch = sh; cw = sh * ar; }
-  canvas.width = Math.round(cw); canvas.height = Math.round(ch);
+  canvas.width = Math.round(stage.clientWidth);
+  canvas.height = Math.round(stage.clientHeight);
+  clampView();
 }
 
 function render() {
   if (!state.bitmap) return;
-  const w = win();
-  drawImage(ctx, state.bitmap, w, canvas.width, canvas.height);
-  if (state.store) drawPersons(ctx, state.store.persons(), state.store.selectedId(), skel, w, canvas.width, canvas.height, state.armed);
+  const t = xform();
+  drawImage(ctx, state.bitmap, t, state.imgW, state.imgH, canvas.width, canvas.height);
+  if (state.store) drawPersons(ctx, state.store.persons(), state.store.selectedId(), skel, t, state.armed);
 }
 
 function syncUI() {
@@ -79,6 +83,11 @@ function syncUI() {
 }
 
 function refresh() { render(); syncUI(); }
+
+// 重置视口到 fit：zoom=1，中心=图像中心。
+function resetView() {
+  state.zoom = ZOOM_MIN; state.cx = state.imgW / 2; state.cy = state.imgH / 2;
+}
 
 async function loadFrame(idx) {
   state.store.setFrame(idx);
@@ -111,6 +120,7 @@ async function mountImages(dirSource, cls) {
   for (const m of metas) { m.width = state.imgW; m.height = state.imgH; }
   state.images = images;
   state.store = new KptStore({ images: metas, skeleton: 'coco17', nkpt: skel.names.length });
+  resetView();
   $('frame-slider').max = String(metas.length - 1);
   await loadFrame(0);
 }
@@ -164,6 +174,7 @@ async function openVideo() {
   state.store = proj?.schema === 'kpt-label/v1'
     ? KptStore.fromJSON(proj, skel.names.length)
     : new KptStore({ images: metas, skeleton: 'coco17', nkpt: skel.names.length });
+  resetView();
   $('frame-slider').max = String(state.store.frameCount() - 1);
   await loadFrame(0);
   $('status').textContent = dir ? `已加载视频（${n} 帧）+ 可原地保存` : `已加载视频（${n} 帧，无目录权限，保存将下载）`;
@@ -173,15 +184,12 @@ $('stage').addEventListener('wheel', (ev) => {
   if (!state.bitmap) return;
   ev.preventDefault();
   const r = canvas.getBoundingClientRect();
-  const u = (ev.clientX - r.left) / r.width, v = (ev.clientY - r.top) / r.height;
-  if (u < 0 || u > 1 || v < 0 || v > 1) return;
+  const sx = ev.clientX - r.left, sy = ev.clientY - r.top;
+  if (sx < 0 || sx > canvas.width || sy < 0 || sy > canvas.height) return;
   const factor = Math.exp(-ev.deltaY * 0.0015);
-  const next = zoomAtSolve({ imageW: state.imgW, imageH: state.imgH, cx: state.imgW / 2, cy: state.imgH / 2,
-    zoom: state.zoom, panX: state.panX, panY: state.panY, u, v, factor });
-  Object.assign(state, { zoom: next.zoom, panX: next.panX, panY: next.panY });
-  const c = clampPan({ imageW: state.imgW, imageH: state.imgH, cx: state.imgW / 2, cy: state.imgH / 2,
-    zoom: state.zoom, panX: state.panX, panY: state.panY });
-  state.panX = c.panX; state.panY = c.panY;
+  const next = zoomAt(vp(), sx, sy, factor);   // 以光标为锚缩放
+  state.zoom = next.zoom; state.cx = next.cx; state.cy = next.cy;
+  clampView();
   render();
 }, { passive: false });
 
@@ -190,7 +198,7 @@ canvas.addEventListener('pointerdown', (ev) => {
   if (!state.store) return;
   const [ix, iy] = eventToImage(ev);
   const r = hitRadius();
-  if (ev.shiftKey) { drag = { kind: 'pan', x: ev.clientX, y: ev.clientY, panX: state.panX, panY: state.panY }; canvas.setPointerCapture(ev.pointerId); return; }
+  if (ev.shiftKey) { drag = { kind: 'pan', x: ev.clientX, y: ev.clientY, cx: state.cx, cy: state.cy }; canvas.setPointerCapture(ev.pointerId); return; }
   const sel = state.store.selected();
   if (sel) {
     // 命中已标关节：选中它（=SVG 点它，进入 armed），并预备拖动微调。move 超阈值才算拖。
@@ -212,12 +220,11 @@ canvas.addEventListener('pointerdown', (ev) => {
 canvas.addEventListener('pointermove', (ev) => {
   if (!drag) return;
   if (drag.kind === 'pan') {
-    const w = win();
-    const dx = (ev.clientX - drag.x) / canvas.width * w.winW;
-    const dy = (ev.clientY - drag.y) / canvas.height * w.winH;
-    const c = clampPan({ imageW: state.imgW, imageH: state.imgH, cx: state.imgW / 2, cy: state.imgH / 2,
-      zoom: state.zoom, panX: drag.panX - dx, panY: drag.panY - dy });
-    state.panX = c.panX; state.panY = c.panY; render(); return;
+    // 屏幕位移 → 图像位移（除以 scale）；中心点反向移动。
+    const s = xform().scale;
+    state.cx = drag.cx - (ev.clientX - drag.x) / s;
+    state.cy = drag.cy - (ev.clientY - drag.y) / s;
+    clampView(); render(); return;
   }
   const [ix, iy] = eventToImage(ev);
   if (drag.kind === 'kpt') {
@@ -313,7 +320,7 @@ window.addEventListener('keydown', (ev) => {
   else if (ev.key === 'b' || ev.key === 'B') { state.mode = 'bbox'; state.armed = -1; refresh(); }
   else if (ev.key === 'k' || ev.key === 'K') { state.mode = 'pose'; refresh(); }
   else if (ev.key === 'f' || ev.key === 'F') focusSelected();
-  else if (ev.key === 'r' || ev.key === 'R') { state.zoom = ZOOM_MIN; state.panX = 0; state.panY = 0; render(); }
+  else if (ev.key === 'r' || ev.key === 'R') { resetView(); render(); }
   else if (ev.key === 'z' || ev.key === 'Z') { state.store.undo(); refresh(); }
 });
 
@@ -323,6 +330,7 @@ function cycleSelect() {
   state.store.select(ps[(i + 1) % ps.length].id); refresh();
 }
 
+// F 聚焦：把选中人的框（或关键点包围盒）放大居中。
 function focusSelected() {
   const sel = state.store?.selected(); if (!sel) return;
   let box = sel.bbox;
@@ -333,15 +341,9 @@ function focusSelected() {
     box = [Math.min(...xs), Math.min(...ys), Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)];
   }
   const [bx, by, bw, bh] = box;
-  const z = Math.min(8, Math.max(2, 0.6 * Math.min(state.imgW / Math.max(1, bw), state.imgH / Math.max(1, bh))));
-  const cxImg = bx + bw / 2, cyImg = by + bh / 2;
-  state.zoom = z;
-  const winW = state.imgW / z, winH = state.imgH / z;
-  state.panX = cxImg - winW / 2;
-  state.panY = cyImg - winH / 2;
-  const c = clampPan({ imageW: state.imgW, imageH: state.imgH, cx: state.imgW / 2, cy: state.imgH / 2,
-    zoom: state.zoom, panX: state.panX, panY: state.panY });
-  state.panX = c.panX; state.panY = c.panY; render();
+  state.zoom = Math.min(8, Math.max(2, 0.6 * Math.min(state.imgW / Math.max(1, bw), state.imgH / Math.max(1, bh))));
+  state.cx = bx + bw / 2; state.cy = by + bh / 2;
+  clampView(); render();
 }
 
 // 保存工程（可再次载入续标）：优先原地写回目录的 PROJECT_FILE，否则下载。
