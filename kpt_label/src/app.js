@@ -147,16 +147,26 @@ async function readProjectFile(src) {
 async function openVideo() {
   if (!videoOpenSupported()) { $('status').textContent = '浏览器不支持视频选择'; return; }
   const file = await pickVideoFile();
+  // 仿 label：再选一个可写目录，标注/导出原地写回该目录（Chrome/Edge）。
+  let dir = null;
+  if (fsAccessSupported()) {
+    $('status').textContent = '请选择用于读写标注的文件夹（可选视频所在目录）';
+    try { dir = new DirSource(await pickDirectory()); await dir.scan(); } catch { dir = null; }
+  }
   const vf = await new VideoFrames(file).ready();
   state.video?.dispose();
-  state.video = vf; state.images = null; state.dirSource = null;
+  state.video = vf; state.images = null; state.dirSource = dir;
   state.imgW = vf.width; state.imgH = vf.height;
   const n = vf.frameCount();
   const metas = Array.from({ length: n }, (_, i) => ({ file_name: `frame_${String(i).padStart(6, '0')}.jpg`, width: vf.width, height: vf.height }));
-  state.store = new KptStore({ images: metas, skeleton: 'coco17', nkpt: skel.names.length });
-  $('frame-slider').max = String(n - 1);
+  // 目录内若有本工具工程文件，续标。
+  const proj = dir ? await readProjectFile(dir) : null;
+  state.store = proj?.schema === 'kpt-label/v1'
+    ? KptStore.fromJSON(proj, skel.names.length)
+    : new KptStore({ images: metas, skeleton: 'coco17', nkpt: skel.names.length });
+  $('frame-slider').max = String(state.store.frameCount() - 1);
   await loadFrame(0);
-  $('status').textContent = `已加载视频（${n} 帧）`;
+  $('status').textContent = dir ? `已加载视频（${n} 帧）+ 可原地保存` : `已加载视频（${n} 帧，无目录权限，保存将下载）`;
 }
 
 $('stage').addEventListener('wheel', (ev) => {
@@ -220,30 +230,39 @@ canvas.addEventListener('pointerup', (ev) => {
   drag = null; refresh();
 });
 
-canvas.addEventListener('contextmenu', (ev) => {
+// 右键切已标关键点的可见性 2(可见)→1(遮挡)→0(清除)。
+// 监听挂 stage（含 canvas 的容器），统一 preventDefault，避免系统菜单漏出。
+$('stage').addEventListener('contextmenu', (ev) => {
   ev.preventDefault();
   const sel = state.store?.selected();
-  if (!sel || state.mode !== 'pose') return;
+  if (!sel) { $('status').textContent = '右键切可见性：请先选中一个人'; return; }
   const [ix, iy] = eventToImage(ev);
-  const ki = hitKeypoint(sel, [ix, iy], hitRadius());
-  if (ki < 0) return;
+  const ki = hitKeypoint(sel, [ix, iy], hitRadius(12));   // 比左键更宽容
+  if (ki < 0) { $('status').textContent = '右键未命中已标关键点（v=0 的点不显示也不可命中）'; return; }
   const cur = sel.keypoints[ki][2];
   const nv = cur === 2 ? 1 : cur === 1 ? 0 : 2;
   if (nv === 0) state.store.setKeypoint(ki, 0, 0, 0);
   else state.store.setKeypoint(ki, sel.keypoints[ki][0], sel.keypoints[ki][1], nv);
+  $('status').textContent = `${skel.names[ki]} → ${nv === 2 ? '可见' : nv === 1 ? '遮挡' : '清除'}`;
   refresh();
 });
 
+// 按 skeleton.order（深度优先）找 from 之后的下一个未标关节；都标完返回 -1。
 function nextUnset(person, from) {
-  for (let i = 1; i <= skel.names.length; i++) {
-    const j = (from + i) % skel.names.length;
+  const ord = skel.order;
+  const start = ord.indexOf(from);
+  for (let i = 1; i <= ord.length; i++) {
+    const j = ord[(start + i) % ord.length];
     if (person.keypoints[j][2] === 0) return j;
   }
   return -1;
 }
 
-$('open-dir').addEventListener('click', () => openDirectory().catch((e) => $('status').textContent = String(e.message || e)));
-$('open-video').addEventListener('click', () => openVideo().catch((e) => $('status').textContent = String(e.message || e)));
+// 「选择数据」下拉菜单（对齐 label）。
+$('btn-open').addEventListener('click', () => { $('open-menu').hidden = !$('open-menu').hidden; });
+document.addEventListener('click', (e) => { if (!e.target.closest('.menu-anchor')) $('open-menu').hidden = true; });
+$('open-dir').addEventListener('click', () => { $('open-menu').hidden = true; openDirectory().catch(reportErr); });
+$('open-video').addEventListener('click', () => { $('open-menu').hidden = true; openVideo().catch(reportErr); });
 $('prev').addEventListener('click', () => state.store && loadFrame(Math.max(0, state.store.currentFrame() - 1)));
 $('next').addEventListener('click', () => state.store && loadFrame(Math.min(state.store.frameCount() - 1, state.store.currentFrame() + 1)));
 $('frame-slider').addEventListener('input', (e) => state.store && loadFrame(Number(e.target.value)));
@@ -251,8 +270,14 @@ $('add-person').addEventListener('click', () => { if (!state.store) return; stat
 $('del-person').addEventListener('click', () => { if (!state.store) return; state.store.deletePerson(); state.armed = -1; refresh(); });
 $('copy-prev').addEventListener('click', () => copyPrev());
 for (const t of document.querySelectorAll('#tabs .tab')) t.addEventListener('click', () => { state.mode = t.dataset.mode; state.armed = -1; refresh(); });
-$('save-json').addEventListener('click', () => saveProject().catch((e) => $('status').textContent = String(e.message || e)));
-$('export').addEventListener('click', () => exportYolo().catch((e) => $('status').textContent = String(e.message || e)));
+$('save-json').addEventListener('click', () => saveProject().catch(reportErr));
+$('export').addEventListener('click', () => exportYolo().catch(reportErr));
+
+// 用户取消文件/目录选择器（AbortError）是正常操作，不报错。
+function reportErr(e) {
+  if (e?.name === 'AbortError') return;
+  $('status').textContent = String(e?.message || e);
+}
 
 function copyPrev() {
   if (!state.store) return;
@@ -265,7 +290,7 @@ window.addEventListener('keydown', (ev) => {
   if (ev.key === 'n' || ev.key === 'N') { state.store.addPerson(); state.armed = state.mode === 'pose' ? 0 : -1; refresh(); }
   else if (ev.key === 'Delete') { state.store.deletePerson(); state.armed = -1; refresh(); }
   else if (ev.key === 'c' || ev.key === 'C') { copyPrev(); }
-  else if (ev.key === 's' || ev.key === 'S') { saveProject().catch((e) => $('status').textContent = String(e.message || e)); }
+  else if (ev.key === 's' || ev.key === 'S') { saveProject().catch(reportErr); }
   else if (ev.key === 'Tab') { ev.preventDefault(); cycleSelect(); }
   else if (ev.key === '1') { state.mode = 'bbox'; state.armed = -1; refresh(); }
   else if (ev.key === '2') { state.mode = 'pose'; refresh(); }
@@ -307,10 +332,10 @@ async function saveProject() {
   const text = JSON.stringify(state.store.serialize(), null, 2);
   if (state.dirSource) {
     await state.dirSource.writeFile(PROJECT_FILE, new Blob([text], { type: 'application/json' }));
-    $('status').textContent = `已原地保存工程：${PROJECT_FILE}（下次打开此目录自动续标）`;
+    $('status').textContent = '工程已原地保存';
   } else {
     triggerDownload(new Blob([text], { type: 'application/json' }), PROJECT_FILE);
-    $('status').textContent = `已下载 ${PROJECT_FILE}（视频源无目录权限，载入续标需用图像目录）`;
+    $('status').textContent = '工程已下载（载入续标需用图像目录）';
   }
 }
 

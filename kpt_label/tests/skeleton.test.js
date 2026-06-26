@@ -35,3 +35,17 @@ test('getSkeleton 默认返回 COCO17', () => {
   assert.equal(getSkeleton('coco17'), COCO17);
   assert.equal(getSkeleton(), COCO17);
 });
+
+test('order 为合法置换，且深度优先（同侧连续、眼后接同侧耳）', () => {
+  assert.equal(COCO17.order.length, 17);
+  assert.deepEqual([...COCO17.order].sort((a, b) => a - b), Array.from({ length: 17 }, (_, i) => i));
+  const pos = (i) => COCO17.order.indexOf(i);
+  // 左眼(1) 紧接 左耳(3)，而非右眼(2)
+  assert.equal(COCO17.order[pos(1) + 1], 3);
+  // 左臂 肩(5)→肘(7)→腕(9) 连续递进
+  assert.ok(pos(5) < pos(7) && pos(7) < pos(9));
+  // 左臂整体先于右臂
+  assert.ok(pos(9) < pos(6));
+  // 左腿 髋(11)→膝(13)→踝(15) 连续，且先于右腿
+  assert.ok(pos(11) < pos(13) && pos(13) < pos(15) && pos(15) < pos(12));
+});
