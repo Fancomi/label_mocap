@@ -74,7 +74,9 @@
   <aside id="left">
     <h2>点云 SMPL 标注器</h2>
     <button id="btn-open" class="primary" style="width:100%">📂 打开序列目录</button>
+    <button id="btn-load-json" style="width:100%;margin-top:4px" disabled>📥 加载标注 JSON</button>
     <input id="dir-input" type="file" webkitdirectory directory multiple hidden>
+    <input id="json-input" type="file" accept=".json" hidden>
     <div class="hint" id="open-hint">Chrome/Edge 可原地保存写回目录;Firefox/Safari 仅能下载 JSON,需手动覆盖回数据目录</div>
 
     <div class="card">
