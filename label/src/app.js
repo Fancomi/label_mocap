@@ -22,7 +22,8 @@ import { installIK } from '../../smpl_edit/ik_plugin.js';
 import { installGvhmr } from './gvhmr_plugin.js';
 import { projectBboxFromMesh } from './edit/bbox_edit.js';
 import { BboxOverlay } from './edit/bbox_overlay.js';
-import { fsAccessSupported, pickDirectory, DirSource, videoOpenSupported, pickVideoFile } from './io/dir_source.js';
+import { fsAccessSupported, pickDirectory, DirSource, videoOpenSupported, pickVideoFile, jsonOpenSupported, pickJsonFile } from './io/dir_source.js';
+import { isCocoDoc } from './io/anno_validate.js';
 import { VideoSource } from './io/video_source.js';
 import * as THREE from 'three';
 
@@ -388,6 +389,20 @@ async function saveJson() {
   }
 }
 
+// 手动加载标注 JSON：覆盖内存的标注，保存仍写回已打开目录的标准 json。
+// 需先打开数据（store 存在）；保留当前帧。
+async function loadAnnotationJson(file) {
+  if (!store) { setStatus('请先打开数据（目录/视频）'); return; }
+  const raw = JSON.parse(await file.text());
+  if (!isCocoDoc(raw)) { setStatus('该文件不是 SMPL 标注（COCO）格式，未加载'); return; }
+  store = new AnnotationStore(new CocoDocument(raw));
+  ui = new UIController({ readOnly, modes: editorModes });
+  if (syncUI) ui.onChange(syncUI);
+  $('slider').max = String(Math.max(0, store.frameCount() - 1));
+  await showFrame(Math.min(store.currentFrame(), store.frameCount() - 1));
+  setStatus(`已加载标注 JSON（${file.name}）`);
+}
+
 async function resetFromDisk() {
   // 不复用 mountDataset:本函数语义是"重读同源并保留当前帧",不应重置相机
   // (snapTo/resize/prepareForSequence)或跳回第 0 帧,故保留独立装配。
@@ -455,6 +470,17 @@ function boot() {
     $('open-menu').hidden = true;
     if (!videoOpenSupported()) { setStatus('当前浏览器不支持打开视频文件,请用 Chrome/Edge'); return; }
     openVideoData().catch(onLoadError);
+  });
+  $('open-json').addEventListener('click', () => {
+    $('open-menu').hidden = true;
+    if (!store) { setStatus('请先打开数据（目录/视频）'); return; }
+    if (jsonOpenSupported()) {
+      pickJsonFile().then((f) => loadAnnotationJson(f)).catch(onLoadError);
+    } else { $('json-input').click(); }
+  });
+  $('json-input').addEventListener('change', (e) => {
+    const f = e.target.files?.[0]; if (f) loadAnnotationJson(f).catch(onLoadError);
+    e.target.value = '';
   });
   $('dir-input').addEventListener('change', (e) => openFiles(e.target.files).catch(onLoadError));
   $('btn-2d').addEventListener('click', () => { if (dragGuards.some((g) => g.isDragging())) return; cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); refreshTabAvailability(); if (syncUI) syncUI(); });

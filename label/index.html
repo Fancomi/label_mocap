@@ -75,9 +75,11 @@
       <div id="open-menu" hidden>
         <button id="open-dir">📁 图像/标注目录</button>
         <button id="open-video">🎬 视频文件</button>
+        <button id="open-json">📥 加载标注 JSON</button>
       </div>
     </div>
     <input id="dir-input" type="file" webkitdirectory directory multiple hidden>
+    <input id="json-input" type="file" accept=".json" hidden>
     <div class="hint" id="open-hint">Chrome/Edge 可原地保存写回目录;Firefox/Safari 仅能下载 JSON,需手动覆盖回数据目录</div>
 
     <div class="card">
