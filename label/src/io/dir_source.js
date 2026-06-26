@@ -25,6 +25,18 @@ export async function pickVideoFile() {
   return handle.getFile(); // File object
 }
 
+export function jsonOpenSupported() {
+  return typeof window !== 'undefined' && typeof window.showOpenFilePicker === 'function';
+}
+
+export async function pickJsonFile() {
+  const [handle] = await window.showOpenFilePicker({
+    types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }],
+    multiple: false,
+  });
+  return handle.getFile(); // File object
+}
+
 async function walk(dirHandle, prefix, out) {
   for await (const [name, handle] of dirHandle.entries()) {
     const rel = prefix ? `${prefix}/${name}` : name;
@@ -41,14 +53,36 @@ async function fileAt(dirHandle, relPath) {
   return fh.getFile();
 }
 
-async function writableAt(dirHandle, relPath) {
+// 抗只读写入：正常 createWritable 写入；若目标文件被 OS 置为只读（macOS 下载目录
+// 里的 0444 文件常见），createWritable 抛 NoModificationAllowedError/InvalidStateError，
+// 此时删掉旧文件再以 create:true 重建（新文件默认可写）后写入。重建仍失败则抛出。
+async function dirChainFor(dirHandle, relPath) {
   const parts = relPath.split('/');
   let dir = dirHandle;
   for (let i = 0; i < parts.length - 1; i++) {
     dir = await dir.getDirectoryHandle(parts[i], { create: true });
   }
-  const fh = await dir.getFileHandle(parts[parts.length - 1], { create: true });
-  return fh.createWritable();
+  return { dir, name: parts[parts.length - 1] };
+}
+
+export async function writeFileResilient(dirHandle, relPath, data) {
+  const { dir, name } = await dirChainFor(dirHandle, relPath);
+  const writeVia = async (fh) => { const w = await fh.createWritable(); await w.write(data); await w.close(); };
+  const fh = await dir.getFileHandle(name, { create: true });
+  try {
+    await writeVia(fh);
+  } catch (e) {
+    if (e?.name === 'NoModificationAllowedError' || e?.name === 'InvalidStateError') {
+      // 删重建窗口：removeEntry 成功但随后 create/write 失败时，磁盘上原文件已没、
+      // 新文件未写成 → 该文件在磁盘上丢失。调用方持有内存数据可重试/退回下载，故可接受。
+      await dir.removeEntry(name);
+      const fresh = await dir.getFileHandle(name, { create: true });
+      await writeVia(fresh);
+    } else {
+      throw e;
+    }
+  }
+  return relPath;
 }
 
 export class DirSource {
@@ -98,17 +132,18 @@ export class DirSource {
   // the path written, and pins jsonPath so the next save is in place.
   async saveJson(obj) {
     const target = this._cls?.jsonPath ?? this._cls?.writeJsonPath;
-    const w = await writableAt(this._dir, target);
-    await w.write(JSON.stringify(obj, null, 2));
-    await w.close();
+    await writeFileResilient(this._dir, target, JSON.stringify(obj, null, 2));
     if (this._cls) this._cls.jsonPath = target;
     return target;
   }
 
   async writeFile(relPath, blob) {
-    const w = await writableAt(this._dir, relPath);
-    await w.write(blob);
-    await w.close();
-    return relPath;
+    return writeFileResilient(this._dir, relPath, blob);
+  }
+
+  // 按相对路径读任意文件（与 writeFile 对称）；不存在返回 null。
+  async readFile(relPath) {
+    try { return await fileAt(this._dir, relPath); }
+    catch { return null; }
   }
 }

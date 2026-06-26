@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>2D 关键点标注器</title>
+  <style>
+    html,body { height:100%; margin:0; background:#1a1f2a; color:#eee; font-family:system-ui,monospace; font-size:12px; }
+    body { display:flex; }
+    #left, #right { width:280px; background:#1a1a1a; padding:10px; display:flex; flex-direction:column; gap:8px; overflow-y:auto; }
+    #left { border-right:1px solid #333; } #right { border-left:1px solid #333; }
+    #stage { position:relative; flex:1; background:#0f1216; overflow:hidden; min-width:0; }
+    canvas { display:block; position:absolute; top:0; left:0; cursor:crosshair; }
+    #status { position:absolute; top:8px; left:8px; background:rgba(0,0,0,.6); padding:5px 9px; border-radius:3px; }
+    h2 { font-size:14px; color:#7df; margin:0 0 4px; }
+    h3 { font-size:11px; color:#8ab; margin:0 0 2px; }
+    .card { border-top:1px solid #2a2a2a; padding-top:8px; display:flex; flex-direction:column; gap:5px; }
+    button { padding:6px 8px; background:#2a2a2a; border:1px solid #444; color:#eee; border-radius:4px; cursor:pointer; font:inherit; }
+    button:hover { background:#3a3a3a; }
+    button.on { background:#0066cc; border-color:#3399ff; }
+    button.primary { background:#1f6f43; border-color:#2e9e60; }
+    .row { display:flex; gap:5px; } .row > * { flex:1; }
+    .hint { color:#9ab; font-size:11px; line-height:1.5; background:#222b33; padding:6px 8px; border-radius:4px; }
+    .status { background:#222; border:1px solid #333; color:#ffa; padding:4px 6px; border-radius:3px; min-height:16px; }
+    #tabs { display:flex; gap:3px; } #tabs .tab { flex:1; border-radius:4px 4px 0 0; }
+    .btn-sub { display:flex; flex-direction:column; align-items:stretch; gap:1px; line-height:1.3; }
+    .btn-sub small { font-size:10px; opacity:.7; font-weight:normal; }
+    .keycap { display:inline-block; min-width:14px; padding:0 3px; margin-left:4px; border:1px solid #556;
+      border-radius:3px; background:#222b33; font-size:10px; color:#9ab; vertical-align:middle; }
+    #person-list { display:flex; flex-direction:column; gap:2px; max-height:200px; overflow-y:auto; }
+    #person-list .item { padding:4px 6px; border:1px solid #333; border-radius:3px; cursor:pointer; display:flex; justify-content:space-between; }
+    #person-list .item.on { background:#0066cc; border-color:#3399ff; }
+    .body-diagram { width:100%; height:260px; background:#11151c; border:1px solid #333; border-radius:4px; }
+    input[type=range] { width:100%; }
+    label.inline { display:flex; align-items:center; gap:6px; }
+    code { background:#11151c; padding:1px 4px; border-radius:3px; color:#cde; }
+    .menu-anchor { position:relative; }
+    #open-menu { position:absolute; top:100%; left:0; right:0; z-index:20; margin-top:4px;
+      display:flex; flex-direction:column; gap:4px; padding:5px;
+      background:#262b33; border:1px solid #3a4150; border-radius:6px;
+      box-shadow:0 6px 18px rgba(0,0,0,.5); }
+    #open-menu[hidden] { display:none; }
+  </style>
+</head>
+<body>
+  <div id="left">
+    <h2>2D 关键点标注器</h2>
+    <div class="menu-anchor">
+      <button id="btn-open" class="primary" style="width:100%">📂 选择数据 ▾</button>
+      <div id="open-menu" hidden>
+        <button id="open-dir">📁 图像目录</button>
+        <button id="open-video">🎬 视频文件</button>
+        <button id="open-json">📥 加载标注 JSON</button>
+      </div>
+    </div>
+    <input id="json-input" type="file" accept=".json" hidden>
+    <div class="hint">框与关键点为同一人的两个独立属性，可只标其一。Chrome/Edge 可原地保存写回目录；其他浏览器仅下载。</div>
+    <div class="card">
+      <h3>帧</h3>
+      <div class="row"><button id="prev">◀ 上一帧</button><button id="next">下一帧 ▶</button></div>
+      <input id="frame-slider" type="range" min="0" max="0" value="0">
+      <div id="frame-label" class="status">— / —</div>
+      <button id="copy-prev">⎘ 复制上一帧<span class="keycap">C</span></button>
+    </div>
+    <div class="card">
+      <h3>保存 / 导出</h3>
+      <button id="save-json" class="primary btn-sub">💾 保存工程<small>原地写回目录，可重新打开续标 · S</small></button>
+      <button id="export" class="btn-sub">⬇ 导出训练集<small>生成 YOLO-pose，仅供训练</small></button>
+      <label class="inline">val 比例 <input id="val-ratio" type="number" min="0" max="0.5" step="0.1" value="0" style="width:60px"></label>
+    </div>
+    <div class="card"><div class="hint">N 新建人 · C 复制上一帧 · Del 删关键点 · Shift+Del 删人 · Tab 切人 · K/B 点/框 · F 聚焦 · R 重置 · Z 撤销 · S 保存</div></div>
+  </div>
+
+  <div id="stage">
+    <canvas id="canvas"></canvas>
+    <div id="status">未加载</div>
+  </div>
+
+  <div id="right">
+    <div class="card">
+      <h3>人物</h3>
+      <div class="row"><button id="add-person" class="primary">+ 新建<span class="keycap">N</span></button><button id="del-person">删除人<span class="keycap">⇧Del</span></button></div>
+      <div id="person-list"></div>
+    </div>
+    <div class="card">
+      <h3>编辑模式</h3>
+      <div id="tabs">
+        <button class="tab on" data-mode="pose">关键点</button>
+        <button class="tab" data-mode="bbox">框</button>
+      </div>
+      <div class="hint" style="background:none;padding:2px 0">快捷键 <span class="keycap">K</span> 关键点 · <span class="keycap">B</span> 框</div>
+    </div>
+    <div class="card" id="diagram-card">
+      <h3>选关节打点 <span style="color:#778;font-weight:normal">（人体面向你，左右已镜像；蓝=左 橙=右）</span></h3>
+      <div class="hint">① 点人体图（或图上已标点）选关节 → ② 在<b>中间图像</b>单击放置，自动跳下一关节。<br>左键拖动已标点微调；在<b>人体图上右键</b>已标点切 可见↔遮挡。</div>
+      <div class="row"><button id="del-kpt">删除选中关键点<span class="keycap">Del</span></button></div>
+      <label class="inline" style="margin:2px 0"><input id="show-kpt-label" type="checkbox"> 显示当前关节名</label>
+      <div id="diagram-host"></div>
+    </div>
+  </div>
+
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>

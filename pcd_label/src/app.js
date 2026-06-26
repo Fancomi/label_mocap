@@ -21,6 +21,8 @@ import { FRONT_OPTIONS, viewFrame, axisName } from '../../smpl_edit/view_frame.j
 import { Viewport } from '../../smpl_edit/viewport.js';
 import { ViewportManager } from '../../smpl_edit/viewport_manager.js';
 import { bodyBounds } from '../../smpl_edit/framing.js';
+import { jsonOpenSupported, pickJsonFile } from '../../label/src/io/dir_source.js';
+import { isCocoDoc } from '../../label/src/io/anno_validate.js';
 
 const $ = (id) => document.getElementById(id);
 const setStatus = (t) => { $('status').textContent = t; };
@@ -166,6 +168,7 @@ async function mountSequence() {
   applyAxisFrame(true);
   if (syncUI) syncUI();
   setStatus(`已加载 ${manifest.frameCount} 帧`);
+  $('btn-load-json').disabled = false;
 }
 
 async function openDirectory() {
@@ -177,8 +180,34 @@ async function openDirectory() {
 async function saveAnnotation() {
   if (!store) return;
   const obj = store.document().serialize();
-  const path = await source.saveAnnotation(obj);
-  setStatus(`已保存 ${path}`);
+  // FileListSource.saveAnnotation 本就下载；PcdDirSource 原地写（已具抗只读重建），
+  // 写入仍抛异常时退回下载，避免标注丢失。
+  try {
+    const path = await source.saveAnnotation(obj);
+    setStatus(`已保存 ${path}`);
+  } catch (e) {
+    console.warn('原地保存失败，退回下载：', e);
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'player_0.json'; a.click();
+    URL.revokeObjectURL(url);
+    setStatus(`⚠ 原地保存失败（${e?.name || e}），改为下载 player_0.json — 请手动覆盖回数据目录`);
+  }
+}
+
+// 手动加载标注 JSON：覆盖内存的 SMPL 标注，保存仍写回当前序列目录的 player_0.json。
+// 需先打开序列目录（按钮在 mountSequence 后才启用）。
+async function loadAnnotationJson(file) {
+  const raw = JSON.parse(await file.text());
+  if (!isCocoDoc(raw)) { setStatus('该文件不是 SMPL 标注（COCO）格式，未加载'); return; }
+  const at = store.currentFrame();   // 新 store 从 0 帧起，先记住当前帧再重建以保留
+  store = new AnnotationStore(new CocoDocument(raw));
+  ui = new UIController({ modes: ['root', 'pose', 'beta'] });
+  if (syncUI) ui.onChange(syncUI);
+  $('slider').max = String(Math.max(0, store.frameCount() - 1));
+  await showFrame(Math.min(at, store.frameCount() - 1));
+  setStatus(`已加载标注 JSON（${file.name}）— 保存写回 player_0.json`);
 }
 
 function boot() {
@@ -219,6 +248,16 @@ function boot() {
   $('btn-undo').addEventListener('click', () => { if (store) { store.undo(); showFrame(store.currentFrame()); } });
   window.addEventListener('keydown', (e) => { if (store && (e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); store.undo(); showFrame(store.currentFrame()); } });
   $('btn-save').addEventListener('click', () => saveAnnotation().catch((e) => setStatus(String(e))));
+  $('btn-load-json').addEventListener('click', () => {
+    if (!store) { setStatus('请先打开序列目录'); return; }
+    if (jsonOpenSupported()) {
+      pickJsonFile().then((f) => loadAnnotationJson(f)).catch((e) => { if (e?.name !== 'AbortError') setStatus(String(e)); });
+    } else { $('json-input').click(); }
+  });
+  $('json-input').addEventListener('change', (e) => {
+    const f = e.target.files?.[0]; if (f) loadAnnotationJson(f).catch((err) => setStatus(String(err)));
+    e.target.value = '';
+  });
   $('btn-reset').addEventListener('click', async () => { if (!source || !store) return; const raw = await source.readAnnotation(); if (raw) { store = new AnnotationStore(new CocoDocument(raw)); ui = new UIController({ modes: ['root', 'pose', 'beta'] }); if (syncUI) ui.onChange(syncUI); } await showFrame(Math.min(store.currentFrame(), store.frameCount() - 1)); setStatus('已重置'); });
 
   const toggle = (id, key) => $(id).addEventListener('click', () => { const on = !$(id).classList.contains('on'); $(id).classList.toggle('on', on); scene.setFlag(key, on); });

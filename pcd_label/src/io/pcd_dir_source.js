@@ -1,6 +1,7 @@
 // pcd_label/src/io/pcd_dir_source.js
 // 单序列目录：含 manifest.json + frame_%06d.png（+ 可选 player_0.json 标注）。
 import { parseManifest, frameFileName } from './manifest.js';
+import { writeFileResilient } from '../../../label/src/io/dir_source.js';
 
 export function fsAccessSupported() {
   return typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function';
@@ -37,10 +38,7 @@ export class PcdDirSource {
   }
 
   async saveAnnotation(obj) {
-    const fh = await this._dir.getFileHandle(ANNO_NAME, { create: true });
-    const w = await fh.createWritable();
-    await w.write(JSON.stringify(obj, null, 2));
-    await w.close();
+    await writeFileResilient(this._dir, ANNO_NAME, JSON.stringify(obj, null, 2));
     return ANNO_NAME;
   }
 }

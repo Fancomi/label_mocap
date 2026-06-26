@@ -22,7 +22,8 @@ import { installIK } from '../../smpl_edit/ik_plugin.js';
 import { installGvhmr } from './gvhmr_plugin.js';
 import { projectBboxFromMesh } from './edit/bbox_edit.js';
 import { BboxOverlay } from './edit/bbox_overlay.js';
-import { fsAccessSupported, pickDirectory, DirSource, videoOpenSupported, pickVideoFile } from './io/dir_source.js';
+import { fsAccessSupported, pickDirectory, DirSource, videoOpenSupported, pickVideoFile, jsonOpenSupported, pickJsonFile } from './io/dir_source.js';
+import { isCocoDoc } from './io/anno_validate.js';
 import { VideoSource } from './io/video_source.js';
 import * as THREE from 'three';
 
@@ -375,17 +376,39 @@ async function saveJson() {
     doc.setAnnotation(id, { keypoints, occlution_joint: occ });
   }
   const obj = doc.serialize();
+  // 原地写回（已具抗只读重建）；写入仍抛异常时退回下载，避免标注丢失。
   if (dirSource) {
-    const path = await dirSource.saveJson(obj);
-    setStatus(`已保存 ${path}`);
-  } else {
-    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url; link.download = 'player_0.json'; link.click();
-    URL.revokeObjectURL(url);
-    setStatus('⚠ 当前浏览器不支持原地保存,已下载 player_0.json — 请手动覆盖回数据目录(原地保存请用 Chrome/Edge)');
+    try {
+      const path = await dirSource.saveJson(obj);
+      setStatus(`已保存 ${path}`);
+      return;
+    } catch (e) {
+      console.warn('原地保存失败，退回下载：', e);
+      setStatus(`⚠ 原地保存失败（${e?.name || e}），改为下载 player_0.json — 请手动覆盖回数据目录`);
+    }
   }
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url; link.download = 'player_0.json'; link.click();
+  URL.revokeObjectURL(url);
+  if (!dirSource) setStatus('⚠ 当前浏览器不支持原地保存,已下载 player_0.json — 请手动覆盖回数据目录(原地保存请用 Chrome/Edge)');
+}
+}
+
+// 手动加载标注 JSON：覆盖内存的标注，保存仍写回已打开目录的标准 json。
+// 需先打开数据（store 存在）；保留当前帧。
+async function loadAnnotationJson(file) {
+  if (!store) { setStatus('请先打开数据（目录/视频）'); return; }
+  const raw = JSON.parse(await file.text());
+  if (!isCocoDoc(raw)) { setStatus('该文件不是 SMPL 标注（COCO）格式，未加载'); return; }
+  const at = store.currentFrame();   // 新 store 从 0 帧起，先记住当前帧再重建以保留
+  store = new AnnotationStore(new CocoDocument(raw));
+  ui = new UIController({ readOnly, modes: editorModes });
+  if (syncUI) ui.onChange(syncUI);
+  $('slider').max = String(Math.max(0, store.frameCount() - 1));
+  await showFrame(Math.min(at, store.frameCount() - 1));
+  setStatus(`已加载标注 JSON（${file.name}）`);
 }
 
 async function resetFromDisk() {
@@ -455,6 +478,17 @@ function boot() {
     $('open-menu').hidden = true;
     if (!videoOpenSupported()) { setStatus('当前浏览器不支持打开视频文件,请用 Chrome/Edge'); return; }
     openVideoData().catch(onLoadError);
+  });
+  $('open-json').addEventListener('click', () => {
+    $('open-menu').hidden = true;
+    if (!store) { setStatus('请先打开数据（目录/视频）'); return; }
+    if (jsonOpenSupported()) {
+      pickJsonFile().then((f) => loadAnnotationJson(f)).catch(onLoadError);
+    } else { $('json-input').click(); }
+  });
+  $('json-input').addEventListener('change', (e) => {
+    const f = e.target.files?.[0]; if (f) loadAnnotationJson(f).catch(onLoadError);
+    e.target.value = '';
   });
   $('dir-input').addEventListener('change', (e) => openFiles(e.target.files).catch(onLoadError));
   $('btn-2d').addEventListener('click', () => { if (dragGuards.some((g) => g.isDragging())) return; cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); refreshTabAvailability(); if (syncUI) syncUI(); });
