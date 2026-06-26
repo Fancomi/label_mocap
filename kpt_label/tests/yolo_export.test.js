@@ -55,6 +55,9 @@ test('datasetYaml：含 kpt_shape/flip_idx/names/nc/train/val', () => {
   assert.match(y, /nc: 1/);
   assert.match(y, /train: images\/train/);
   assert.match(y, /val: images\/val/);
+  // names 是「类别名」(nc=1 → 仅 person)，不是关键点名；否则 dataloader 校验 names!=nc 报错。
+  assert.match(y, /names:\n {2}0: person/);
+  assert.doesNotMatch(y, /nose/);
 });
 
 test('datasetYaml：无 val 时 val 指向 train', () => {

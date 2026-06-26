@@ -25,16 +25,16 @@ export function imageLabelText(persons, img, skel) {
   return persons.map((p) => personToYoloLine(p, img, skel)).filter(Boolean).join('\n');
 }
 
-// dataset.yaml 文本。hasVal=false 时 val 指向 train 以免 ultralytics 报错。
+// dataset.yaml 文本。names 为类别名（nc=1 → 仅 person），与关键点名无关；
+// 关键点数量由 kpt_shape 表达。hasVal=false 时 val 指向 train 以免 ultralytics 报错。
 export function datasetYaml(skel, { hasVal }) {
-  const names = skel.names.map((n, i) => `  ${i}: ${n}`).join('\n');
   return [
     'path: .',
     'train: images/train',
     `val: images/${hasVal ? 'val' : 'train'}`,
     'nc: 1',
     'names:',
-    names,
+    '  0: person',
     `kpt_shape: [${skel.names.length}, 3]`,
     `flip_idx: [${skel.flip_idx.join(', ')}]`,
     '',
