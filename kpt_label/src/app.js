@@ -120,8 +120,19 @@ async function openDirectory() {
   const src = new DirSource(handle);
   const cls = await src.scan();
   if (cls.hasManifest) { $('status').textContent = '该目录是点云序列，请用 pcd 标注器'; return; }
+  state.video?.dispose();
   state.dirSource = src; state.video = null;
   await mountImages(src, cls);
+  // 目录内若有既存中间 JSON，载入续标（fromJSON 往返保真）。
+  try {
+    const existing = await src.readJson();
+    if (existing?.schema === 'kpt-label/v1') {
+      state.store = KptStore.fromJSON(existing, skel.names.length);
+      await loadFrame(0);
+      $('status').textContent = '已加载图像目录 + 续接既有标注';
+      return;
+    }
+  } catch { /* 无既存 JSON，全新标注 */ }
   $('status').textContent = '已加载图像目录';
 }
 
@@ -129,6 +140,7 @@ async function openVideo() {
   if (!videoOpenSupported()) { $('status').textContent = '浏览器不支持视频选择'; return; }
   const file = await pickVideoFile();
   const vf = await new VideoFrames(file).ready();
+  state.video?.dispose();
   state.video = vf; state.images = null; state.dirSource = null;
   state.imgW = vf.width; state.imgH = vf.height;
   const n = vf.frameCount();
@@ -228,7 +240,7 @@ $('prev').addEventListener('click', () => state.store && loadFrame(Math.max(0, s
 $('next').addEventListener('click', () => state.store && loadFrame(Math.min(state.store.frameCount() - 1, state.store.currentFrame() + 1)));
 $('frame-slider').addEventListener('input', (e) => state.store && loadFrame(Number(e.target.value)));
 $('add-person').addEventListener('click', () => { if (!state.store) return; state.store.addPerson(); state.armed = 0; refresh(); });
-$('del-person').addEventListener('click', () => { state.store?.deletePerson(); refresh(); });
+$('del-person').addEventListener('click', () => { if (!state.store) return; state.store.deletePerson(); state.armed = -1; refresh(); });
 for (const t of document.querySelectorAll('#tabs .tab')) t.addEventListener('click', () => { state.mode = t.dataset.mode; state.armed = -1; refresh(); });
 $('save-json').addEventListener('click', () => downloadJson());
 $('export').addEventListener('click', () => exportYolo().catch((e) => $('status').textContent = String(e.message || e)));
@@ -236,7 +248,7 @@ $('export').addEventListener('click', () => exportYolo().catch((e) => $('status'
 window.addEventListener('keydown', (ev) => {
   if (!state.store || ev.target.tagName === 'INPUT') return;
   if (ev.key === 'n' || ev.key === 'N') { state.store.addPerson(); state.armed = 0; refresh(); }
-  else if (ev.key === 'Delete') { state.store.deletePerson(); refresh(); }
+  else if (ev.key === 'Delete') { state.store.deletePerson(); state.armed = -1; refresh(); }
   else if (ev.key === 'Tab') { ev.preventDefault(); cycleSelect(); }
   else if (ev.key === '1') { state.mode = 'bbox'; state.armed = -1; refresh(); }
   else if (ev.key === '2') { state.mode = 'pose'; refresh(); }
