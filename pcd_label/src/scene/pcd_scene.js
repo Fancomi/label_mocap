@@ -1,6 +1,7 @@
 // pcd_label/src/scene/pcd_scene.js
 import * as THREE from 'three';
 import { createRenderer } from '../../../smpl_render/renderer.js';
+import { applyContainerResize } from '../../../smpl_render/resize.js';
 import { PointCloud } from './point_cloud.js';
 
 const BONES = [
@@ -134,12 +135,20 @@ export class PcdScene {
   }
 
   resize() {
-    const parent = this._canvas.parentElement;
-    const w = parent.clientWidth, h = parent.clientHeight;
-    if (w <= 0 || h <= 0 || !this._cam) return;
-    this._canvas.style.width = `${w}px`; this._canvas.style.height = `${h}px`;
-    this._renderer.setSize(w, h, false);
-    this._cam.resize(w, h);
+    if (!this._cam) return;
+    // 纯 3D 多视口:走内核 fill 分支(填满容器),设 backing buffer + 主 camera.aspect。
+    // fill 分支不读 imageAspect(buffer=容器尺寸、aspect=cssW/cssH),传 1 占位即可。
+    // 主 camera.aspect 随后被 manager.resize() 按主视口子区像素覆盖(无害);各 ortho
+    // 视口 frustum 也由 manager.resize() 按子区比例重设。顺序:buffer 先,再 manager。
+    const out = applyContainerResize({
+      renderer: this._renderer,
+      camera: this._cam.camera,
+      canvas: this._canvas,
+      container: this._canvas.parentElement,
+      imageAspect: 1,
+      effectiveMode: '3d',
+    });
+    if (!out) return; // 容器 0×0:布局未就绪,早退
     if (this._manager) this._manager.resize();
   }
 
