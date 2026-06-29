@@ -1,18 +1,15 @@
-// pcd_label/src/scene/orbit_cam.js
+// smpl_render/orbit_cam.js
+// 纯自由 orbit 相机(pcd 用)。「上轴/前轴」只改【观察者】:相机 up 向量 + 摆位 + 环绕轴,
+// 经由通用 view_frame 模块计算,绝不旋转任何几何(点云/SMPL 始终在原始数据系)。
+// 与 CameraModes 差异大(无双模/tween/intrinsics/2D 缩放)，故独立类，只复用 createRenderer/
+// resize 策略/view_frame，不进 CameraModes 继承树。
+//
+// 万向锁/拖拽偏差对策:改 up 后须让 OrbitControls 用新 up 重解 spherical，否则旧 up 残留
+// → 拖拽方向错乱/伪万向锁。setFrame 里先写新 up，再写 position/target，最后 update()。
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { cameraPlacement } from '../../../smpl_edit/view_frame.js';
+import { cameraPlacement } from '../smpl_edit/view_frame.js';
 
-// 纯自由 orbit 相机。「上轴/前轴」只改【观察者】:相机 up 向量 + 摆位 + 环绕轴,
-// 经由通用 view_frame 模块计算,绝不旋转任何几何(点云/SMPL 始终在原始数据系)。
-//
-// 万向锁/拖拽偏差的根因与对策:
-//  - OrbitControls 的极角(phi)从 object.up 量起。改 up 后必须让 controls 用新 up
-//    重新解算 spherical,否则旧 up 残留 → 拖拽方向错乱、某些角度卡死(伪万向锁)。
-//    我们在 setFrame 里先写新 up、新 position/target,再 controls.update() 让它基于
-//    新 up 重建内部球坐标。vendored OrbitControls.update() 已改为每帧用当前 object.up
-//    重算 orbit 轴(setFromUnitVectors),所以运行时换轴即时生效。
-//  - 极角范围留出极小 epsilon,避免正好与 up 平行导致 makeSafe 抖动。
 export class OrbitCam {
   constructor({ canvas }) {
     this.mode = '3d';
@@ -39,9 +36,7 @@ export class OrbitCam {
     const tgt = target ? target.slice() : this.controls.target.toArray();
     const r = (radius && radius > 0) ? radius : (this.camera.position.distanceTo(this.controls.target) || 6);
     const place = cameraPlacement(up, front, tgt, r);
-
-    // 关键顺序:先写 up,再写 position/target,最后 update() 让 OrbitControls 基于
-    // 新 up 重建内部 spherical(否则旧 up 残留 → 拖拽偏差 + 伪万向锁)。
+    // 先写 up，再写 position/target，最后 update() 让 OrbitControls 基于新 up 重建 spherical。
     this.camera.up.set(place.up[0], place.up[1], place.up[2]);
     this.camera.position.set(place.position[0], place.position[1], place.position[2]);
     this.controls.target.set(place.target[0], place.target[1], place.target[2]);

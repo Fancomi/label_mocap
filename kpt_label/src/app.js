@@ -24,6 +24,7 @@ const state = {
   zoom: 1, cx: 960, cy: 540,        // zoom≥1（1=fit）；(cx,cy)=显示在视口中心的图像点
   mode: 'pose', armed: -1,
   diagram: null,
+  playing: false, fps: 10,          // 播放状态与帧率
 };
 
 const canvas = $('canvas');
@@ -85,6 +86,22 @@ function syncUI() {
 
 function refresh() { render(); syncUI(); }
 
+// 播放：自调度定时器，await 每帧加载完再排下一帧，避免解码重叠。到尾循环回 0。
+let playTimer = null;
+function setPlaying(on) {
+  state.playing = on && !!state.store && state.store.frameCount() > 1;
+  $('play').textContent = state.playing ? '⏸ 暂停' : '▶ 播放';
+  $('play').classList.toggle('on', state.playing);
+  clearTimeout(playTimer); playTimer = null;
+  if (state.playing) tickPlay();
+}
+async function tickPlay() {
+  if (!state.playing || !state.store) return;
+  const next = (state.store.currentFrame() + 1) % state.store.frameCount();
+  await loadFrame(next);
+  if (state.playing) playTimer = setTimeout(tickPlay, 1000 / state.fps);
+}
+
 // 重置视口到 fit：zoom=1，中心=图像中心。
 function resetView() {
   state.zoom = ZOOM_MIN; state.cx = state.imgW / 2; state.cy = state.imgH / 2;
@@ -132,6 +149,7 @@ async function openDirectory() {
   const src = new DirSource(handle);
   const cls = await src.scan();
   if (cls.hasManifest) { $('status').textContent = '该目录是点云序列，请用 pcd 标注器'; return; }
+  setPlaying(false);
   state.video?.dispose();
   state.dirSource = src; state.video = null;
   await mountImages(src, cls);
@@ -158,6 +176,7 @@ async function readProjectFile(src) {
 async function openVideo() {
   if (!videoOpenSupported()) { $('status').textContent = '浏览器不支持视频选择'; return; }
   const file = await pickVideoFile();
+  setPlaying(false);
   // 仿 label：再选一个可写目录，标注/导出原地写回该目录（Chrome/Edge）。
   let dir = null;
   if (fsAccessSupported()) {
@@ -308,9 +327,11 @@ $('json-input').addEventListener('change', (e) => {
   const f = e.target.files?.[0]; if (f) loadProjectJson(f).catch(reportErr);
   e.target.value = '';
 });
-$('prev').addEventListener('click', () => state.store && loadFrame(Math.max(0, state.store.currentFrame() - 1)));
-$('next').addEventListener('click', () => state.store && loadFrame(Math.min(state.store.frameCount() - 1, state.store.currentFrame() + 1)));
-$('frame-slider').addEventListener('input', (e) => state.store && loadFrame(Number(e.target.value)));
+$('prev').addEventListener('click', () => { if (!state.store) return; setPlaying(false); loadFrame(Math.max(0, state.store.currentFrame() - 1)); });
+$('next').addEventListener('click', () => { if (!state.store) return; setPlaying(false); loadFrame(Math.min(state.store.frameCount() - 1, state.store.currentFrame() + 1)); });
+$('play').addEventListener('click', () => { if (state.store) setPlaying(!state.playing); });
+$('speed').addEventListener('input', (e) => { state.fps = +e.target.value; $('speed-val').textContent = `${state.fps} fps`; });
+$('frame-slider').addEventListener('input', (e) => { if (!state.store) return; setPlaying(false); loadFrame(Number(e.target.value)); });
 $('add-person').addEventListener('click', () => { if (!state.store) return; state.store.addPerson(); state.armed = state.mode === 'pose' ? 0 : -1; refresh(); });
 $('del-person').addEventListener('click', () => { if (!state.store) return; state.store.deletePerson(); state.armed = -1; refresh(); });
 $('del-kpt').addEventListener('click', () => deleteKeypoint());
@@ -333,6 +354,7 @@ function copyPrev() {
 
 window.addEventListener('keydown', (ev) => {
   if (!state.store || ev.target.tagName === 'INPUT') return;
+  if (ev.key === ' ' || ev.code === 'Space') { ev.preventDefault(); setPlaying(!state.playing); return; }  // 空格随时暂停/播放
   if (ev.key === 'n' || ev.key === 'N') { state.store.addPerson(); state.armed = state.mode === 'pose' ? 0 : -1; refresh(); }
   else if (ev.key === 'Delete' || ev.key === 'Backspace') {
     if (ev.shiftKey) { state.store.deletePerson(); state.armed = -1; refresh(); }  // Shift+Del 删整个人

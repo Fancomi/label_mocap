@@ -6,6 +6,8 @@ import {
   detectOrientation,
   loadLocalA1SequenceFromFileList,
   loadLocalA1SequenceFromFiles,
+  loadLocalA1SequenceFromDirSource,
+  loadVideoSequence,
   normalizeAnnotationFrame,
   sequenceLabel,
 } from '../smpl_viewer/local_data.js';
@@ -89,7 +91,7 @@ test('file-list loader accepts manually selected json and images', async () => {
   assert.equal(seq.frames[0].frame, 4);
 });
 
-test('separate-file loader accepts json and image selections', async () => {
+test('separate-file loader matches images to frames by index', async () => {
   const json = fakeFile('', JSON.stringify({ records: [validAnnotation({ image_id: 9 })] }), 'player_0.json');
   const images = [
     fakeFile('', 'jpg-2', '000002.jpg'),
@@ -100,7 +102,8 @@ test('separate-file loader accepts json and image selections', async () => {
   const seq = await loadLocalA1SequenceFromFiles(json, images);
   assert.equal(seq.name, 'sequence');
   assert.equal(seq.n_frames, 1);
-  assert.deepEqual(seq.images.map((file) => file.name), ['000001.jpg', '000002.jpg']);
+  // images 与 frames 对齐：单帧 → 取数字序第 0 张（无 file_name 命中，走下标兜底）。
+  assert.deepEqual(seq.images.map((file) => file.name), ['000001.jpg']);
   assert.equal(seq.frames[0].frame, 9);
 });
 
@@ -113,3 +116,135 @@ function fakeFile(path, text, name = path.split('/').at(-1)) {
     },
   };
 }
+
+function fakeDirSource({ json, files = {} }) {
+  const imagePaths = Object.keys(files).filter((p) => /\.(jpe?g|png|bmp)$/i.test(p));
+  return {
+    classification: { imagePaths, dataItemName: 'a1' },
+    async readJson() { return json; },
+    async imageFileByName(name) {
+      const want = name.split('/').pop();
+      const hit = imagePaths.find((p) => p.split('/').pop() === want);
+      return hit ? fakeFile(hit, files[hit]) : null;
+    },
+  };
+}
+
+test('dir-source loader maps each frame by image_id → file_name (order-independent)', async () => {
+  const src = fakeDirSource({
+    json: {
+      images: [{ id: 0, file_name: '000001.jpg' }, { id: 1, file_name: '000002.jpg' }],
+      annotations: [validAnnotation({ image_id: 1 }), validAnnotation({ image_id: 0 })],
+    },
+    files: { 'images/000001.jpg': 'jpg-1', 'images/000002.jpg': 'jpg-2' },
+  });
+
+  const seq = await loadLocalA1SequenceFromDirSource(src);
+  assert.equal(seq.name, 'a1');
+  assert.equal(seq.n_frames, 2);
+  assert.deepEqual(seq.frames.map((f) => f.frame), [1, 0]);
+  assert.deepEqual(seq.images.map((f) => f.name), ['000002.jpg', '000001.jpg']);
+});
+
+test('dir-source loader falls back to numeric order when json lacks file_name', async () => {
+  const src = fakeDirSource({
+    json: { annotations: [validAnnotation({ image_id: 0 }), validAnnotation({ image_id: 1 })] },
+    files: { 'images/000002.jpg': 'jpg-2', 'images/000001.jpg': 'jpg-1' },
+  });
+
+  const seq = await loadLocalA1SequenceFromDirSource(src);
+  assert.deepEqual(seq.images.map((f) => f.name), ['000001.jpg', '000002.jpg']);
+});
+
+test('dir-source loader throws when no image matches the json', async () => {
+  const src = fakeDirSource({
+    json: { annotations: [validAnnotation({ image_id: 0 })] },
+    files: {},
+  });
+
+  await assert.rejects(loadLocalA1SequenceFromDirSource(src), /未找到与 json 匹配的图像/);
+});
+
+test('loaders read real image dims from json images[].width/height', async () => {
+  const json = {
+    images: [{ id: 0, file_name: '000001.jpg', width: 720, height: 1280 }],
+    annotations: [validAnnotation({ image_id: 0 })],
+  };
+  // DirSource 路径
+  const dirSeq = await loadLocalA1SequenceFromDirSource(fakeDirSource({
+    json, files: { 'images/000001.jpg': 'jpg-1' },
+  }));
+  assert.equal(dirSeq.meta.image_w, 720);
+  assert.equal(dirSeq.meta.image_h, 1280);
+  assert.equal(dirSeq.meta.K.cx, 360);   // 主点居中到真实尺寸
+  assert.equal(dirSeq.meta.K.cy, 640);
+
+  // file-list 路径
+  const listSeq = await loadLocalA1SequenceFromFileList([
+    fakeFile('a1/player_0.json', JSON.stringify(json)),
+    fakeFile('a1/images/000001.jpg', 'jpg-1'),
+  ]);
+  assert.equal(listSeq.meta.image_w, 720);
+  assert.equal(listSeq.meta.image_h, 1280);
+});
+
+test('file-list loader accepts arbitrary directory layout (no a1 hardcode)', async () => {
+  // json 不在 json_results/player_0/ 下，图像不在 images/ 下 —— 仍应识别。
+  const seq = await loadLocalA1SequenceFromFileList([
+    fakeFile('mydata/anno/player_0.json', JSON.stringify({
+      annotations: [validAnnotation({ image_id: 0 })],
+    })),
+    fakeFile('mydata/frames/000001.jpg', 'jpg-1'),
+  ]);
+  assert.equal(seq.name, 'mydata');
+  assert.equal(seq.n_frames, 1);
+  assert.equal(seq.images.filter(Boolean).length, 1);
+});
+
+// 视频序列:注入 fake videoSource(只读 width/height/frameCount)+ fake json,断言
+// meta.image_w/h 跟随视频尺寸、n_frames 取 min(标注帧数, 视频帧数)、带 videoSource、
+// images 为 null(走视频纹理分支)。
+function fakeVideoSource({ width, height, frameCount }) {
+  return {
+    width,
+    height,
+    frameCount() { return frameCount; },
+    texture: {},
+  };
+}
+
+test('loadVideoSequence drives dims from video and caps n_frames by annotations', () => {
+  const json = {
+    annotations: [
+      validAnnotation({ image_id: 0 }),
+      validAnnotation({ image_id: 1 }),
+      validAnnotation({ image_id: 2 }),
+    ],
+  };
+  // 视频帧数(100) > 标注帧数(3) → 以标注帧数为准。
+  const vs = fakeVideoSource({ width: 720, height: 1280, frameCount: 100 });
+  const seq = loadVideoSequence(vs, json, { name: 'clip.mp4' });
+
+  assert.equal(seq.name, 'clip.mp4');
+  assert.equal(seq.n_frames, 3);
+  assert.equal(seq.meta.image_w, 720);
+  assert.equal(seq.meta.image_h, 1280);
+  assert.equal(seq.meta.K.cx, 360);   // 主点居中到视频尺寸
+  assert.equal(seq.meta.K.cy, 640);
+  assert.equal(seq.images, null);
+  assert.equal(seq.videoSource, vs);
+  assert.equal(seq.frames.length, 3);
+});
+
+test('loadVideoSequence caps n_frames by video when video is shorter', () => {
+  const json = {
+    annotations: Array.from({ length: 10 }, (_, i) => validAnnotation({ image_id: i })),
+  };
+  // 视频帧数(4) < 标注帧数(10) → 取 4。
+  const vs = fakeVideoSource({ width: 1920, height: 1080, frameCount: 4 });
+  const seq = loadVideoSequence(vs, json);
+  assert.equal(seq.n_frames, 4);
+  assert.equal(seq.frames.length, 4);
+  assert.equal(seq.meta.image_w, 1920);
+  assert.equal(seq.meta.image_h, 1080);
+});

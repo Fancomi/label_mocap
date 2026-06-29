@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { computeWindow, zoomAtSolve, imageToCanvasNorm, canvasNormToImage, clampPan } from '../src/scene/view_zoom.js';
+import { computeWindow, zoomAtSolve, imageToCanvasNorm, canvasNormToImage, clampPan } from '../view_zoom.js';
 
 const K = { imageW: 1920, imageH: 1080, cx: 960, cy: 540 };
 const close = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} != ${b}`);

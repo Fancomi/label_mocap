@@ -12,7 +12,7 @@ import { RootHandle } from '../../smpl_edit/root_handle.js';
 import { PoseGizmo } from '../../smpl_edit/pose_gizmo.js';
 import { installIK } from '../../smpl_edit/ik_plugin.js';
 import { PcdScene } from './scene/pcd_scene.js';
-import { OrbitCam } from './scene/orbit_cam.js';
+import { OrbitCam } from '../../smpl_render/orbit_cam.js';
 import { PcdPanels } from './ui/pcd_panels.js';
 import { decodeXYZ } from './scene/point_cloud_decode.js';
 import { decodePngFile } from './io/png_pixels.js';
@@ -20,7 +20,7 @@ import { PcdDirSource, FileListSource, fsAccessSupported, pickDirectory } from '
 import { FRONT_OPTIONS, viewFrame, axisName } from '../../smpl_edit/view_frame.js';
 import { Viewport } from '../../smpl_edit/viewport.js';
 import { ViewportManager } from '../../smpl_edit/viewport_manager.js';
-import { bodyBounds } from '../../smpl_edit/framing.js';
+import { bodyBounds, centerDelta } from '../../smpl_edit/framing.js';
 import { jsonOpenSupported, pickJsonFile } from '../../label/src/io/dir_source.js';
 import { isCocoDoc } from '../../label/src/io/anno_validate.js';
 
@@ -43,6 +43,8 @@ let playing = false, fps = 10, lastTick = 0, acc = 0;
 let axisUp = 'Z', axisFront = 'X';
 const AXIS_TO_IDX = { X: 0, Y: 1, Z: 2 };
 let lastDecoded = null;
+let lockPerson = false;   // 「视野锁定人物」开关：开启后切帧刚性跟随人体位移（见 followLockedPerson）
+let lockCenter = null;    // 跟随基准：上次人体中心（图像系）；null=尚无基准
 
 async function loadModelWithProgress() {
   const box = $('loading'), bar = $('loading-bar'), txt = $('loading-text');
@@ -74,13 +76,17 @@ function applyAnnotation() {
 async function renderPointCloud(i) {
   const file = await source.frameFile(i);
   const { pixels, channels } = await decodePngFile(file);
-  lastDecoded = decodeXYZ(pixels, {
+  return decodeXYZ(pixels, {
     pointWidth: manifest.pointWidth, pointHeight: manifest.pointHeight,
     scale: manifest.scale, center: manifest.center, channels,
   });
-  // 点云存原始数据系坐标,不旋转。高度配色取「上轴」分量。
-  scene.pointCloud.setHeightAxis(AXIS_TO_IDX[axisUp]);
-  scene.pointCloud.setData(lastDecoded);
+}
+
+// 把已解码点云写入场景（同步）。与 mesh 写入同一同步块调用，保证两者同帧渲染。
+function commitPointCloud(decoded) {
+  lastDecoded = decoded;
+  scene.pointCloud.setHeightAxis(AXIS_TO_IDX[axisUp]); // 高度配色取「上轴」分量
+  scene.pointCloud.setData(decoded);
 }
 
 // 三视口统一取景源:有人体用人体包围,无人体用点云包围。开新数据与 R 共用,保证一致。
@@ -133,6 +139,11 @@ async function showFrame(i) {
   $('slider').value = String(i);
   $('frame-info').textContent = `${i + 1} / ${store.frameCount()}`; // 1-based 显示;内部仍 0-based(对齐不变)
   const a = store.current();
+  // 先把点云解码完(async)，再与 mesh 写入同一同步块——两者下一帧 rAF 一起出现，消除“一快一慢”。
+  let decoded = null;
+  try { decoded = await renderPointCloud(i); }
+  catch (e) { setStatus(`点云解码失败: ${e}`); }
+  // 同步提交：mesh + 点云一起写，确保同帧渲染。
   if (a) {
     rotation = RotationState.fromAxisAngle({ root_rota: a.root_rota, body_pose: a.body_pose });
     applyAnnotation();
@@ -142,10 +153,31 @@ async function showFrame(i) {
     scene.setPersonVisible(false);
     if (panels) panels.syncFromState();
   }
+  if (decoded) commitPointCloud(decoded);
   renderAnnoActions();
-  try { await renderPointCloud(i); }
-  catch (e) { setStatus(`点云解码失败: ${e}`); }
+  followLockedPerson();   // 视野锁定人物：刚性跟随本帧人体位移（保持距离/朝向/相对位置）
   if (syncUI) syncUI();
+}
+
+// 视野锁定人物：以人体中心帧间位移刚性平移三视口（相机+target 同步加 delta）。
+// 距离/朝向/缩放/相对位置全保持，不解锁用户操作。过渡规则：
+//   有→无：本帧无人 → 不更新基准、相机不动（延续最后位置）；
+//   无→有：首次出现只立基准、不跳，下一帧起跟随。
+function followLockedPerson() {
+  if (!lockPerson) return;
+  const cur = bodyBounds(lastJoints)?.center ?? null;
+  if (!cur) return;                                   // 本帧无人：保持不动
+  const delta = centerDelta(lockCenter, cur);         // 无基准(无→有首帧)→零位移
+  if (delta[0] || delta[1] || delta[2]) {
+    for (const n of ['main', 'side', 'front']) mgr.viewport(n)?.translateBy(delta);
+  }
+  lockCenter = cur;
+}
+
+// 统一 focus 入口：三视口各自 focus 到 center（保持朝向、按 radius 调距离）。F 键用。
+function focusViewports(center, radius) {
+  if (!center) return;
+  for (const n of ['main', 'side', 'front']) mgr.viewport(n)?.focus(center, radius);
 }
 
 async function mountSequence() {
@@ -244,6 +276,13 @@ function boot() {
   $('btn-prev').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.max(0, store.currentFrame() - 1)); });
   $('btn-next').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.min(store.frameCount() - 1, store.currentFrame() + 1)); });
   $('btn-play').addEventListener('click', () => { if (store) setPlaying(!playing); });
+  // 视野锁定人物：开启即以当前人体中心为基准（不动相机），之后切帧刚性跟随位移。
+  $('btn-lock-person').addEventListener('click', () => {
+    lockPerson = !lockPerson;
+    $('btn-lock-person').classList.toggle('on', lockPerson);
+    lockCenter = lockPerson ? (bodyBounds(lastJoints)?.center ?? null) : null;
+    setStatus(lockPerson ? '已锁定视野：切帧跟随人物，保持距离/方向/相对位置' : '已取消视野锁定');
+  });
   $('speed').addEventListener('input', (e) => { fps = +e.target.value; $('speed-val').textContent = `${fps} fps`; });
   $('btn-undo').addEventListener('click', () => { if (store) { store.undo(); showFrame(store.currentFrame()); } });
   window.addEventListener('keydown', (e) => { if (store && (e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); store.undo(); showFrame(store.currentFrame()); } });
@@ -374,14 +413,15 @@ function boot2() {
 
   window.addEventListener('keydown', (e) => {
     if (!store || e.target.matches('input,select,textarea')) return;
-    if (dragGuards.some((g) => g.isDragging()) || playing) return;
-    const vp = mgr.activeViewport(); if (!vp) return;
+    if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); setPlaying(!playing); return; } // 空格随时暂停/播放
+    if (dragGuards.some((g) => g.isDragging())) return;  // 仅拖拽中不抢键；播放中允许 F/R
     const b = viewBounds();
     if (e.key === 'f' || e.key === 'F') {
       if (!b) { setStatus('无人体/点云可聚焦'); return; }
-      vp.focus(b.center, b.radius);
+      focusViewports(b.center, b.radius);   // F 聚焦三视口（统一入口）
     } else if (e.key === 'r' || e.key === 'R') {
       // R 重置当前视口朝向+距离,走与「开新数据」同一取景源(viewBounds)。
+      const vp = mgr.activeViewport(); if (!vp) return;
       vp.resetOrientation(b ? b.center : undefined, b ? b.radius : undefined);
     }
   });

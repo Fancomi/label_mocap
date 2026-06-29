@@ -13,7 +13,7 @@ import { computeOcclusion } from './edit/occlusion_raycast.js';
 import { RotationState } from '../../smpl_edit/rotation_state.js';
 import { UIController } from '../../smpl_edit/ui_controller.js';
 import { JointPicker } from '../../smpl_edit/joint_picker.js';
-import { CameraModes } from './scene/camera_modes.js';
+import { CameraModes } from '../../smpl_render/camera_modes.js';
 import { LabelScene } from './scene/scene.js';
 import { Panels } from './ui/panels.js';
 import { RootHandle } from '../../smpl_edit/root_handle.js';
@@ -113,6 +113,15 @@ function syncHandleScale() {
   const s = (cam && cam.mode === '2d') ? 1 / Math.max(1e-3, cam.getZoom()) : 1;
   poseGizmo?.setHandleScale(s);
   rootHandle?.setHandleScale(s);
+}
+
+// 切 2D/3D 后重排画布:3D 用 fill(填满容器)、2D 用 letterbox(图像比例),由
+// scene.resize() 经 intendedMode() 分派。不重排则 canvas 仍是上一模式尺寸 →
+// 3D 视野被旧画布框死(与 viewer 模式切换 resize 对齐)。随后刷新 bbox/手柄。
+function onModeSwitched() {
+  scene.resize();
+  if (bboxOverlay) bboxOverlay.render(store?.current()?.bbox ?? null);
+  syncHandleScale();
 }
 
 function setPlaying(on) {
@@ -394,7 +403,6 @@ async function saveJson() {
   URL.revokeObjectURL(url);
   if (!dirSource) setStatus('⚠ 当前浏览器不支持原地保存,已下载 player_0.json — 请手动覆盖回数据目录(原地保存请用 Chrome/Edge)');
 }
-}
 
 // 手动加载标注 JSON：覆盖内存的标注，保存仍写回已打开目录的标准 json。
 // 需先打开数据（store 存在）；保留当前帧。
@@ -491,8 +499,8 @@ function boot() {
     e.target.value = '';
   });
   $('dir-input').addEventListener('change', (e) => openFiles(e.target.files).catch(onLoadError));
-  $('btn-2d').addEventListener('click', () => { if (dragGuards.some((g) => g.isDragging())) return; cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); refreshTabAvailability(); if (syncUI) syncUI(); });
-  $('btn-3d').addEventListener('click', () => { if (dragGuards.some((g) => g.isDragging())) return; cam.switchTo('3d'); $('btn-3d').classList.add('on'); $('btn-2d').classList.remove('on'); leave2dOnlyModeIfNeeded(); refreshTabAvailability(); if (syncUI) syncUI(); });
+  $('btn-2d').addEventListener('click', () => { if (dragGuards.some((g) => g.isDragging())) return; cam.switchTo('2d'); $('btn-2d').classList.add('on'); $('btn-3d').classList.remove('on'); onModeSwitched(); refreshTabAvailability(); if (syncUI) syncUI(); });
+  $('btn-3d').addEventListener('click', () => { if (dragGuards.some((g) => g.isDragging())) return; cam.switchTo('3d'); $('btn-3d').classList.add('on'); $('btn-2d').classList.remove('on'); leave2dOnlyModeIfNeeded(); onModeSwitched(); refreshTabAvailability(); if (syncUI) syncUI(); });
   $('slider').addEventListener('input', (e) => { if (!store) return; setPlaying(false); showFrame(+e.target.value); });
   $('btn-prev').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.max(0, store.currentFrame() - 1)); });
   $('btn-next').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.min(store.frameCount() - 1, store.currentFrame() + 1)); });
@@ -501,6 +509,11 @@ function boot() {
 
   $('btn-undo').addEventListener('click', () => { if (store) { store.undo(); showFrame(store.currentFrame()); } });
   window.addEventListener('keydown', (e) => { if (store && !isBusy() && (e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); store.undo(); showFrame(store.currentFrame()); } });
+  // 空格随时暂停/播放（输入框内不拦）。播放中其他按键照常可用（F 等不受 playing 影响）。
+  window.addEventListener('keydown', (e) => {
+    if (!store || e.target.matches('input,select,textarea')) return;
+    if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); setPlaying(!playing); }
+  });
   window.addEventListener('keydown', (e) => {
     if (!store || isBusy() || e.target.matches('input,select,textarea')) return;
     if (e.key !== 'f' && e.key !== 'F') return;
@@ -731,7 +744,9 @@ function boot() {
   let wheelTimer = null;
   $('c').addEventListener('wheel', (e) => {
     if (!cam || cam.mode !== '2d') return;
-    const depthMod = e.metaKey || e.ctrlKey;
+    // Z 深度统一用 Alt+滚轮(跨平台一致)。双指张合/滚轮(mac 带 ctrl/meta、win 纯 deltaY)
+    // 一律走画面缩放,不再被 ctrl/meta 误判为深度调节。
+    const depthMod = e.altKey;
     const unit = e.deltaMode === 1 ? 16 : (e.deltaMode === 2 ? 400 : 1);
     const dy = e.deltaY * unit;
 
@@ -750,7 +765,7 @@ function boot() {
       return;
     }
 
-    // depthMod 分支:2D 下用户已按修饰键,先 preventDefault 吞掉浏览器整页缩放,
+    // depthMod 分支:2D 下用户已按 Alt,先 preventDefault 吞掉浏览器默认行为,
     // 再判是否满足 root 深度调节条件;不满足则 return(但已阻止默认缩放)。
     e.preventDefault();
     if (!store || !store.current() || ui?.readOnly) return;

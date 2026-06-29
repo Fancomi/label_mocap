@@ -62,6 +62,12 @@
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
   #frame-info { font-size:10px; color:#666; text-align:right; }
+  .menu-anchor { position:relative; }
+  #open-menu { position:absolute; top:100%; left:0; right:0; z-index:20; margin-top:4px;
+    display:flex; flex-direction:column; gap:4px; padding:5px;
+    background:#262b33; border:1px solid #3a4150; border-radius:6px;
+    box-shadow:0 6px 18px rgba(0,0,0,.5); }
+  #open-menu[hidden] { display:none; }
 </style>
 </head>
 <body>
@@ -75,11 +81,16 @@
 
   <div class="g">
     <label>序列</label>
-    <button id="btn-open-local">选择本地 a1 目录</button>
+    <div class="menu-anchor">
+      <button id="btn-open" style="width:100%">📂 选择数据 ▾</button>
+      <div id="open-menu" hidden>
+        <button id="open-dir">📁 图像/标注目录</button>
+        <button id="open-video">🎬 视频文件</button>
+      </div>
+    </div>
     <input id="local-dir-input" type="file" webkitdirectory directory multiple hidden>
     <input id="local-json-input" type="file" accept=".json,application/json" hidden>
-    <input id="local-images-input" type="file" accept="image/jpeg" multiple hidden>
-    <select id="seq-select"></select>
+    <input id="local-images-input" type="file" accept="image/*" multiple hidden>
   </div>
 
   <div class="g">

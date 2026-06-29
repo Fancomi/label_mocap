@@ -53,3 +53,11 @@ export function placeFromBearing(bearing, center) {
     target: center.slice(),
   };
 }
+
+// 刚性跟随位移:从 prev 中心到 cur 中心的平移量。prev 为 null(无基准)返回零位移
+// (无→有人首帧只立基准、不跳)。供「视野锁定人物」逐帧叠加到相机+target。
+export function centerDelta(prev, cur) {
+  if (!prev || !cur) return [0, 0, 0];
+  return [cur[0]-prev[0], cur[1]-prev[1], cur[2]-prev[2]];
+}
+

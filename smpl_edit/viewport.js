@@ -79,6 +79,14 @@ export class Viewport {
     this.controls.update();
   }
 
+  // 刚性跟随:相机与 target 同步平移 [dx,dy,dz](图像系)。距离/朝向/缩放/相对位置全不变,
+  // 不解锁用户已有的缩放旋转平移(纯叠加位移)。锁定人物跟随用。
+  translateBy([dx, dy, dz]) {
+    this.camera.position.set(this.camera.position.x + dx, this.camera.position.y + dy, this.camera.position.z + dz);
+    this.controls.target.set(this.controls.target.x + dx, this.controls.target.y + dy, this.controls.target.z + dz);
+    this.controls.update();
+  }
+
   // 正交相机:按半径与当前像素宽高比设 frustum,使人体充满不变形。
   _fitOrtho(radius) {
     const m = radius * 1.2;

@@ -56,9 +56,10 @@
     <div class="hint">框与关键点为同一人的两个独立属性，可只标其一。Chrome/Edge 可原地保存写回目录；其他浏览器仅下载。</div>
     <div class="card">
       <h3>帧</h3>
-      <div class="row"><button id="prev">◀ 上一帧</button><button id="next">下一帧 ▶</button></div>
+      <div class="row"><button id="prev">◀ 上一帧</button><button id="play">▶ 播放</button><button id="next">下一帧 ▶</button></div>
       <input id="frame-slider" type="range" min="0" max="0" value="0">
       <div id="frame-label" class="status">— / —</div>
+      <div class="row small" style="align-items:center;gap:6px"><span style="color:#9ab">速度</span><input id="speed" type="range" min="1" max="30" value="10" style="flex:1"><span id="speed-val" style="color:#9ab">10 fps</span></div>
       <button id="copy-prev">⎘ 复制上一帧<span class="keycap">C</span></button>
     </div>
     <div class="card">
@@ -67,7 +68,7 @@
       <button id="export" class="btn-sub">⬇ 导出训练集<small>生成 YOLO-pose，仅供训练</small></button>
       <label class="inline">val 比例 <input id="val-ratio" type="number" min="0" max="0.5" step="0.1" value="0" style="width:60px"></label>
     </div>
-    <div class="card"><div class="hint">N 新建人 · C 复制上一帧 · Del 删关键点 · Shift+Del 删人 · Tab 切人 · K/B 点/框 · F 聚焦 · R 重置 · Z 撤销 · S 保存</div></div>
+    <div class="card"><div class="hint">空格 播放/暂停 · N 新建人 · C 复制上一帧 · Del 删关键点 · Shift+Del 删人 · Tab 切人 · K/B 点/框 · F 聚焦 · R 重置 · Z 撤销 · S 保存</div></div>
   </div>
 
   <div id="stage">

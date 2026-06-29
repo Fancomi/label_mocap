@@ -1,7 +1,9 @@
 // label_mocap/smpl_viewer/viewer.js
 import * as THREE from 'three';
-import { CameraModes } from './camera_modes.js';
-import { loadLocalA1SequenceFromFileList, loadLocalA1SequenceFromFiles, sequenceLabel } from './local_data.js';
+import { createRenderer, applyContainerResize, CameraModes, withDataRotation } from '../smpl_render/index.js';
+import { loadLocalA1SequenceFromFileList, loadLocalA1SequenceFromFiles, loadLocalA1SequenceFromDirSource, loadVideoSequence } from './local_data.js';
+import { fsAccessSupported, DirSource, videoOpenSupported, pickVideoFile, jsonOpenSupported, pickJsonFile } from '../label/src/io/dir_source.js';
+import { VideoSource } from '../label/src/io/video_source.js';
 import { loadModel } from '../smpl_core/smpl_model.js';
 
 // Shared schema with kps3d_viewer.html
@@ -26,8 +28,6 @@ const ANGLES = [
 
 const params = new URLSearchParams(location.search);
 const validate = params.get('validate') === '1';
-const validateSeq = params.get('seq');
-const validateFrame = parseInt(params.get('frame') || '0', 10);
 
 const $ = id => document.getElementById(id);
 const status = $('status');
@@ -35,15 +35,7 @@ function setStatus(t) { status.textContent = t; }
 const smplModelUrl = new URL('../smpl_web_viewer/public/models/smpl_neutral.meta.json', import.meta.url);
 
 // ── Three.js skeleton ─────────────────────────────────────────────────────
-const renderer = new THREE.WebGLRenderer({
-  canvas: $('c'), antialias: true, preserveDrawingBuffer: true,
-});
-// devicePixelRatio so the rendered texture isn't blurry on HiDPI displays
-// (was setPixelRatio(1) → upscaled blur on retina). Capped at 2 to keep
-// fragment-shader cost sane.
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-renderer.setClearColor(0x0f1216, 1);
-renderer.outputColorSpace = THREE.SRGBColorSpace;
+const renderer = createRenderer({ canvas: $('c') });
 const scene = new THREE.Scene();
 
 // Lighting — hemisphere + key directional. Cheap, looks decent on white skin.
@@ -206,12 +198,6 @@ function forwardFrame(frame) {
   });
 }
 
-async function loadSeqList() {
-  const sel = $('seq-select');
-  sel.innerHTML = '';
-  return [];
-}
-
 async function selectSeq(seqOrId) {
   // Stop the play loop and bump epoch — any in-flight setFrame from prior
   // sequence will see a stale epoch and bail before mutating scene state.
@@ -240,6 +226,12 @@ async function selectSeq(seqOrId) {
   if (bgFar) { scene.remove(bgFar); bgFar.geometry.dispose(); bgFar.material.dispose(); bgFar = null; }
   if (bgTex) { bgTex.dispose(); bgTex = null; }
   if (cam) { cam.controls.dispose(); cam = null; }
+  // 释放上一个序列的 VideoSource(纹理+<video>+objectURL),避免泄漏。新序列若也带
+  // videoSource,经下面 spread 进 curSeq;不要把它和 bgTex 混淆——bgTex 在视频分支
+  // 不持有 VideoTexture(见 applyFrame),故上面 bgTex.dispose() 不会误删视频纹理。
+  if (curSeq?.videoSource && curSeq.videoSource !== localSeq.videoSource) {
+    curSeq.videoSource.dispose();
+  }
   frameCache.clear();
 
   curSeq = { ...localSeq, meta, faces };
@@ -251,10 +243,12 @@ async function selectSeq(seqOrId) {
   $('frame-info').textContent = `0 / ${curN - 1}`;
 
   ensureGridAxes();
-  cam = new CameraModes({ canvas: renderer.domElement, meta });
+  cam = withDataRotation(new CameraModes({ canvas: renderer.domElement, meta }));
+  cam._followLiveTarget = true;  // 保 viewer 原本的 3D 逐帧跟随手感(同步 controls.target)。
+  // 学习本序列真实图像尺寸：主点居中到 W/2,H/2(否则按写死的 1920×1080 主点落错像素
+  // → 人体偏左上、偏小)。焦距保留工厂默认,用户可在内参面板微调。
+  cam.configureForImage({ width: meta.image_w, height: meta.image_h });
   syncIntrinsicsPanel();
-  // CSS aspect-ratio drives canvas size; resize() reads back the resulting
-  // pixel dims and informs camera.aspect. Called after `cam` exists.
   resize();
 
   // Two image planes share one texture. Far plane (z=-50) is the 2D-aligned
@@ -328,12 +322,36 @@ async function selectSeq(seqOrId) {
   // 用户偏好: 切换序列后立即跳到 2D 对齐, 让数据切换可视化.
   cam.snapTo('2d');
   applyMode('2d');
+  resize();   // 关键: snapTo('2d') 后按 2D letterbox 策略重排 buffer+aspect,
+              // 否则 buffer 仍是构造时 3D/fill 的容器全尺寸 → 与 2D 图像 aspect 错配,
+              // 纵向数据缩放时被非等比拉伸(与 label app.js snapTo→resize 对齐)。
   setStatus(`${seqId} ready (${curN} frames) · 2D`);
 }
 
 async function loadFrame(i) {
   // Returns {verts, joints, root, tex} — fetched in parallel, cached.
   // Caller must handle epoch/staleness; this is a pure data fetch.
+  //
+  // 视频分支:不进 frameCache(每次 seek 复用同一个共享 VideoTexture,缓存无意义且
+  // 会让多个 frame 缓存项指向同一纹理 → selectSeq 清理时混淆生命周期)。图像分支
+  // 才走 createObjectURL+TextureLoader 的 per-frame 纹理 + 缓存复用。
+  if (curSeq.videoSource) {
+    const myEpoch = seqEpoch;
+    const frame = curSeq.frames[i];
+    const [smplOut] = await Promise.all([
+      forwardFrame(frame),
+      curSeq.videoSource.seek(i),   // seek 完成后 texture.needsUpdate=true
+    ]);
+    if (myEpoch !== seqEpoch) throw new Error('stale-epoch');
+    return {
+      verts: smplOut.verts,
+      joints: smplOut.joints,
+      rootPos: new Float32Array(frame.root_pos),
+      rootRota: new Float32Array(frame.root_rota),
+      tex: curSeq.videoSource.texture,   // 共享 VideoTexture,不缓存、不 dispose
+      isVideo: true,
+    };
+  }
   if (frameCache.has(i)) return frameCache.get(i);
   const myEpoch = seqEpoch;
 
@@ -424,7 +442,10 @@ async function applyFrame(i) {
   bgNear.material.needsUpdate = true;
   bgFar.material.map = f.tex;
   bgFar.material.needsUpdate = true;
-  bgTex = f.tex;
+  // bgTex 只追踪图像 per-frame 纹理(供下次 selectSeq dispose)。视频分支的纹理是
+  // VideoSource 持有的共享 VideoTexture,生命周期归 videoSource.dispose(),绝不让
+  // bgTex 指向它,否则 selectSeq 的 bgTex.dispose() 会误删正在用的视频纹理。
+  bgTex = f.isVideo ? null : f.tex;
 
   // SMPL root pos/rota — also rotated about camera -Z, then displayed.
   const [rpx, rpy] = rot(f.rootPos[0], f.rootPos[1]);
@@ -558,45 +579,46 @@ $('btn-k-reset').addEventListener('click', () => {
 });
 
 // ── UI wiring ──────────────────────────────────────────────────────────────
-$('seq-select').addEventListener('change', e => selectSeq(e.target.value));
-async function openLocalFileList(fileList) {
+
+// 加载好的序列直接渲染（viewer 单序列，无需序列下拉）。
+async function mountSeq(seq) {
+  await selectSeq(seq);
+}
+
+// 统一加载封装：跑 loader 拿 seq → mountSeq，捕获取消/错误。
+async function runLoad(status, loader) {
   try {
-    setStatus('loading local a1 directory…');
-    const seq = await loadLocalA1SequenceFromFileList(fileList);
-    const sel = $('seq-select');
-    sel.innerHTML = '';
-    const opt = document.createElement('option');
-    opt.value = `${seq.src}/${seq.name}`;
-    opt.textContent = sequenceLabel(seq);
-    sel.appendChild(opt);
-    sel.value = opt.value;
-    await selectSeq(seq);
+    setStatus(status);
+    await mountSeq(await loader());
   } catch (err) {
+    if (err?.name === 'AbortError') return;   // 用户取消选择，静默
     setStatus(err instanceof Error ? err.message : String(err));
   }
 }
 
-async function openFallbackFiles() {
-  try {
-    setStatus('loading selected json and images…');
-    const seq = await loadLocalA1SequenceFromFiles(fallbackJsonFile, fallbackImageFiles);
-    const sel = $('seq-select');
-    sel.innerHTML = '';
-    const opt = document.createElement('option');
-    opt.value = `${seq.src}/${seq.name}`;
-    opt.textContent = sequenceLabel(seq);
-    sel.appendChild(opt);
-    sel.value = opt.value;
-    await selectSeq(seq);
-  } catch (err) {
-    setStatus(err instanceof Error ? err.message : String(err));
-  }
+// File System Access：选文件夹后自动检测 player_0.json + 图像（无需手选 json）。
+// 用只读 showDirectoryPicker（viewer 不写盘），避免 label pickDirectory 的写权限弹窗。
+function openLocalDirSource() {
+  return runLoad('loading directory…', async () => {
+    const handle = await window.showDirectoryPicker();
+    const dirSource = new DirSource(handle);
+    await dirSource.scan();
+    return loadLocalA1SequenceFromDirSource(dirSource);
+  });
+}
+function openLocalFileList(fileList) {
+  return runLoad('loading directory…', () => loadLocalA1SequenceFromFileList(fileList));
+}
+function openFallbackFiles() {
+  return runLoad('loading selected json and images…',
+    () => loadLocalA1SequenceFromFiles(fallbackJsonFile, fallbackImageFiles));
 }
 
-$('btn-open-local').addEventListener('click', () => {
+// 选目录 → DirSource/webkitdirectory 分发；不支持目录选择时退回手选 json+图像。
+function openLocalData() {
+  if (fsAccessSupported()) { openLocalDirSource(); return; }
   const dirInput = $('local-dir-input');
-  const supportsDirectoryInput = 'webkitdirectory' in dirInput || 'directory' in dirInput;
-  if (supportsDirectoryInput) {
+  if ('webkitdirectory' in dirInput || 'directory' in dirInput) {
     dirInput.value = '';
     dirInput.click();
     return;
@@ -606,6 +628,43 @@ $('btn-open-local').addEventListener('click', () => {
   $('local-json-input').value = '';
   $('local-images-input').value = '';
   $('local-json-input').click();
+}
+
+// 视频加载(方案 A)：选视频 File + 一份 SMPL 标注 JSON → 视频逐帧作背景。
+// 只读查看器，与 label openVideoData 语义一致(视频+标注)。需 showOpenFilePicker
+// (Chrome/Edge)；不支持则提示。VideoSource.ready() 后才知 width/height/frameCount。
+function openVideoData() {
+  return runLoad('请选择视频文件…', async () => {
+    const videoFile = await pickVideoFile();
+    setStatus('请选择该视频对应的 SMPL 标注 JSON…');
+    const jsonFile = await pickJsonFile();
+    const jsonRaw = JSON.parse(await jsonFile.text());
+    const videoSource = await new VideoSource(videoFile, { fps }).ready();
+    return loadVideoSequence(videoSource, jsonRaw, { name: videoFile.name });
+  });
+}
+
+// 「📂 选择数据 ▾」下拉菜单：不支持 FSA 时直接退回目录 input；否则切显隐。外点/Esc 关闭。
+$('btn-open').addEventListener('click', (e) => {
+  if (!fsAccessSupported()) { openLocalData(); return; }
+  e.stopPropagation();
+  const m = $('open-menu'); m.hidden = !m.hidden;
+});
+document.addEventListener('click', (e) => {
+  const m = $('open-menu');
+  if (m && !m.hidden && !e.target.closest('.menu-anchor')) m.hidden = true;
+});
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') $('open-menu').hidden = true;
+});
+$('open-dir').addEventListener('click', () => { $('open-menu').hidden = true; openLocalData(); });
+$('open-video').addEventListener('click', () => {
+  $('open-menu').hidden = true;
+  if (!videoOpenSupported() || !jsonOpenSupported()) {
+    setStatus('当前浏览器不支持打开视频文件,请用 Chrome/Edge');
+    return;
+  }
+  openVideoData();
 });
 $('local-dir-input').addEventListener('change', e => {
   openLocalFileList(e.target.files);
@@ -620,8 +679,8 @@ $('local-images-input').addEventListener('change', e => {
   fallbackImageFiles = Array.from(e.target.files ?? []);
   openFallbackFiles();
 });
-$('btn-mode-3d').addEventListener('click', () => { cam.switchTo('3d'); applyMode('3d'); });
-$('btn-mode-2d').addEventListener('click', () => { cam.switchTo('2d'); applyMode('2d'); });
+$('btn-mode-3d').addEventListener('click', () => { cam.switchTo('3d'); applyMode('3d'); resize(); });
+$('btn-mode-2d').addEventListener('click', () => { cam.switchTo('2d'); applyMode('2d'); resize(); });
 $('btn-play').addEventListener('click', () => {
   playing = !playing;
   $('btn-play').textContent = playing ? '⏸ 暂停' : '▶ 播放';
@@ -646,6 +705,44 @@ function rotateData(delta) {
 $('btn-rot-ccw').addEventListener('click', () => rotateData(-1));
 $('btn-rot-cw').addEventListener('click', () => rotateData(+1));
 $('btn-rot-reset').addEventListener('click', () => rotateData(-dataRotCw));
+
+// ── 2D 缩放/平移 ────────────────────────────────────────────────────────────
+// 照搬 label 的 2D viewOffset 假缩放：只改相机子窗口，不动内外参/数据/几何。
+// viewer 无标注/手柄/root 深度 → 纯缩放纯平移，不带 label 的 Cmd 修饰键与手柄分支。
+// 3D 模式不拦截滚轮(留给 OrbitControls dolly)；2D 时 OrbitControls 已 disabled。
+$('c').addEventListener('wheel', (e) => {
+  if (!cam || cam.intendedMode() !== '2d') return;
+  const rect = $('c').getBoundingClientRect();
+  const u = (e.clientX - rect.left) / rect.width;
+  const v = (e.clientY - rect.top) / rect.height;
+  if (u < 0 || u > 1 || v < 0 || v > 1) return;  // letterbox 黑边 → 放行页面滚动
+  e.preventDefault();
+  const unit = e.deltaMode === 1 ? 16 : (e.deltaMode === 2 ? 400 : 1);
+  const dy = e.deltaY * unit;
+  cam.zoomAt(u, v, Math.exp(-dy * 0.0015));   // 上滚放大、下滚缩小
+}, { passive: false });
+
+// 2D 空白拖拽 = 平移视图。阈值 >4px 后才捕获并平移(纯点击不抖)。
+let panStart = null, panning = false;
+$('c').addEventListener('pointerdown', (e) => {
+  if (!cam || cam.intendedMode() !== '2d') { panStart = null; return; }
+  panStart = { x: e.clientX, y: e.clientY, id: e.pointerId }; panning = false;
+});
+$('c').addEventListener('pointermove', (e) => {
+  if (!panStart) return;
+  const rect = $('c').getBoundingClientRect();
+  if (!panning && Math.hypot(e.clientX - panStart.x, e.clientY - panStart.y) > 4) {
+    panning = true; $('c').setPointerCapture(panStart.id);
+  }
+  if (!panning) return;
+  const du = (e.clientX - panStart.x) / rect.width;
+  const dv = (e.clientY - panStart.y) / rect.height;
+  panStart.x = e.clientX; panStart.y = e.clientY;
+  cam.panByCanvas(du, dv);
+});
+const endPan = (e) => { if (panning) { try { $('c').releasePointerCapture(e.pointerId); } catch (_) {} } panStart = null; panning = false; };
+$('c').addEventListener('pointerup', endPan);
+$('c').addEventListener('pointercancel', endPan);
 
 // Grid range/step inputs
 function rebuildGrid() {
@@ -685,30 +782,17 @@ flagBtns.forEach(([id, key]) => {
 window.addEventListener('resize', resize);
 function resize() {
   if (!cam) return;
-  const containerEl = renderer.domElement.parentElement;
-  const cw = containerEl.clientWidth, ch = containerEl.clientHeight;
-  if (cw <= 0 || ch <= 0) return;
-
-  // Compute the largest WxH that fits inside the container while matching
-  // the rotated image aspect. Pure pixel math, no CSS aspect-ratio.
-  const targetAspect = cam.effectiveAspect();
-  const containerAspect = cw / ch;
-  let w, h;
-  if (containerAspect > targetAspect) {
-    // container wider than image → fit height, leave horizontal bars
-    h = ch;
-    w = Math.round(h * targetAspect);
-  } else {
-    // container taller than image → fit width, leave vertical bars
-    w = cw;
-    h = Math.round(w / targetAspect);
-  }
-  // Set canvas CSS pixel size; centering done by absolute + translate(-50%).
-  renderer.domElement.style.width = w + 'px';
-  renderer.domElement.style.height = h + 'px';
-  renderer.setSize(w, h, false);     // backing buffer matches CSS × DPR
-  cam.camera.aspect = w / h;
-  cam.camera.updateProjectionMatrix();
+  // 切到 smpl_render 的 applyContainerResize：拆分 backing buffer 与相机 aspect。
+  // 2D 对齐 → letterbox(图像比例)，底图无变形；3D 自由 → fill(容器比例)，视野
+  // 跟随窗口不被裁(这修了原 resize 里 3D 也按图像比例 letterbox 的视野 bug)。
+  applyContainerResize({
+    renderer,
+    camera: cam.camera,
+    canvas: renderer.domElement,
+    container: renderer.domElement.parentElement,
+    imageAspect: cam.effectiveAspect(),
+    effectiveMode: cam.intendedMode(),
+  });
 }
 
 function renderFrame() {
@@ -748,13 +832,11 @@ async function tick(ts) {
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 (async function () {
-  const seqs = await loadSeqList();
   resize();
   if (validate) {
     setStatus('validate mode requires selecting a local directory in the browser');
     return;
   }
-  if (seqs.length > 0) await selectSeq(seqs[0].src + '/' + seqs[0].name);
-  else setStatus('请选择本地 a1 目录开始');
+  setStatus('请点击「选择数据」开始');
   requestAnimationFrame(ts => { lastTickTs = ts; tick(ts); });
 })();

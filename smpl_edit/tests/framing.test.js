@@ -1,7 +1,7 @@
 // smpl_edit/tests/framing.test.js
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { bodyBounds, focusPlacement, relativeBearing, placeFromBearing } from '../framing.js';
+import { bodyBounds, focusPlacement, relativeBearing, placeFromBearing, centerDelta } from '../framing.js';
 
 const j = (pts) => { const a = new Float32Array(24 * 3); pts.forEach(([i, x, y, z]) => { a[i*3]=x; a[i*3+1]=y; a[i*3+2]=z; }); return a; };
 
@@ -60,4 +60,16 @@ test('relativeBearing degenerate (cam==target) falls back to +Z dir, dist>0', ()
   assert.equal(b.dir.length, 3);
   assert.ok(b.dist > 0);
   assert.ok(Number.isFinite(b.dir[0]) && Number.isFinite(b.dir[1]) && Number.isFinite(b.dir[2]));
+});
+
+test('centerDelta returns per-axis displacement between two centers', () => {
+  assert.deepEqual(centerDelta([1, 2, 3], [4, 6, 8]), [3, 4, 5]);
+});
+
+test('centerDelta with null prev (无→有人首帧) returns zero — 只立基准不跳', () => {
+  assert.deepEqual(centerDelta(null, [4, 6, 8]), [0, 0, 0]);
+});
+
+test('centerDelta with null cur returns zero', () => {
+  assert.deepEqual(centerDelta([1, 1, 1], null), [0, 0, 0]);
 });

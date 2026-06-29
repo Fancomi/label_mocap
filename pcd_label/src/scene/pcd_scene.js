@@ -1,5 +1,6 @@
 // pcd_label/src/scene/pcd_scene.js
 import * as THREE from 'three';
+import { createRenderer } from '../../../smpl_render/renderer.js';
 import { PointCloud } from './point_cloud.js';
 
 const BONES = [
@@ -14,10 +15,7 @@ const BONE_COLORS = [0xd4b800, 0x4da6ff, 0xff7733, 0x33cc66, 0xcc44cc];
 export class PcdScene {
   constructor(canvas) {
     this._canvas = canvas;
-    this._renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this._renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this._renderer.setClearColor(0x05070a, 1);
-    this._renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this._renderer = createRenderer({ canvas, preserveDrawingBuffer: false, clearColor: 0x05070a });
 
     this._scene = new THREE.Scene();
     this._scene.add(new THREE.HemisphereLight(0xddeeff, 0x223344, 0.6));

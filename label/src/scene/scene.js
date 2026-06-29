@@ -1,5 +1,7 @@
 // label_mocap/label/src/scene/scene.js
 import * as THREE from 'three';
+import { createRenderer } from '../../../smpl_render/renderer.js';
+import { applyContainerResize } from '../../../smpl_render/resize.js';
 
 const BONES = [
   [0,3,0],[3,6,0],[6,9,0],[9,12,0],[12,15,0],
@@ -13,10 +15,7 @@ const BONE_COLORS = [0xd4b800, 0x4da6ff, 0xff7733, 0x33cc66, 0xcc44cc];
 export class LabelScene {
   constructor(canvas) {
     this._canvas = canvas;
-    this._renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
-    this._renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this._renderer.setClearColor(0x0f1216, 1);
-    this._renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this._renderer = createRenderer({ canvas });
 
     this._scene = new THREE.Scene();
     this._scene.add(new THREE.HemisphereLight(0xddeeff, 0x223344, 0.55));
@@ -198,31 +197,20 @@ export class LabelScene {
     this._cam = cameraModes;
   }
 
-  // Fit the canvas/renderer to the parent container while matching the
-  // camera's image aspect (letterboxed). Called on load and window resize.
+  // Fit the canvas/renderer to the parent container via the shared resize
+  // kernel. effectiveMode comes from the camera's intended mode:
+  //   '2d'  → letterbox buffer + image aspect (背景对齐看图，无变形)
+  //   其余   → fill buffer + container aspect (3D 自由视野跟容器，修了 letterbox bug)
   resize() {
     if (!this._cam) return;
-    const parent = this._canvas.parentElement;
-    const cw = parent.clientWidth;
-    const ch = parent.clientHeight;
-    if (cw <= 0 || ch <= 0) return;
-
-    const targetAspect = this._cam.effectiveAspect();
-    const containerAspect = cw / ch;
-    let w;
-    let h;
-    if (containerAspect > targetAspect) {
-      h = ch;
-      w = Math.round(h * targetAspect);
-    } else {
-      w = cw;
-      h = Math.round(w / targetAspect);
-    }
-    this._canvas.style.width = `${w}px`;
-    this._canvas.style.height = `${h}px`;
-    this._renderer.setSize(w, h, false);
-    this._cam.camera.aspect = w / h;
-    this._cam.camera.updateProjectionMatrix();
+    applyContainerResize({
+      renderer: this._renderer,
+      camera: this._cam.camera,
+      canvas: this._canvas,
+      container: this._canvas.parentElement,
+      imageAspect: this._cam.effectiveAspect(),
+      effectiveMode: this._cam.intendedMode(),
+    });
   }
 
   updateMesh(vertices, joints) {
