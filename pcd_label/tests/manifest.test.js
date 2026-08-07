@@ -35,3 +35,15 @@ test('parseManifest throws naming each missing required field', () => {
 test('parseManifest throws on frame_count <= 0 (empty sequence not silently黑屏)', () => {
   assert.throws(() => parseManifest({ ...RAW, frame_count: 0 }), /frame_count/);
 });
+
+test('parseManifest surfaces kind/loop so a background loop can identify itself', () => {
+  // 前景/普通序列：kind 缺省为 'full'，loop 为 false。
+  const fg = parseManifest(RAW);
+  assert.equal(fg.kind, 'full');
+  assert.equal(fg.loop, false);
+  assert.equal(parseManifest({ ...RAW, kind: 'foreground' }).kind, 'foreground');
+  // 背景 loop（lidar_extract_background 的产出）自我声明这两个字段。
+  const bg = parseManifest({ ...RAW, frame_count: 10, kind: 'background', loop: true });
+  assert.equal(bg.kind, 'background');
+  assert.equal(bg.loop, true);
+});

@@ -21,6 +21,9 @@ export function parseManifest(raw) {
     pointHeight: raw.point_height,
     scale: raw.scale,
     center: raw.center,
+    // 背景 loop 目录（lidar_extract_background 的产出）靠这两个字段自我声明。
+    kind: raw.kind ?? 'full',   // 'foreground' | 'background' | 'full'
+    loop: !!raw.loop,
   };
 }
 

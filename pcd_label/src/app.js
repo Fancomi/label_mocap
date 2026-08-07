@@ -17,6 +17,7 @@ import { PcdPanels } from './ui/pcd_panels.js';
 import { decodeXYZ } from './scene/point_cloud_decode.js';
 import { decodePngFile } from './io/png_pixels.js';
 import { PcdDirSource, FileListSource, fsAccessSupported, pickDirectory } from './io/pcd_dir_source.js';
+import { BackgroundLoop } from './io/background_loop.js';
 import { FRONT_OPTIONS, viewFrame, axisName } from '../../smpl_edit/view_frame.js';
 import { Viewport } from '../../smpl_edit/viewport.js';
 import { ViewportManager } from '../../smpl_edit/viewport_manager.js';
@@ -30,6 +31,7 @@ const MODEL_URL = new URL('../../smpl_web_viewer/public/models/smpl_neutral.meta
 
 let model = null, scene = null, cam = null, store = null;
 let source = null, manifest = null;
+let background = null;   // 背景 loop（可选，独立目录；见 io/background_loop.js）
 let rotation = null, ui = null, panels = null;
 let rootHandle = null, poseGizmo = null, jointPicker = null;
 let jointGridButtons = [];
@@ -73,20 +75,24 @@ function applyAnnotation() {
   if (panels) panels.syncFromState();
 }
 
+// 解码本帧的前景 + 背景（都是 async）。背景按帧号取模跟随，且解一次即缓存。
 async function renderPointCloud(i) {
   const file = await source.frameFile(i);
   const { pixels, channels } = await decodePngFile(file);
-  return decodeXYZ(pixels, {
+  const fg = decodeXYZ(pixels, {
     pointWidth: manifest.pointWidth, pointHeight: manifest.pointHeight,
     scale: manifest.scale, center: manifest.center, channels,
   });
+  return { fg, bg: background ? await background.frameFor(i) : null };
 }
 
 // 把已解码点云写入场景（同步）。与 mesh 写入同一同步块调用，保证两者同帧渲染。
 function commitPointCloud(decoded) {
-  lastDecoded = decoded;
-  scene.pointCloud.setHeightAxis(AXIS_TO_IDX[axisUp]); // 高度配色取「上轴」分量
-  scene.pointCloud.setData(decoded);
+  lastDecoded = decoded.fg;
+  const ha = AXIS_TO_IDX[axisUp];                     // 高度配色取「上轴」分量
+  scene.pointCloud.setHeightAxis(ha);
+  scene.pointCloud.setData(decoded.fg);
+  if (decoded.bg) { scene.background.setHeightAxis(ha); scene.background.setData(decoded.bg); }
 }
 
 // 三视口统一取景源:有人体用人体包围,无人体用点云包围。开新数据与 R 共用,保证一致。
@@ -182,6 +188,10 @@ function focusViewports(center, radius) {
 
 async function mountSequence() {
   manifest = await source.readManifest();
+  if (manifest.kind === 'background') {
+    // 背景 loop 目录被误当主序列打开：明确报错胜过让人对着一片静止的场景点云调试。
+    throw new Error('该目录是背景 loop(kind=background)，请用「载入背景点云」按钮打开');
+  }
   const raw = await source.readAnnotation();
   let coco;
   if (raw) coco = new CocoDocument(raw);
@@ -201,12 +211,28 @@ async function mountSequence() {
   if (syncUI) syncUI();
   setStatus(`已加载 ${manifest.frameCount} 帧`);
   $('btn-load-json').disabled = false;
+  $('btn-load-bg').disabled = false;
 }
 
 async function openDirectory() {
   const h = await pickDirectory();
   source = new PcdDirSource(h);
   await mountSequence();
+}
+
+// 载入背景点云 loop（独立目录，kind=background）。与前景同一套 manifest/解码路径，
+// 且两者都存原始传感器坐标，所以直接叠加即对齐。
+async function mountBackground(src) {
+  const loop = new BackgroundLoop(src);
+  const m = await loop.open();
+  if (m.kind !== 'background') {
+    throw new Error(`该目录不是背景 loop（kind=${m.kind}），应为 lidar_extract_background 的产出`);
+  }
+  background = loop;
+  $('t-background').classList.add('on');
+  scene.setFlag('background', true);
+  if (store) await showFrame(store.currentFrame());   // 立刻显示，不必等切帧
+  setStatus(`已载入背景 ${m.frameCount} 帧 loop（按帧号取模跟随）`);
 }
 
 async function saveAnnotation() {
@@ -272,6 +298,19 @@ function boot() {
     mountSequence().catch((err) => setStatus(String(err)));
   });
 
+  // 背景点云 loop：与前景同样两条路径（FS Access / webkitdirectory）。
+  $('btn-load-bg').addEventListener('click', () => {
+    if (!fsAccessSupported()) { $('bg-input').click(); return; }
+    pickDirectory()
+      .then((h) => mountBackground(new PcdDirSource(h)))
+      .catch((e) => { if (e?.name !== 'AbortError') setStatus(String(e)); });
+  });
+  $('bg-input').addEventListener('change', (e) => {
+    const files = e.target.files;
+    if (!files || !files.length) return;
+    mountBackground(new FileListSource(files)).catch((err) => setStatus(String(err)));
+  });
+
   $('slider').addEventListener('input', (e) => { if (!store) return; setPlaying(false); showFrame(+e.target.value); });
   $('btn-prev').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.max(0, store.currentFrame() - 1)); });
   $('btn-next').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.min(store.frameCount() - 1, store.currentFrame() + 1)); });
@@ -300,7 +339,8 @@ function boot() {
   $('btn-reset').addEventListener('click', async () => { if (!source || !store) return; const raw = await source.readAnnotation(); if (raw) { store = new AnnotationStore(new CocoDocument(raw)); ui = new UIController({ modes: ['root', 'pose', 'beta'] }); if (syncUI) ui.onChange(syncUI); } await showFrame(Math.min(store.currentFrame(), store.frameCount() - 1)); setStatus('已重置'); });
 
   const toggle = (id, key) => $(id).addEventListener('click', () => { const on = !$(id).classList.contains('on'); $(id).classList.toggle('on', on); scene.setFlag(key, on); });
-  toggle('t-points', 'points'); toggle('t-mesh', 'mesh'); toggle('t-joints', 'joints'); toggle('t-bones', 'bones'); toggle('t-grid', 'grid'); toggle('t-axes', 'axes');
+  toggle('t-points', 'points'); toggle('t-background', 'background'); toggle('t-mesh', 'mesh');
+  toggle('t-joints', 'joints'); toggle('t-bones', 'bones'); toggle('t-grid', 'grid'); toggle('t-axes', 'axes');
 
   boot2();
 }
@@ -324,6 +364,16 @@ function boot2() {
   $('decimation').addEventListener('input', (e) => scene.pointCloud.setDecimation(+e.target.value));
   $('point-size').addEventListener('input', (e) => scene.pointCloud.setPointSize(+e.target.value));
   $('mesh-opacity').addEventListener('input', (e) => scene.setMeshOpacity(+e.target.value));
+  // 背景 loop 单独一套渲染参数：它点数远多于前景（整场静态场景），默认抽稀更狠。
+  // 初值也走一遍 setter，避免 DOM 上写着 30% 而实际是 100%。
+  const bindBg = (id, apply) => {
+    const el = $(id);
+    el.addEventListener('input', (e) => apply(+e.target.value));
+    apply(+el.value);
+  };
+  bindBg('bg-opacity', (v) => scene.background.setOpacity(v));
+  bindBg('bg-size', (v) => scene.background.setPointSize(v));
+  bindBg('bg-decimation', (v) => scene.background.setDecimation(v));
   populateFrontAxis();
   $('axis-up').addEventListener('change', (e) => { axisUp = e.target.value; populateFrontAxis(); applyAxisFrame(false); });
   $('axis-front').addEventListener('change', (e) => { axisFront = e.target.value; applyAxisFrame(false); });

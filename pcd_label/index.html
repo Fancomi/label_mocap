@@ -75,7 +75,9 @@
     <h2>点云 SMPL 标注器</h2>
     <button id="btn-open" class="primary" style="width:100%">📂 打开序列目录</button>
     <button id="btn-load-json" style="width:100%;margin-top:4px" disabled>📥 加载标注 JSON</button>
+    <button id="btn-load-bg" style="width:100%;margin-top:4px" disabled title="lidar_extract_background 产出的 kind=background 目录">🌄 载入背景点云</button>
     <input id="dir-input" type="file" webkitdirectory directory multiple hidden>
+    <input id="bg-input" type="file" webkitdirectory directory multiple hidden>
     <input id="json-input" type="file" accept=".json" hidden>
     <div class="hint" id="open-hint">Chrome/Edge 可原地保存写回目录;Firefox/Safari 仅能下载 JSON,需手动覆盖回数据目录</div>
 
@@ -101,8 +103,9 @@
     <div class="card">
       <h3>显示</h3>
       <div class="row wrap">
-        <button id="t-points" class="on">点云</button><button id="t-mesh" class="on">网格</button>
-        <button id="t-joints" class="on">关节</button><button id="t-bones" class="on">骨骼</button>
+        <button id="t-points" class="on">点云</button><button id="t-background" class="on">背景</button>
+        <button id="t-mesh" class="on">网格</button><button id="t-joints" class="on">关节</button>
+        <button id="t-bones" class="on">骨骼</button>
         <button id="t-grid" class="on">底网</button><button id="t-axes">轴</button>
       </div>
     </div>
@@ -152,6 +155,12 @@
         <label>抽稀</label><input id="decimation" type="range" min="0.02" max="1" step="0.02" value="1">
         <label>点大小</label><input id="point-size" type="range" min="1" max="10" step="0.5" value="3">
         <label>网格透明</label><input id="mesh-opacity" type="range" min="0.1" max="1" step="0.05" value="1">
+      </div>
+      <h3 style="margin-top:6px">背景点云</h3>
+      <div class="kgrid2">
+        <label>不透明</label><input id="bg-opacity" type="range" min="0.05" max="1" step="0.05" value="0.5">
+        <label>点大小</label><input id="bg-size" type="range" min="0.5" max="4" step="0.5" value="1.5">
+        <label>抽稀</label><input id="bg-decimation" type="range" min="0.02" max="1" step="0.02" value="0.3">
       </div>
       <h3 style="margin-top:6px">坐标轴</h3>
       <div class="kgrid2">

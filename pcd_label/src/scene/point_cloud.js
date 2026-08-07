@@ -5,10 +5,14 @@ import { turbo, normalizeRange } from './colormap.js';
 // 配色模式：'height' | 'range' | 'axis'(XYZ->RGB) | 'solid'
 // 点云存的是【原始数据系】坐标，不施加任何旋转——坐标轴(上/前)只改相机，几何不动。
 export class PointCloud {
-  constructor() {
+  // size/opacity 可注入:背景 loop 用更小的点、更低的不透明度,压在前景之下。
+  constructor({ size = 3, opacity = 1 } = {}) {
     this._geom = new THREE.BufferGeometry();
     // sizeAttenuation:false → 屏幕像素恒定大小,不随 scissor 子视口高度错算(三视口一致)。
-    this._mat = new THREE.PointsMaterial({ size: 3, vertexColors: true, sizeAttenuation: false });
+    this._mat = new THREE.PointsMaterial({
+      size, vertexColors: true, sizeAttenuation: false,
+      transparent: opacity < 1, opacity,
+    });
     this.object = new THREE.Points(this._geom, this._mat);
     this.object.frustumCulled = false;
     this._raw = null;
@@ -48,6 +52,7 @@ export class PointCloud {
   setColorMode(mode) { this._mode = mode; this._rebuild(); }
   setDecimation(ratio) { this._stride = Math.max(1, Math.round(1 / Math.min(1, Math.max(0.01, ratio)))); this._rebuild(); }
   setPointSize(s) { this._mat.size = s; }
+  setOpacity(v) { this._mat.opacity = v; this._mat.transparent = v < 1; this._mat.needsUpdate = true; }
   setSolidColor(rgb) { this._solid = rgb; if (this._mode === 'solid') this._rebuild(); }
   setHeightAxis(idx) { this._heightAxis = idx; if (this._mode === 'height') this._rebuild(); }
 

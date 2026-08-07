@@ -32,9 +32,13 @@ export class PcdScene {
     this._manager = null;
     this._mesh = null; this._jointsGroup = null; this._bonesGroup = null;
     this._lastJoints = null; this._personVisible = false;
-    this._flags = { points: true, mesh: true, joints: true, bones: true, grid: true, axes: false };
+    this._flags = { points: true, background: true, mesh: true, joints: true, bones: true, grid: true, axes: false };
 
+    // 背景 loop 是【第二个独立图层】,不是像素合成 —— 与 lidar_viewer 的
+    // background_cloud actor 同构。更小的点 + 半透明,压在前景之下。
+    this.background = new PointCloud({ size: 1.4, opacity: 0.5 });
     this.pointCloud = new PointCloud();
+    this._scene.add(this.background.object);
     this._scene.add(this.pointCloud.object);
 
     this._grid = new THREE.GridHelper(20, 40, 0x6695c8, 0x33455a);
@@ -127,6 +131,7 @@ export class PcdScene {
 
   _applyVisibility() {
     this.pointCloud.setVisible(this._flags.points);
+    this.background.setVisible(this._flags.background);
     if (this._mesh) this._mesh.visible = this._flags.mesh && this._personVisible;
     if (this._jointsGroup) this._jointsGroup.visible = this._flags.joints && this._personVisible;
     if (this._bonesGroup) this._bonesGroup.visible = this._flags.bones && this._personVisible;
