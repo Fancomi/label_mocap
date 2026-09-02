@@ -220,14 +220,11 @@ async function openDirectory() {
   await mountSequence();
 }
 
-// 载入背景点云 loop（独立目录，kind=background）。与前景同一套 manifest/解码路径，
-// 且两者都存原始传感器坐标，所以直接叠加即对齐。
+// 载入背景点云 loop（独立目录，任意 png-sequence 均可，不再限定 kind=background）。
+// 与前景同一套 manifest/解码路径，且两者都存原始传感器坐标，所以直接叠加即对齐。
 async function mountBackground(src) {
   const loop = new BackgroundLoop(src);
   const m = await loop.open();
-  if (m.kind !== 'background') {
-    throw new Error(`该目录不是背景 loop（kind=${m.kind}），应为 lidar_extract_background 的产出`);
-  }
   background = loop;
   $('t-background').classList.add('on');
   scene.setFlag('background', true);

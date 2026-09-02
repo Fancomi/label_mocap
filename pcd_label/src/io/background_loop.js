@@ -1,6 +1,7 @@
 // pcd_label/src/io/background_loop.js
-// 背景点云 loop：一个 kind="background" 的 png-sequence 目录（由 lidar_projects 的
-// lidar_extract_background 产出）。它与前景序列共用同一套 manifest/解码路径,所以直接
+// 背景点云 loop：一个 png-sequence 目录（通常是 lidar_projects 的 lidar_extract_background
+// 产出的 kind="background" 目录；现在任意 png-sequence 目录——包括前景序列——均可载入作
+// 为背景叠加）。它与前景序列共用同一套 manifest/解码路径,所以直接
 // 复用 PcdDirSource / FileListSource —— 只多两件事:全帧缓存,以及按前景帧号取模跟随。
 //
 // 坐标系:两者都存【原始传感器坐标】,不施加任何旋转,因此直接叠加即对齐。这也是
