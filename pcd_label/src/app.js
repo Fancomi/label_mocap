@@ -45,6 +45,7 @@ let playing = false, fps = 10, lastTick = 0, acc = 0;
 let axisUp = 'Z', axisFront = 'X';
 const AXIS_TO_IDX = { X: 0, Y: 1, Z: 2 };
 let lastDecoded = null;
+let frameToken = 0;       // showFrame 的帧序号令牌:丢弃被更新请求取代的旧帧结果(见 showFrame)
 let lockPerson = false;   // 「视野锁定人物」开关：开启后切帧刚性跟随人体位移（见 followLockedPerson）
 let lockCenter = null;    // 跟随基准：上次人体中心（图像系）；null=尚无基准
 
@@ -141,14 +142,19 @@ function renderAnnoActions() {
 }
 
 async function showFrame(i) {
+  // 帧序号令牌:点云解码是 async(读文件 + createImageBitmap + 逐像素解码)。播放/拖动
+  // 进度条时 showFrame 会重叠调用,先发起的旧帧可能后返回 —— 若不加闸,旧帧会覆盖新帧的
+  // 人体可见性/网格,表现为「人偶尔丢失」和「人体与点云不是同一帧(串位)」。只认最后一次请求。
+  const token = ++frameToken;
   store.setFrame(i);
   $('slider').value = String(i);
   $('frame-info').textContent = `${i + 1} / ${store.frameCount()}`; // 1-based 显示;内部仍 0-based(对齐不变)
   const a = store.current();
   // 先把点云解码完(async)，再与 mesh 写入同一同步块——两者下一帧 rAF 一起出现，消除“一快一慢”。
-  let decoded = null;
-  try { decoded = await renderPointCloud(i); }
-  catch (e) { setStatus(`点云解码失败: ${e}`); }
+  let decoded = null, err = null;
+  try { decoded = await renderPointCloud(i); } catch (e) { err = e; }
+  if (token !== frameToken) return;   // 已有更新的帧请求 → 本次结果作废(不碰场景、不报状态)
+  if (err) setStatus(`点云解码失败: ${err}`);
   // 同步提交：mesh + 点云一起写，确保同帧渲染。
   if (a) {
     rotation = RotationState.fromAxisAngle({ root_rota: a.root_rota, body_pose: a.body_pose });
