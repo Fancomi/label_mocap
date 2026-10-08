@@ -19,6 +19,17 @@ export function computeRects(preset, splits) {
   return triRects(v, h); // 'tri';宽度由分隔条 v 自由调,不再单列 main-big 预设
 }
 
+// 归一化矩形(左上原点) → 渲染像素矩形(GL 左下原点,翻 Y)。
+// 【单位必须是 CSS 像素】:renderer.setViewport/setScissor 会再乘一次 pixelRatio,
+// 传绘制缓冲(device)像素会翻倍 —— Retina(dpr=2)上主视 scissor 会盖满整个 canvas,
+// 侧/正视图的 scissor 则被推到画布外(视图串图 + 侧正视空白)。cssW/cssH = canvas CSS 尺寸。
+export function glRect(rect, cssW, cssH) {
+  return {
+    x: Math.round(rect.x * cssW), y: Math.round((1 - rect.y - rect.h) * cssH),
+    w: Math.round(rect.w * cssW), h: Math.round(rect.h * cssH),
+  };
+}
+
 // 命中:返回归一化点 (nx,ny) 落在的矩形 name,无则 null。
 export function hitTest(nx, ny, rects) {
   for (const r of rects) {

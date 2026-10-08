@@ -1,7 +1,7 @@
 // smpl_edit/viewport_manager.js
 // 多视口管理:单 renderer 逐区 scissor 渲染 + 指针路由 active 视口 + 布局。
 // scene 由外部传入(所有视口共享同一 scene)。browser-only。
-import { computeRects, hitTest } from './viewport_layout.js';
+import { computeRects, hitTest, glRect } from './viewport_layout.js';
 
 export class ViewportManager {
   // viewports: Viewport[](至少含 name==='main');canvas: 渲染 canvas;
@@ -54,6 +54,10 @@ export class ViewportManager {
       this._active = name;
       this._syncControlsEnabled(); // 切 active → 只让该视口的 controls 响应本次拖拽
       this._onActiveChange(name);
+      // 本次按下的唯一语义是「切换当前视口」:手柄此前只在旧 active 视口里画过,
+      // 放过去会让 TransformControls 按新相机做射线命中 → 在新视口里"抓"到看不见的手柄
+      // (点一下侧视图就悄悄平移了人体)。吞掉本次事件,下一次操作正常生效。
+      e.stopImmediatePropagation();
     }
   }
 
@@ -76,24 +80,26 @@ export class ViewportManager {
   }
 
   // 像素矩形(GL 左下原点):由归一矩形(左上原点)翻 Y 得到。
-  _pxRect(rect, W, H) {
-    return { x: Math.round(rect.x * W), y: Math.round((1 - rect.y - rect.h) * H),
-      w: Math.round(rect.w * W), h: Math.round(rect.h * H) };
+  // 用 canvas 的 CSS 尺寸而非 canvas.width/height(绘制缓冲 = CSS × pixelRatio):
+  // renderer.setViewport/setScissor 内部会再乘 pixelRatio,传 device 像素会翻倍
+  // → Retina 上主视 scissor 盖满整块 canvas、侧/正视 scissor 落到画布外。
+  _cssSize() {
+    return { W: this._canvas.clientWidth, H: this._canvas.clientHeight };
   }
 
   resize() {
-    const W = this._canvas.width, H = this._canvas.height;
+    const { W, H } = this._cssSize();
     if (!W || !H) return;
     for (const rect of this._rects) {
       const vp = this._vps.get(rect.name); if (!vp) continue;
-      const px = this._pxRect(rect, W, H);
+      const px = glRect(rect, W, H);
       vp.resize(px.w / Math.max(px.h, 1));
     }
   }
 
   // 逐区渲染:每个可见矩形设 viewport+scissor 后渲染共享 scene。
   render(renderer, scene) {
-    const W = this._canvas.width, H = this._canvas.height;
+    const { W, H } = this._cssSize();
     if (!W || !H) return;
     // 手柄仅 active 视口可见:渲染前记下各对象「意图可见性」,逐区切换,finally 保证还原
     // (即便渲染抛异常也不会把手柄永久隐藏)。不往对象挂临时属性。
@@ -104,7 +110,7 @@ export class ViewportManager {
         const isActive = rect.name === this._active;
         this._handleObjects.forEach((o, i) => { o.visible = isActive && wantVisible[i]; });
         vp.update();
-        vp.applyScissor(renderer, this._pxRect(rect, W, H));
+        vp.applyScissor(renderer, glRect(rect, W, H));
         renderer.render(scene, vp.camera);
       }
     } finally {
