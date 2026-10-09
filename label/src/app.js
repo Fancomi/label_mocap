@@ -1,7 +1,6 @@
 // label/src/app.js — M2: load, render, navigate, annotate (add/del/undo + display toggles).
 import { loadModel } from '../../smpl_core/smpl_model.js';
 import { forwardSmpl } from '../../smpl_core/lbs.js';
-import { mat3ToQuat } from '../../smpl_core/rotations.js';
 import { JOINT_NAMES } from '../../smpl_core/joint_names.js';
 import { CocoDocument } from '../../smpl_edit/coco_document.js';
 import { bodyBounds } from '../../smpl_edit/framing.js';
@@ -17,6 +16,9 @@ import { CameraModes } from '../../smpl_render/camera_modes.js';
 import { LabelScene } from './scene/scene.js';
 import { Panels } from './ui/panels.js';
 import { RootHandle } from '../../smpl_edit/root_handle.js';
+import { GizmoSpace } from '../../smpl_edit/gizmo_space.js';
+import { mountSpaceToggles } from '../../smpl_edit/space_toggle.js';
+import { jointWorldQuat } from '../../smpl_edit/gizmo_frame.js';
 import { PoseGizmo } from '../../smpl_edit/pose_gizmo.js';
 import { installIK } from '../../smpl_edit/ik_plugin.js';
 import { installGvhmr } from './gvhmr_plugin.js';
@@ -74,6 +76,9 @@ let lastVertices = null;
 let lastJoints = null;
 let lastWorldRot = null;
 let panels = null;
+// 所有 SMPL 编辑手柄(整体/关节/IK)共用的参考系:世界轴 / 自身轴。
+const gizmoSpace = new GizmoSpace();
+mountSpaceToggles(gizmoSpace);
 let rootHandle = null;
 let poseGizmo = null;
 let bboxOverlay = null;
@@ -296,6 +301,7 @@ function applyAnnotation() {
   lastVertices = out.vertices;
   lastJoints = out.joints;
   lastWorldRot = out.worldRot;
+  rootHandle?.syncFromState(); poseGizmo?.syncFromState();
   scene.updateMesh(out.vertices, out.joints);
   cam.set3DFollowTarget(new THREE.Vector3(out.joints[0], out.joints[1], out.joints[2]));
   scene.setFollowCenter(lastJoints ? (bodyBounds(lastJoints)?.center ?? null) : null);
@@ -606,21 +612,19 @@ function boot() {
     scene: scene.threeScene(),
     camera: cam.camera,
     canvas: $('c'),
-    controls: cam.controls,
-    getMode: () => cam.mode,
     getStore: () => store,
     getRotation: () => rotation,
     onEdit: applyAnnotation,
+    space: gizmoSpace,
   });
   poseGizmo = new PoseGizmo({
     scene: scene.threeScene(),
     camera: cam.camera,
     canvas: $('c'),
-    controls: cam.controls,
-    getMode: () => cam.mode,
     getRotation: () => rotation,
     getStore: () => store,
     onEdit: applyAnnotation,
+    space: gizmoSpace,
   });
   bboxOverlay = new BboxOverlay({
     stageEl: $('stage'),
@@ -681,7 +685,7 @@ function boot() {
       const j = ui.selectedJoint;
       const smplJ = j + 1;
       const parent = model.parents[smplJ];
-      const qParentWorld = mat3ToQuat(lastWorldRot.slice(parent * 9, parent * 9 + 9));
+      const qParentWorld = jointWorldQuat(lastWorldRot, parent);
       poseGizmo.attach(j, scene.jointWorldPosition(smplJ), qParentWorld);
       rootHandle.detach();
     } else if (!playing && ui.mode === 'root' && store && store.current()) {
@@ -824,6 +828,7 @@ function boot() {
       onEdit: applyAnnotation, jointGridButtons, setStatus,
       requestSync: () => { if (syncUI) syncUI(); },
       toggleButton: $('ik-toggle'),
+      gizmoSpace,
       registerSyncHook: (fn) => syncHooks.push(fn),
       registerGuard: (g) => { dragGuards.push(g); engageGuards.push(g); },
     });

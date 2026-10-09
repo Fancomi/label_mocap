@@ -38,7 +38,8 @@ The central design is a layered kernel that multiple apps consume. When changing
   - **Rotation = quaternion.** `rotation_state.js` holds root + 21 joint local quats; euler is an editable *view* with an anti-jump draft cache. Never make euler authoritative.
   - **Annotation = `AnnotationStore` over `CocoDocument`.** `coco_document.js` round-trips `player_0.json` with fidelity — it only mutates fields that were actually edited. Don't rewrite the whole document.
   - IK is a **plug-in**: `ik_plugin.js#installIK(ctx)` wires `ik_controller`/`ik_handle`/`ik_solver`/`ik_chains` via dependency injection. The host app calls one line and stays IK-name-free; uninstall is clean. Add IK features inside the plugin, not in app code.
-  - Also: `pose_gizmo`, `root_handle`, `joint_picker`, `gizmo_frame`, `view_frame`, `ui_controller`.
+  - **Editing handles share one base**: `transform_handle.js` (TransformControls + proxy; camera/NDC/size/engaged plumbing) is extended by `root_handle`, `pose_gizmo`, `drag_handle`. The **world/self axis** choice lives in one `gizmo_space.js#GizmoSpace` instance injected into every handle (`space:`); `space_toggle.js` fills any `[data-space-toggle]` container with the buttons. New handles must extend `TransformHandle`, not talk to TransformControls directly.
+  - Also: `joint_picker`, `gizmo_frame`, `view_frame`, `ui_controller`.
 
 - **Apps** (each `<app>/index.html` + `<app>/src/app.js` assembles the kernels):
   - **`label/`** — main 2D-image/video SMPL annotator. Tabbed exclusive edit modes [Pose/Root/Bbox/Beta]; in-place JSON save (Chrome/Edge File System Access, else download). `src/io/` = data sources, `src/scene/` = three.js wiring, `src/edit/` = bbox/derived/occlusion.

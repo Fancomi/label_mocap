@@ -1,76 +1,58 @@
 // smpl_edit/pose_gizmo.js
-import * as THREE from 'three';
-import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { TransformHandle } from './transform_handle.js';
 import { worldGizmoFromLocal, localFromWorldGizmo } from './gizmo_frame.js';
-import { setTcCamera, setTcNdcMapper, setTcSize } from './tc_multiview.js';
 
 // Per-joint rotation gizmo. Displays at the joint's WORLD orientation and maps
 // drags back to the joint LOCAL quaternion using the parent world rotation, so
 // the on-screen rings align with what the user sees and edits don't jump.
-export class PoseGizmo {
-  constructor({ scene, camera, canvas, controls, getMode, getRotation, getStore, onEdit }) {
-    this._scene = scene;
-    this._getMode = getMode;
+// 世界轴/自身轴只改 TC 的显示与拖拽轴:代理始终持有关节世界朝向,映射回局部的公式两种参考系下相同。
+export class PoseGizmo extends TransformHandle {
+  constructor({ scene, camera, canvas, getRotation, getStore, onEdit, space }) {
+    super({ scene, camera, canvas, mode: 'rotate', space });
     this._getRotation = getRotation;
     this._getStore = getStore;
     this._onEdit = onEdit;
     this._jointBody = null;       // body-pose index (0..20)
     this._qParentWorld = [0, 0, 0, 1];
-    this._proxy = new THREE.Object3D();
-    this._scene.add(this._proxy);
-    this._tc = new TransformControls(camera, canvas);
-    this._tc.setMode('rotate');
-    this._tc.setSpace('local');
     this._tc.addEventListener('dragging-changed', (e) => {
       if (e.value) this._getStore().beginEdit();
       else this._getStore().commitEdit();
     });
     this._tc.addEventListener('objectChange', () => this._onDrag());
-    this._helper = this._tc.getHelper ? this._tc.getHelper() : this._tc;
-    this._scene.add(this._helper);
-    this.detach();
   }
-
-  // 场景中由本 gizmo add 的对象(供 ViewportManager 注册为仅 active 视口可见)。
-  sceneObjects() { return [this._proxy, this._helper]; }
 
   // qParentWorld: [x,y,z,w] parent joint world rotation. worldPos: [x,y,z].
   attach(jointBody, worldPos, qParentWorld) {
     this._jointBody = jointBody;
     this._qParentWorld = qParentWorld;
-    const qLocal = this._getRotation().getJointQuat(jointBody);
-    const qWorld = worldGizmoFromLocal(qParentWorld, qLocal);
     this._proxy.position.set(worldPos[0], worldPos[1], worldPos[2]);
-    this._proxy.quaternion.set(qWorld[0], qWorld[1], qWorld[2], qWorld[3]);
-    this._proxy.updateMatrixWorld(true);
-    this._tc.attach(this._proxy);
-    this._setVisible(true);
+    this.syncOrientation();
+    this._mount();
+    this._setTcActive(true);
+  }
+
+  // 数值面板/撤销等外部改动关节后让代理朝向跟上(自身轴与下次拖拽起点都依赖它);拖拽中不动。
+  syncFromState() {
+    if (this._jointBody === null || this.isDragging()) return;
+    this.syncOrientation();
+  }
+
+  syncOrientation() {
+    const qLocal = this._getRotation().getJointQuat(this._jointBody);
+    this.setOrientation(worldGizmoFromLocal(this._qParentWorld, qLocal));
   }
 
   detach() {
-    if (this._tc.object) this._tc.detach();
-    this._setVisible(false);
     this._jointBody = null;
-  }
-
-  isEngaged() { return !!(this._tc && (this._tc.dragging || this._tc.axis != null)); }
-  isDragging() { return !!(this._tc && this._tc.dragging); }
-
-  setCamera(camera) { setTcCamera(this._tc, camera); }
-  setHandleScale(s) { setTcSize(this._tc, s); }     // label 2D 假缩放下按 1/zoom 反向抵消
-  setNdcMapper(fn) { setTcNdcMapper(this._tc, fn); } // 多视口:指针→active 视口子矩形 NDC
-
-  _setVisible(v) {
-    const helper = this._tc.getHelper ? this._tc.getHelper() : this._tc;
-    helper.visible = v;
-    if (this._tc.enabled !== undefined) this._tc.enabled = v;
+    if (!this._mounted) return;
+    this._setTcActive(false);
+    this._unmount();
   }
 
   _onDrag() {
     if (this._jointBody === null) return;
     const q = this._proxy.quaternion;
-    const qWorld = [q.x, q.y, q.z, q.w];
-    const qLocal = localFromWorldGizmo(this._qParentWorld, qWorld);
+    const qLocal = localFromWorldGizmo(this._qParentWorld, [q.x, q.y, q.z, q.w]);
     this._getRotation().setJointQuat(this._jointBody, qLocal);
     this._getStore().applyFields(this._getRotation().toAxisAngle());
     this._onEdit();

@@ -11,6 +11,7 @@
 import { IKController } from './ik_controller.js';
 import { DragHandle, makeHandleMarker } from './drag_handle.js';
 import { HandleSelection } from './handle_selection.js';
+import { jointWorldQuat } from './gizmo_frame.js';
 import * as THREE from 'three';
 
 // 安装 IK 插件。返回 uninstall 函数(调用即彻底拆除,不留痕迹)。
@@ -40,7 +41,7 @@ export function installIK(ctx) {
   const currentChain = () => ikController.chainFor((ctx.getUI()?.selectedJoint ?? -1) + 1);
 
   // 两柄共享的场景接线;差异仅在 marker 外观、回调、活动态是否仍显示 marker。
-  const handleBase = { scene: ctx.scene.threeScene(), camera: ctx.camera, canvas: ctx.canvas, getStore: ctx.getStore };
+  const handleBase = { scene: ctx.scene.threeScene(), camera: ctx.camera, canvas: ctx.canvas, getStore: ctx.getStore, space: ctx.gizmoSpace };
 
   // 末端拖拽手柄:按下冻结参考、拖拽绝对求解、松开清参考。非活动态显示灰白立方体占位。
   const ikHandle = new DragHandle({
@@ -104,9 +105,12 @@ export function installIK(ctx) {
     const ikChain = ikEnabled ? currentChain() : null;
     if (!ctx.isPlaying() && ui.mode === 'pose' && ikChain && ctx.getLastJoints()) {
       selection.bindChain(ikChain.name);            // 换链重置回 'end',同链保持
-      ikHandle.attach(ctx.scene.jointWorldPosition(ui.selectedJoint + 1));
+      // 自身轴:末端柄沿末端关节(腕/踝)朝向,极向量柄沿链根关节(肩/髋)朝向。
+      const worldRot = ctx.getLastWorldRot();
+      const [jRoot, , jEnd] = ikChain.joints;
+      ikHandle.attach(ctx.scene.jointWorldPosition(ui.selectedJoint + 1), worldRot && jointWorldQuat(worldRot, jEnd));
       const stored = ikController.storedPole(ikChain.name);
-      poleHandle.attach(stored ?? ikController.autoPoleViz(ikChain));
+      poleHandle.attach(stored ?? ikController.autoPoleViz(ikChain), worldRot && jointWorldQuat(worldRot, jRoot));
       // 单活动:按 selection 决定谁出箭头、谁作占位标识(attach 后再 setActive,以 setActive 为准)。
       ikHandle.setActive(selection.active() === 'end');
       poleHandle.setActive(selection.active() === 'pole');

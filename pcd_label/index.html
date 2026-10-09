@@ -178,6 +178,7 @@
     <section class="tabpanel" data-mode="pose" hidden>
       <p class="hint">点击点云中的关节点，或在下方选择关节，拖动旋转环。</p>
       <div class="row" style="align-items:center;gap:6px"><button id="ik-toggle" hidden>🔗 IK 拖拽</button><span style="font-size:10px;color:#8ab">开启后拖手腕/脚踝自动反解</span></div>
+      <div class="row" data-space-toggle title="手柄参考系"></div>
       <div id="joint-grid"></div>
       <div id="sel-joint" class="status">未选择关节</div>
       <div id="pose-rot-block" hidden>
@@ -193,6 +194,7 @@
     <section class="tabpanel" data-mode="root">
       <p class="hint">控制整个人体：拖箭头平移、切换"旋转"改朝向。</p>
       <div class="row"><button id="root-translate" class="on">移动</button><button id="root-rotate">旋转</button></div>
+      <div class="row" data-space-toggle title="手柄参考系"></div>
       <h3>整体平移 (米)</h3>
       <div class="kgrid2"><label>x</label><input type="number" id="pos-x" step="0.01"><label>y</label><input type="number" id="pos-y" step="0.01"><label>z</label><input type="number" id="pos-z" step="0.01"></div>
       <h3>整体旋转 (欧拉 XYZ, 度)</h3>

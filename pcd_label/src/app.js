@@ -1,7 +1,6 @@
 // pcd_label/src/app.js — 点云 SMPL 标注器装配。复用 smpl_edit 的世界系编辑内核。
 import { loadModel } from '../../smpl_core/smpl_model.js';
 import { forwardSmpl } from '../../smpl_core/lbs.js';
-import { mat3ToQuat } from '../../smpl_core/rotations.js';
 import { JOINT_NAMES } from '../../smpl_core/joint_names.js';
 import { CocoDocument } from '../../smpl_edit/coco_document.js';
 import { AnnotationStore } from '../../smpl_edit/annotation_store.js';
@@ -9,6 +8,9 @@ import { RotationState } from '../../smpl_edit/rotation_state.js';
 import { UIController } from '../../smpl_edit/ui_controller.js';
 import { JointPicker } from '../../smpl_edit/joint_picker.js';
 import { RootHandle } from '../../smpl_edit/root_handle.js';
+import { GizmoSpace } from '../../smpl_edit/gizmo_space.js';
+import { mountSpaceToggles } from '../../smpl_edit/space_toggle.js';
+import { jointWorldQuat } from '../../smpl_edit/gizmo_frame.js';
 import { PoseGizmo } from '../../smpl_edit/pose_gizmo.js';
 import { installIK } from '../../smpl_edit/ik_plugin.js';
 import { PcdScene } from './scene/pcd_scene.js';
@@ -33,6 +35,8 @@ let model = null, scene = null, cam = null, store = null;
 let source = null, manifest = null;
 let background = null;   // 背景 loop（可选，独立目录；见 io/background_loop.js）
 let rotation = null, ui = null, panels = null;
+const gizmoSpace = new GizmoSpace();
+mountSpaceToggles(gizmoSpace); // 所有 SMPL 编辑手柄共用的参考系:世界轴 / 自身轴
 let rootHandle = null, poseGizmo = null, jointPicker = null;
 let jointGridButtons = [];
 let lastVertices = null, lastJoints = null, lastWorldRot = null;
@@ -71,6 +75,7 @@ function applyAnnotation() {
   if (!rotation || !store.current()) return;
   const out = forwardSmpl(model, buildFrame(), { worldRot: true });
   lastVertices = out.vertices; lastJoints = out.joints; lastWorldRot = out.worldRot;
+  rootHandle?.syncFromState(); poseGizmo?.syncFromState();
   scene.updateMesh(out.vertices, out.joints);
   scene.setFollowCenter(lastJoints ? (bodyBounds(lastJoints)?.center ?? null) : null);
   if (panels) panels.syncFromState();
@@ -490,8 +495,8 @@ function boot3() {
     canPick: () => !engageGuards.some((g) => g.isEngaged()),
     getNdc: (e) => mgr.pointerToNdc(e), // 多视口:按 active 视口子矩形算 NDC(单视口时等价整块 canvas)
   });
-  rootHandle = new RootHandle({ scene: scene.threeScene(), camera: cam.camera, canvas: $('c'), controls: cam.controls, getMode: () => cam.mode, getStore: () => store, getRotation: () => rotation, onEdit: applyAnnotation });
-  poseGizmo = new PoseGizmo({ scene: scene.threeScene(), camera: cam.camera, canvas: $('c'), controls: cam.controls, getMode: () => cam.mode, getRotation: () => rotation, getStore: () => store, onEdit: applyAnnotation });
+  rootHandle = new RootHandle({ scene: scene.threeScene(), camera: cam.camera, canvas: $('c'), getStore: () => store, getRotation: () => rotation, onEdit: applyAnnotation, space: gizmoSpace });
+  poseGizmo = new PoseGizmo({ scene: scene.threeScene(), camera: cam.camera, canvas: $('c'), getRotation: () => rotation, getStore: () => store, onEdit: applyAnnotation, space: gizmoSpace });
   dragGuards.push(poseGizmo, rootHandle); engageGuards.push(poseGizmo, rootHandle);
 
   // 多视口:把指针按 active 视口子矩形重映射成 NDC(覆写 TC 的整块-canvas getPointer)。
@@ -522,7 +527,7 @@ function boot3() {
     if (claimed) { poseGizmo.detach(); rootHandle.detach(); }
     else if (!playing && ui.mode === 'pose' && ui.selectedJoint != null && rotation && lastWorldRot) {
       const j = ui.selectedJoint, smplJ = j + 1, parent = model.parents[smplJ];
-      const qParentWorld = mat3ToQuat(lastWorldRot.slice(parent * 9, parent * 9 + 9));
+      const qParentWorld = jointWorldQuat(lastWorldRot, parent);
       poseGizmo.attach(j, scene.jointWorldPosition(smplJ), qParentWorld); rootHandle.detach();
     } else if (!playing && ui.mode === 'root' && store && store.current()) { rootHandle.attach(store.current().root_pos); poseGizmo.detach(); }
     else { poseGizmo.detach(); rootHandle.detach(); }
@@ -546,6 +551,7 @@ function boot4() {
       onEdit: applyAnnotation, jointGridButtons, setStatus,
       requestSync: () => { if (syncUI) syncUI(); },
       toggleButton: $('ik-toggle'),
+      gizmoSpace,
       registerSyncHook: (fn) => syncHooks.push(fn),
       registerGuard: (g) => { dragGuards.push(g); engageGuards.push(g); },
       registerCameraConsumer: (fn) => camConsumers.push(fn),
