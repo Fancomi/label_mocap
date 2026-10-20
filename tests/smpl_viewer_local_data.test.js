@@ -8,6 +8,7 @@ import {
   loadLocalA1SequenceFromFiles,
   loadLocalA1SequenceFromDirSource,
   loadVideoSequence,
+  buildPersonTimeline,
   normalizeAnnotationFrame,
   sequenceLabel,
 } from '../smpl_viewer/local_data.js';
@@ -142,8 +143,9 @@ test('dir-source loader maps each frame by image_id → file_name (order-indepen
   const seq = await loadLocalA1SequenceFromDirSource(src);
   assert.equal(seq.name, 'a1');
   assert.equal(seq.n_frames, 2);
-  assert.deepEqual(seq.frames.map((f) => f.frame), [1, 0]);
-  assert.deepEqual(seq.images.map((f) => f.name), ['000002.jpg', '000001.jpg']);
+  // 帧轴 = images[] 顺序(帧身份 = 位置,与标注器一致);annotations 乱序不影响配对。
+  assert.deepEqual(seq.frames.map((f) => f.frame), [0, 1]);
+  assert.deepEqual(seq.images.map((f) => f.name), ['000001.jpg', '000002.jpg']);
 });
 
 test('dir-source loader falls back to numeric order when json lacks file_name', async () => {
@@ -247,4 +249,44 @@ test('loadVideoSequence caps n_frames by video when video is shorter', () => {
   assert.equal(seq.frames.length, 4);
   assert.equal(seq.meta.image_w, 1920);
   assert.equal(seq.meta.image_h, 1080);
+});
+
+test('buildPersonTimeline: sparse multi-person on an images[] axis', () => {
+  const images = Array.from({ length: 5 }, (_, i) => ({ id: i }));
+  const p0 = { images, annotations: [validAnnotation({ image_id: 1 }), validAnnotation({ image_id: 2 })] };
+  const p1 = { images, annotations: [validAnnotation({ image_id: 3 }), { id: 9, image_id: 4, bbox: [1, 1, 2, 2] }] };
+  const t = buildPersonTimeline([{ id: 0, raw: p0 }, { id: 1, raw: p1 }]);
+  assert.equal(t.mode, 'images');
+  assert.equal(t.n, 5);
+  assert.deepEqual([...t.persons[0].marks], [0, 1, 1, 0, 0]);
+  assert.deepEqual(t.persons[0].frames.map((f) => (f ? f.frame : null)), [null, 1, 2, null, null]);
+  // 仅框无 SMPL:计入「有标注」,但无可渲染帧
+  assert.deepEqual([...t.persons[1].marks], [0, 0, 0, 1, 1]);
+  assert.equal(t.persons[1].frames[4], null);
+});
+
+test('buildPersonTimeline: legacy records keep annotation order, others align by frame', () => {
+  const p0 = { records: [validAnnotation({ image_id: 5 }), validAnnotation({ image_id: 6 })] };
+  const p1 = { records: [validAnnotation({ image_id: 6 })] };
+  const t = buildPersonTimeline([{ id: 0, raw: p0 }, { id: 1, raw: p1 }]);
+  assert.equal(t.mode, 'records');
+  assert.equal(t.n, 2);
+  assert.deepEqual([...t.persons[0].marks], [1, 1]);
+  assert.deepEqual([...t.persons[1].marks], [0, 1]);
+});
+
+test('dir-source loader picks up sibling player_N.json as extra persons', async () => {
+  const images = [{ id: 0, file_name: '000001.jpg' }, { id: 1, file_name: '000002.jpg' }];
+  const jsons = {
+    'lidar/player_0.json': { images, annotations: [validAnnotation({ image_id: 0 })] },
+    'lidar/player_1.json': { images, annotations: [validAnnotation({ image_id: 1 })] },
+  };
+  const files = { 'images/000001.jpg': 'a', 'images/000002.jpg': 'b' };
+  const src = fakeDirSource({ json: jsons['lidar/player_0.json'], files });
+  src.classification.jsonPath = 'lidar/player_0.json';
+  src.paths = [...Object.keys(jsons), ...Object.keys(files)];
+  src.readJsonAt = async (p) => jsons[p] ?? null;
+  const seq = await loadLocalA1SequenceFromDirSource(src);
+  assert.deepEqual(seq.persons.map((p) => p.id), [0, 1]);
+  assert.deepEqual([...seq.persons[1].marks], [0, 1]);
 });

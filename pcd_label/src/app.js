@@ -18,7 +18,7 @@ import { OrbitCam } from '../../smpl_render/orbit_cam.js';
 import { PcdPanels } from './ui/pcd_panels.js';
 import { decodeXYZ } from './scene/point_cloud_decode.js';
 import { decodePngFile } from './io/png_pixels.js';
-import { PcdDirSource, FileListSource, fsAccessSupported, pickDirectory } from './io/pcd_dir_source.js';
+import { PcdDirSource, FileListSource, fsAccessSupported, pickDirectory, PRIMARY_ANNO, downloadJson } from './io/pcd_dir_source.js';
 import { BackgroundLoop } from './io/background_loop.js';
 import { FRONT_OPTIONS, viewFrame, axisName } from '../../smpl_edit/view_frame.js';
 import { Viewport } from '../../smpl_edit/viewport.js';
@@ -26,12 +26,19 @@ import { ViewportManager } from '../../smpl_edit/viewport_manager.js';
 import { bodyBounds, centerDelta } from '../../smpl_edit/framing.js';
 import { jsonOpenSupported, pickJsonFile } from '../../label/src/io/dir_source.js';
 import { isCocoDoc } from '../../label/src/io/anno_validate.js';
+import { AnnoTimeline } from '../../smpl_edit/anno_timeline.js';
+import { PersonPanel } from '../../smpl_edit/person_panel.js';
+import { findMarked, countMarked, markedSummary } from '../../smpl_edit/frame_marks.js';
+import { personLabel } from '../../smpl_edit/person_files.js';
+import { loadPersonSet, addEmptyPerson, renumberPerson, savePersonSet, parsePersonId } from '../../smpl_edit/person_io.js';
 
 const $ = (id) => document.getElementById(id);
 const setStatus = (t) => { $('status').textContent = t; };
 const MODEL_URL = new URL('../../smpl_web_viewer/public/models/smpl_neutral.meta.json', import.meta.url);
 
 let model = null, scene = null, cam = null, store = null;
+// 多人物:persons 持有全部人物(各自 store/undo);store 恒指向当前人物的 store。
+let persons = null, timeline = null, personPanel = null, personPanelKey = '';
 let source = null, manifest = null;
 let background = null;   // 背景 loop（可选，独立目录；见 io/background_loop.js）
 let rotation = null, ui = null, panels = null;
@@ -50,7 +57,7 @@ let axisUp = 'Z', axisFront = 'X';
 const AXIS_TO_IDX = { X: 0, Y: 1, Z: 2 };
 let lastDecoded = null;
 let frameToken = 0;       // showFrame 的帧序号令牌:丢弃被更新请求取代的旧帧结果(见 showFrame)
-let lockPerson = false;   // 「视野锁定人物」开关：开启后切帧刚性跟随人体位移（见 followLockedPerson）
+let lockPerson = false;   // 「📌 跟随人物」开关：开启后切帧刚性跟随【当前人物】位移（见 followLockedPerson）
 let lockCenter = null;    // 跟随基准：上次人体中心（图像系）；null=尚无基准
 
 async function loadModelWithProgress() {
@@ -79,6 +86,7 @@ function applyAnnotation() {
   scene.updateMesh(out.vertices, out.joints);
   scene.setFollowCenter(lastJoints ? (bodyBounds(lastJoints)?.center ?? null) : null);
   if (panels) panels.syncFromState();
+  refreshMarks();   // 拖拽中改动 → 人物列表的未保存标记(*)即时更新(掩码按 revision 缓存,开销很小)
 }
 
 // 解码本帧的前景 + 背景（都是 async）。背景按帧号取模跟随，且解一次即缓存。
@@ -129,10 +137,30 @@ function applyAxisFrame(recenter) {
   frameViewports(recenter);
 }
 
+// 有/无标注条 + 人物列表:掩码按 store.revision 缓存,逐帧调用只是重画一条 canvas。
+function refreshMarks() {
+  if (!persons || !store) return;
+  const curId = persons.currentId();
+  const list = persons.list();
+  timeline?.setData({
+    n: store.frameCount(), current: store.currentFrame(),
+    rows: list.map((p) => ({ mask: p.store.annotatedMask(), active: p.id === curId, label: personLabel(p.id) })),
+  });
+  const rows = list.map((p) => ({ id: p.id, count: countMarked(p.store.annotatedMask()), dirty: persons.dirty(p) }));
+  const key = JSON.stringify([curId, rows]);
+  if (key !== personPanelKey) { personPanelKey = key; personPanel?.render(rows, curId); }
+}
+
+function marksSummary() {
+  return markedSummary(persons.list().map((p) => ({ label: personLabel(p.id), count: countMarked(p.store.annotatedMask()) })));
+}
+
 function renderAnnoActions() {
+  refreshMarks();
   const host = $('anno-actions'); if (!host) return;
   const has = store && store.hasData();
-  $('anno-state').textContent = !store ? '—' : (has ? '✅ 本帧已标注' : '— 本帧无标注');
+  const who = persons && persons.size() > 1 ? `${personLabel(persons.currentId())} ` : '';
+  $('anno-state').textContent = !store ? '—' : (has ? `✅ ${who}本帧已标注` : `— ${who}本帧无标注`);
   host.innerHTML = '';
   if (!store || ui?.readOnly) return;
   const row = document.createElement('div'); row.className = 'row'; host.appendChild(row);
@@ -153,6 +181,7 @@ async function showFrame(i) {
   const token = ++frameToken;
   store.setFrame(i);
   $('slider').value = String(i);
+  timeline?.setCurrent(i);
   $('frame-info').textContent = `${i + 1} / ${store.frameCount()}`; // 1-based 显示;内部仍 0-based(对齐不变)
   const a = store.current();
   // 先把点云解码完(async)，再与 mesh 写入同一同步块——两者下一帧 rAF 一起出现，消除“一快一慢”。
@@ -172,12 +201,15 @@ async function showFrame(i) {
   }
   if (decoded) commitPointCloud(decoded);
   renderAnnoActions();
-  followLockedPerson();   // 视野锁定人物：刚性跟随本帧人体位移（保持距离/朝向/相对位置）
+  followLockedPerson();   // 📌 跟随人物：刚性跟随当前人物位移（保持距离/朝向/相对位置）
   if (syncUI) syncUI();
 }
 
-// 视野锁定人物：以人体中心帧间位移刚性平移三视口（相机+target 同步加 delta）。
-// 距离/朝向/缩放/相对位置全保持，不解锁用户操作。过渡规则：
+// 📌 跟随人物：以当前人物中心的帧间位移刚性平移三视口（相机+target 同步加 delta）。
+// 与 F 的分工：F = 一次性把人物放到画面中心；跟随 = 之后保持「此刻」的画面关系(不主动居中)。
+// 两者叠加(先 F 再开跟随,或跟随中按 F)即「持续居中」。
+// 距离/朝向/缩放/相对位置全保持，不解锁用户操作。切换人物时同样按两人中心差平移,
+// 新人物落在原人物的画面位置上。过渡规则：
 //   有→无：本帧无人 → 不更新基准、相机不动（延续最后位置）；
 //   无→有：首次出现只立基准、不跳，下一帧起跟随。
 function followLockedPerson() {
@@ -191,10 +223,31 @@ function followLockedPerson() {
   lockCenter = cur;
 }
 
-// 统一 focus 入口：三视口各自 focus 到 center（保持朝向、按 radius 调距离）。F 键用。
+// 统一 focus 入口：三视口各自 focus 到 center（保持朝向、按 radius 调距离）。
 function focusViewports(center, radius) {
   if (!center) return;
   for (const n of ['main', 'side', 'front']) mgr.viewport(n)?.focus(center, radius);
+}
+
+const curPersonLabel = () => (persons ? personLabel(persons.currentId()) : '人物');
+
+// F：居中当前人物(一次性)。本帧当前人物无标注 → 退回居中点云,并明说退回了。
+function focusCurrent() {
+  const body = bodyBounds(lastJoints);
+  const b = body ?? scene.pointCloud.bounds();
+  if (!b) { setStatus('本帧无人物、无点云，无可居中'); return; }
+  focusViewports(b.center, b.radius);
+  if (lockPerson && body) lockCenter = body.center;   // 跟随基准对齐到居中后的画面:之后持续居中
+  const who = curPersonLabel();
+  setStatus(body
+    ? `已居中 ${who}${lockPerson ? '（跟随中：之后持续居中）' : ''}`
+    : `本帧 ${who} 无标注 → 已居中点云`);
+}
+
+function paintLockButton() {
+  const btn = $('btn-lock-person');
+  btn.classList.toggle('on', lockPerson);
+  btn.textContent = lockPerson ? `📌 跟随中: ${curPersonLabel()}` : '📌 跟随人物';
 }
 
 async function mountSequence() {
@@ -203,11 +256,7 @@ async function mountSequence() {
     // 背景 loop 目录被误当主序列打开：明确报错胜过让人对着一片静止的场景点云调试。
     throw new Error('该目录是背景 loop(kind=background)，请用「载入背景点云」按钮打开');
   }
-  const raw = await source.readAnnotation();
-  let coco;
-  if (raw) coco = new CocoDocument(raw);
-  else coco = new CocoDocument({ images: Array.from({ length: manifest.frameCount }, (_, i) => ({ id: i })), annotations: [], categories: [] });
-  store = new AnnotationStore(coco);
+  const skipped = await loadPersons();
   ui = new UIController({ modes: ['root', 'pose', 'beta'] });
   if (syncUI) ui.onChange(syncUI);
   $('slider').max = String(Math.max(0, store.frameCount() - 1));
@@ -220,9 +269,73 @@ async function mountSequence() {
   // 初次取景:相机按当前上轴/前轴环绕点云包围球,几何不动。
   applyAxisFrame(true);
   if (syncUI) syncUI();
-  setStatus(`已加载 ${manifest.frameCount} 帧`);
+  setStatus(`已加载 ${manifest.frameCount} 帧 · ${marksSummary()}${skipped.length ? ` · ⚠ 跳过非标注格式: ${skipped.join(', ')}` : ''}`);
   $('btn-load-json').disabled = false;
   $('btn-load-bg').disabled = false;
+}
+
+// 读目录里全部 player_N.json → persons;一份都没有则 0 号人物为空标注(保存时写 player_0.json)。
+// keepId:重置时尽量留在原人物上。返回被跳过(非 COCO)的文件名。
+async function loadPersons(keepId = null) {
+  const fallbackRaw = { images: Array.from({ length: manifest.frameCount }, (_, i) => ({ id: i })), annotations: [], categories: [] };
+  const r = await loadPersonSet({ paths: await source.listNames(), primaryPath: PRIMARY_ANNO, readJson: (n) => source.readJsonNamed(n), fallbackRaw });
+  persons = r.persons;
+  if (keepId != null && persons.has(keepId)) persons.select(keepId);
+  store = persons.current().store;
+  personPanelKey = '';
+  return r.skipped;
+}
+
+const isDragging = () => dragGuards.some((g) => g.isDragging());
+
+// 切换/新建/改号/删除人物后的公共收尾:store 指向新的当前人物,停在原帧重绘。
+async function afterPersonChange(msg) {
+  const at = store.currentFrame();
+  store = persons.current().store;
+  store.setFrame(Math.min(at, store.frameCount() - 1));
+  if (ui?.mode === 'pose') ui.clearSelection();   // 关节选择不跨人物沿用
+  await showFrame(store.currentFrame());
+  paintLockButton();   // 跟随对象随当前人物变化
+  if (msg) setStatus(msg);
+}
+
+function selectPerson(id) {
+  if (!persons || isDragging()) return;
+  persons.select(id, store.currentFrame());
+  afterPersonChange(`当前人物: ${personLabel(id)}`);
+}
+
+function addPerson() {
+  if (!persons || isDragging()) return;
+  const p = addEmptyPerson(persons, PRIMARY_ANNO, store.currentFrame());
+  afterPersonChange(`已新建 ${personLabel(p.id)}(未保存)— 在需要的帧上「新建」或「复制上一帧」开始标注`);
+}
+
+function renumberCurrent(id) {
+  if (!persons || isDragging()) return;
+  const text = window.prompt(`把 ${personLabel(id)} 改为几号?(文件名随之改为 player_N.json)`, String(persons.nextId()));
+  if (text == null) return;
+  try {
+    const n = parsePersonId(text, persons);
+    renumberPerson(persons, PRIMARY_ANNO, id, n);
+    afterPersonChange(`已改号 ${personLabel(id)} → ${personLabel(n)}(保存后生效)`);
+  } catch (e) { setStatus(String(e.message ?? e)); }
+}
+
+function removePerson(id) {
+  if (!persons || isDragging()) return;
+  if (!window.confirm(`删除 ${personLabel(id)}?\n其标注文件将在「保存」时从目录删除;保存前可「重置」反悔。`)) return;
+  try { persons.remove(id); } catch (e) { setStatus(String(e.message ?? e)); return; }
+  afterPersonChange(`已删除 ${personLabel(id)}(保存后生效)`);
+}
+
+// 上/下一个有标注帧(当前人物)。
+function jumpMarked(dir) {
+  if (!store) return;
+  setPlaying(false);
+  const j = findMarked(store.annotatedMask(), store.currentFrame(), dir);
+  if (j < 0) { setStatus(dir > 0 ? '后面没有已标注帧' : '前面没有已标注帧'); return; }
+  showFrame(j);
 }
 
 async function openDirectory() {
@@ -243,37 +356,53 @@ async function mountBackground(src) {
   setStatus(`已载入背景 ${m.frameCount} 帧 loop（按帧号取模跟随）`);
 }
 
+// 保存:当前人物 + 所有有未保存修改的人物各写回自己的 player_N.json,并删掉已删除人物的文件。
+// PcdDirSource 原地写(已具抗只读重建);写入抛异常时把当前人物退回下载,避免标注丢失。
 async function saveAnnotation() {
-  if (!store) return;
-  const obj = store.document().serialize();
-  // FileListSource.saveAnnotation 本就下载；PcdDirSource 原地写（已具抗只读重建），
-  // 写入仍抛异常时退回下载，避免标注丢失。
+  if (!persons) return;
   try {
-    const path = await source.saveAnnotation(obj);
-    setStatus(`已保存 ${path}`);
+    const { written, removed } = await savePersonSet(persons, {
+      serialize: (s) => s.document().serialize(),
+      writeJson: (name, obj) => source.writeJsonNamed(name, obj),
+      removeFile: (name) => source.removeNamed(name),
+    });
+    const rmNote = removed.length ? (source.canWrite ? ` · 已删除 ${removed.join(', ')}` : ` · ⚠ 请手动删除 ${removed.join(', ')}`) : '';
+    setStatus(`已保存 ${written.join(', ')}${rmNote}`);
   } catch (e) {
     console.warn('原地保存失败，退回下载：', e);
-    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'player_0.json'; a.click();
-    URL.revokeObjectURL(url);
-    setStatus(`⚠ 原地保存失败（${e?.name || e}），改为下载 player_0.json — 请手动覆盖回数据目录`);
+    const p = persons.current();
+    downloadJson(p.path, p.store.document().serialize());
+    setStatus(`⚠ 原地保存失败（${e?.name || e}），改为下载 ${p.path} — 请手动覆盖回数据目录`);
   }
+  personPanelKey = ''; refreshMarks();
 }
 
-// 手动加载标注 JSON：覆盖内存的 SMPL 标注，保存仍写回当前序列目录的 player_0.json。
+// 手动加载标注 JSON：整份替换【当前人物】的标注，保存仍写回该人物的 player_N.json。
 // 需先打开序列目录（按钮在 mountSequence 后才启用）。
 async function loadAnnotationJson(file) {
   const raw = JSON.parse(await file.text());
   if (!isCocoDoc(raw)) { setStatus('该文件不是 SMPL 标注（COCO）格式，未加载'); return; }
   const at = store.currentFrame();   // 新 store 从 0 帧起，先记住当前帧再重建以保留
-  store = new AnnotationStore(new CocoDocument(raw));
+  const p = persons.replaceStore(persons.currentId(), new AnnotationStore(new CocoDocument(raw)));
+  store = p.store;
   ui = new UIController({ modes: ['root', 'pose', 'beta'] });
   if (syncUI) ui.onChange(syncUI);
   $('slider').max = String(Math.max(0, store.frameCount() - 1));
   await showFrame(Math.min(at, store.frameCount() - 1));
-  setStatus(`已加载标注 JSON（${file.name}）— 保存写回 player_0.json`);
+  setStatus(`已加载标注 JSON（${file.name}）到 ${personLabel(p.id)} — 保存写回 ${p.path}`);
+}
+
+// 重置:丢弃全部人物的未保存修改(含新建/改号/删除),从目录重读。
+async function resetFromDisk() {
+  if (!source || !store) return;
+  if (persons.anyDirty() && !window.confirm('丢弃所有人物的未保存修改(含新建/改号/删除),从目录重新读取?')) return;
+  const at = store.currentFrame();
+  await loadPersons(persons.currentId());
+  ui = new UIController({ modes: ['root', 'pose', 'beta'] });
+  if (syncUI) ui.onChange(syncUI);
+  $('slider').max = String(Math.max(0, store.frameCount() - 1));
+  await showFrame(Math.min(at, store.frameCount() - 1));
+  setStatus(`已重置 · ${marksSummary()}`);
 }
 
 function boot() {
@@ -326,9 +455,11 @@ function boot() {
   // 视野锁定人物：开启即以当前人体中心为基准（不动相机），之后切帧刚性跟随位移。
   $('btn-lock-person').addEventListener('click', () => {
     lockPerson = !lockPerson;
-    $('btn-lock-person').classList.toggle('on', lockPerson);
     lockCenter = lockPerson ? (bodyBounds(lastJoints)?.center ?? null) : null;
-    setStatus(lockPerson ? '已锁定视野：切帧跟随人物，保持距离/方向/相对位置' : '已取消视野锁定');
+    paintLockButton();
+    setStatus(lockPerson
+      ? `已开启跟随 ${curPersonLabel()}：切帧保持当前画面关系（不自动居中，需要居中按 F）`
+      : '已关闭跟随');
   });
   $('speed').addEventListener('input', (e) => { fps = +e.target.value; $('speed-val').textContent = `${fps} fps`; });
   $('btn-undo').addEventListener('click', () => { if (store) { store.undo(); showFrame(store.currentFrame()); } });
@@ -344,7 +475,16 @@ function boot() {
     const f = e.target.files?.[0]; if (f) loadAnnotationJson(f).catch((err) => setStatus(String(err)));
     e.target.value = '';
   });
-  $('btn-reset').addEventListener('click', async () => { if (!source || !store) return; const raw = await source.readAnnotation(); if (raw) { store = new AnnotationStore(new CocoDocument(raw)); ui = new UIController({ modes: ['root', 'pose', 'beta'] }); if (syncUI) ui.onChange(syncUI); } await showFrame(Math.min(store.currentFrame(), store.frameCount() - 1)); setStatus('已重置'); });
+  $('btn-reset').addEventListener('click', () => resetFromDisk().catch((e) => setStatus(String(e))));
+
+  // 有/无标注条(点/拖跳帧)+ 上/下一有标注帧;人物面板(切换/新建/改号/删除)。
+  timeline = new AnnoTimeline({
+    host: $('anno-timeline'),
+    onSeek: (i) => { if (!store) return; setPlaying(false); showFrame(i); },
+    onJump: jumpMarked,
+  });
+  personPanel = new PersonPanel({ host: $('person-panel'), onSelect: selectPerson, onAdd: addPerson, onRenumber: renumberCurrent, onRemove: removePerson });
+  window.addEventListener('beforeunload', (e) => { if (persons?.anyDirty()) { e.preventDefault(); e.returnValue = ''; } });
 
   const toggle = (id, key) => $(id).addEventListener('click', () => { const on = !$(id).classList.contains('on'); $(id).classList.toggle('on', on); scene.setFlag(key, on); });
   toggle('t-points', 'points'); toggle('t-background', 'background'); toggle('t-mesh', 'mesh');
@@ -472,11 +612,11 @@ function boot2() {
   window.addEventListener('keydown', (e) => {
     if (!store || e.target.matches('input,select,textarea')) return;
     if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); setPlaying(!playing); return; } // 空格随时暂停/播放
+    if (e.key === '[' || e.key === ']') { if (!isDragging()) jumpMarked(e.key === ']' ? +1 : -1); return; } // 上/下一有标注帧
     if (dragGuards.some((g) => g.isDragging())) return;  // 仅拖拽中不抢键；播放中允许 F/R
     const b = viewBounds();
     if (e.key === 'f' || e.key === 'F') {
-      if (!b) { setStatus('无人体/点云可聚焦'); return; }
-      focusViewports(b.center, b.radius);   // F 聚焦三视口（统一入口）
+      focusCurrent();   // F 居中当前人物(三视口,一次性)
     } else if (e.key === 'r' || e.key === 'R') {
       // R 重置当前视口朝向+距离,走与「开新数据」同一取景源(viewBounds)。
       const vp = mgr.activeViewport(); if (!vp) return;

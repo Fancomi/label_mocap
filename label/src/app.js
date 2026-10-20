@@ -27,6 +27,11 @@ import { BboxOverlay } from './edit/bbox_overlay.js';
 import { fsAccessSupported, pickDirectory, DirSource, videoOpenSupported, pickVideoFile, jsonOpenSupported, pickJsonFile } from './io/dir_source.js';
 import { isCocoDoc } from './io/anno_validate.js';
 import { VideoSource } from './io/video_source.js';
+import { AnnoTimeline } from '../../smpl_edit/anno_timeline.js';
+import { PersonPanel } from '../../smpl_edit/person_panel.js';
+import { findMarked, countMarked, markedSummary } from '../../smpl_edit/frame_marks.js';
+import { personLabel, inferPrimaryPath } from '../../smpl_edit/person_files.js';
+import { loadPersonSet, addEmptyPerson, renumberPerson, savePersonSet, parsePersonId } from '../../smpl_edit/person_io.js';
 import * as THREE from 'three';
 
 const $ = (id) => document.getElementById(id);
@@ -58,7 +63,10 @@ async function loadModelWithProgress() {
 const MODEL_URL = new URL('../../smpl_web_viewer/public/models/smpl_neutral.meta.json', import.meta.url);
 let model = null, scene = null, cam = null, store = null;
 let images = new Map();      // index -> File
-let loadedJsonFile = null;   // raw json File, for Reset-from-disk
+// 多人物:persons 持有全部人物(各自 store/undo),store 恒指向当前人物的 store。
+// personSrc = 本次数据源的人物装载参数({ paths, primaryPath, readJson, fallbackRaw }),重置时原样重读。
+let persons = null, personSrc = null;
+let timeline = null, personPanel = null, personPanelKey = '';
 let dirSource = null;
 let videoSource = null;
 let readOnly = false;
@@ -139,14 +147,15 @@ function setPlaying(on) {
 // 两条 open 路径(目录/视频 与 本地文件)的公共尾段:校验内容、竖拍 gate、装配
 // store/ui/slider/right/model/scene,并显示首帧。调用方各自先准备好 coco/background
 // 以及 images(Map)或 videoSource(模块级变量),mountDataset 不触碰它们。
-async function mountDataset({ coco, background, hint = {} }) {
+async function mountDataset({ background, hint = {} }) {
+  const coco = store.document();
   const ids = coco.imageIds();
-  const dataFrameIndices = ids.map((id, idx) => (coco.getAnnotation(id) ? idx : -1)).filter((x) => x >= 0);
+  // 「有可标注内容」按全部人物合计:任一人物任一帧有标注即算。
+  const dataFrameIndices = ids.map((_, idx) => (persons.list().some((p) => p.store.hasDataAt(idx)) ? idx : -1)).filter((x) => x >= 0);
   assertHasContent({ bgCount: background ? background.count : 0, dataFrameIndices, hint });
   const info = coco.imageInfo(ids[0]);
   readOnly = info ? isPortrait(info) : false;
   if (readOnly) setStatus('⚠ 该数据为竖拍/旋转,标注器仅支持查看;请用其他软件转正后再标注');
-  store = new AnnotationStore(coco);
   ui = new UIController({ readOnly, modes: editorModes });
   if (syncUI) ui.onChange(syncUI);
   drawArmed = false;   // 切换数据集时复位画框武装态,避免残留到新数据
@@ -166,7 +175,21 @@ async function mountDataset({ coco, background, hint = {} }) {
   scene.resize();
   await showFrame(0);
   if (syncUI) syncUI();
+  if (!readOnly) setStatus(`已加载 ${store.frameCount()} 帧 · ${marksSummary()}${personSrc?.skipped?.length ? ` · ⚠ 跳过非标注格式: ${personSrc.skipped.join(', ')}` : ''}`);
 }
+
+// 按 personSrc 装载全部人物(player_N 同族文件);一份都没有时 0 号人物用 fallbackRaw()(空帧轴)。
+// keepId:重置时尽量留在原人物上。
+async function loadPersons(fallbackRaw, keepId = null) {
+  const r = await loadPersonSet({ paths: personSrc.getPaths(), primaryPath: personSrc.primaryPath, readJson: personSrc.readJson, fallbackRaw });
+  persons = r.persons; personSrc.skipped = r.skipped;
+  if (keepId != null && persons.has(keepId)) persons.select(keepId);
+  store = persons.current().store;
+  personPanelKey = '';
+}
+
+const synthDocFromNames = (names) => ({ images: names.map((nm, i) => ({ id: i, file_name: nm })), annotations: [], categories: [] });
+const synthDocFromCount = (n) => ({ images: Array.from({ length: n }, (_, i) => ({ id: i })), annotations: [], categories: [] });
 
 // 解析数据集首帧的真实像素尺寸。来源优先级:json images[0].width/height →
 // 解码首帧图像 File → videoSource 尺寸。拿不到返回 null(回退工厂默认)。
@@ -199,63 +222,56 @@ async function openFiles(fileList) {
   videoSource = null;
   images = new Map();
   const files = Array.from(fileList ?? []);
-  const jsonFile = files.find((f) => f.name.endsWith('.json'));
-  loadedJsonFile = jsonFile ?? null;
+  const byPath = new Map(files.map((f) => [f.webkitRelativePath || f.name, f]));
+  const jsonPaths = [...byPath.keys()].filter((p) => /\.json$/i.test(p));
+  // 主标注:player_0.json > 由任一 player_N 推出的 0 号 > 任意 json;都没有则保存时下载 player_0.json。
+  const primaryPath = jsonPaths.find((p) => basename(p) === 'player_0.json') ?? inferPrimaryPath(jsonPaths) ?? jsonPaths[0] ?? 'player_0.json';
+  personSrc = {
+    getPaths: () => jsonPaths, primaryPath,
+    readJson: async (p) => { const f = byPath.get(p); return f ? JSON.parse(await f.text()) : null; },
+    writeJson: async (p, obj) => { downloadJson(basename(p), obj); return `${basename(p)}(已下载)`; },
+    removeFile: null,   // 内存 FileList 无法删盘:保存时提示用户手动删
+  };
   const imageFiles = files.filter((f) => isImageName(f.name));
   // basename -> File lookup (no positional ordering; ordering comes from
   // orderedImageNames so the background follows the json's images[] order).
   const byName = new Map(imageFiles.map((f) => [basename(f.name), f]));
   const availableNames = imageFiles.map((f) => f.name);
 
-  let coco = null;
-  if (jsonFile) {
-    coco = new CocoDocument(JSON.parse(await jsonFile.text()));
-  }
-  if (!coco) {
-    // data-less: synthesize images[] from a NUMERIC sort of the image files so
-    // imageIds()/positions line up with the background ordering below.
-    const names = orderedImageNames({ cocoImages: [], availableNames });
-    coco = new CocoDocument({ images: names.map((nm, i) => ({ id: i, file_name: nm })), annotations: [], categories: [] });
-  }
+  // data-less: synthesize images[] from a NUMERIC sort of the image files so
+  // imageIds()/positions line up with the background ordering below.
+  await loadPersons(() => synthDocFromNames(orderedImageNames({ cocoImages: [], availableNames })));
 
   // Authoritative frame ordering: follows json images[] when file_names exist,
   // else the numeric-sorted synthesized order. Match each frame's background by
   // basename rather than by sorted position.
-  const names = orderedImageNames({ cocoImages: coco.images(), availableNames });
+  const names = orderedImageNames({ cocoImages: store.document().images(), availableNames });
   names.forEach((nm, i) => images.set(i, byName.get(basename(nm)) ?? null));
   const bgCount = names.length;
   const background = bgCount ? { kind: 'image_sequence', count: bgCount } : null;
 
   const hasManifest = files.some((f) => basename(f.webkitRelativePath || f.name) === 'manifest.json');
-  await mountDataset({ coco, background, hint: { hasManifest } });
+  await mountDataset({ background, hint: { hasManifest } });
 }
 
 async function openFromDirSource(opts = {}) {
-  loadedJsonFile = null;
   images = new Map();
   if (videoSource) { videoSource.dispose(); videoSource = null; }
   const cls = dirSource.classification;
-
-  let coco = null;
-  const rawJson = await dirSource.readJson();
-  if (rawJson) coco = new CocoDocument(rawJson);
+  const src = dirSource;
+  // 主标注路径:已有 json > 由任一 player_N 推出的 0 号 > 新建时的写入路径。其余人物同族 player_N。
+  personSrc = {
+    getPaths: () => src.paths,
+    primaryPath: cls.jsonPath ?? inferPrimaryPath(src.paths) ?? cls.writeJsonPath,
+    readJson: (p) => src.readJsonAt(p),
+    writeJson: (p, obj) => src.writeFile(p, JSON.stringify(obj, null, 2)),
+    removeFile: (p) => src.removeFile(p),
+  };
 
   const availableNames = cls.imagePaths ?? [];
   let bgCount = 0;
   let backgroundKind = 'image_sequence';
-  let names = [];
-  if (availableNames.length) {
-    if (!coco) {
-      // data-less: synthesize images[] from a NUMERIC sort so positions line up.
-      const synth = orderedImageNames({ cocoImages: [], availableNames });
-      coco = new CocoDocument({ images: synth.map((nm, i) => ({ id: i, file_name: nm })), annotations: [], categories: [] });
-    }
-    // Authoritative ordering: json images[] when file_names exist, else numeric
-    // sort. Match each frame's background file by basename, not by position.
-    names = orderedImageNames({ cocoImages: coco.images(), availableNames });
-    for (let i = 0; i < names.length; i++) images.set(i, await dirSource.imageFileByName(names[i]));
-    bgCount = names.length;
-  } else if (cls.videoPath) {
+  if (!availableNames.length && cls.videoPath) {
     let videoFile = await dirSource.videoFile();
     if (!videoFile && opts.videoFileOverride) videoFile = opts.videoFileOverride;
     if (videoFile) {
@@ -264,13 +280,20 @@ async function openFromDirSource(opts = {}) {
     }
     backgroundKind = 'video';
   }
+  // data-less: synthesize images[] from a NUMERIC sort so positions line up(视频则按帧数)。
+  await loadPersons(() => (availableNames.length
+    ? synthDocFromNames(orderedImageNames({ cocoImages: [], availableNames }))
+    : synthDocFromCount(bgCount)));
+  if (availableNames.length) {
+    // Authoritative ordering: json images[] when file_names exist, else numeric
+    // sort. Match each frame's background file by basename, not by position.
+    const names = orderedImageNames({ cocoImages: store.document().images(), availableNames });
+    for (let i = 0; i < names.length; i++) images.set(i, await dirSource.imageFileByName(names[i]));
+    bgCount = names.length;
+  }
   const background = bgCount ? { kind: backgroundKind, count: bgCount } : null;
 
-  if (!coco) {
-    coco = new CocoDocument({ images: Array.from({ length: bgCount }, (_, i) => ({ id: i })), annotations: [], categories: [] });
-  }
-
-  await mountDataset({ coco, background, hint: { hasManifest: !!cls.hasManifest } });
+  await mountDataset({ background, hint: { hasManifest: !!cls.hasManifest } });
 }
 
 async function openDirectoryData() {
@@ -307,18 +330,39 @@ function applyAnnotation() {
   scene.setFollowCenter(lastJoints ? (bodyBounds(lastJoints)?.center ?? null) : null);
   if (panels) panels.syncFromState();
   if (bboxOverlay) bboxOverlay.render(store.current()?.bbox ?? null);
+  refreshMarks();   // 拖拽中改动 → 人物列表的未保存标记(*)即时更新(掩码按 revision 缓存,开销很小)
+}
+
+// 有/无标注条 + 人物列表:掩码按 store.revision 缓存,逐帧调用只是重画一条 canvas。
+function refreshMarks() {
+  if (!persons || !store) return;
+  const curId = persons.currentId();
+  const list = persons.list();
+  timeline?.setData({
+    n: store.frameCount(), current: store.currentFrame(),
+    rows: list.map((p) => ({ mask: p.store.annotatedMask(), active: p.id === curId, label: personLabel(p.id) })),
+  });
+  const rows = list.map((p) => ({ id: p.id, count: countMarked(p.store.annotatedMask()), dirty: persons.dirty(p) }));
+  const key = JSON.stringify([curId, rows]);
+  if (key !== personPanelKey) { personPanelKey = key; personPanel?.render(rows, curId); }
+}
+
+function marksSummary() {
+  return markedSummary(persons.list().map((p) => ({ label: personLabel(p.id), count: countMarked(p.store.annotatedMask()) })));
 }
 
 function renderAnnoActions() {
+  refreshMarks();
   const host = $('anno-actions'); if (!host) return;
   const has = store && store.hasData();
   const hasB = store && store.hasBbox();
   const hasS = store && store.hasSmpl();
+  const who = persons && persons.size() > 1 ? `${personLabel(persons.currentId())} ` : '';
   $('anno-state').textContent = !store ? '—'
-    : (hasB && hasS) ? '✅ 框 + SMPL'
-    : hasS ? '🧍 已有 SMPL'
-    : hasB ? '📦 仅框选(可云端推理)'
-    : '— 本帧无标注';
+    : (hasB && hasS) ? `✅ ${who}框 + SMPL`
+    : hasS ? `🧍 ${who}已有 SMPL`
+    : hasB ? `📦 ${who}仅框选(可云端推理)`
+    : `— ${who}本帧无标注`;
   host.innerHTML = '';
   if (!store || ui?.readOnly) return;
   const row = document.createElement('div'); row.className = 'row'; host.appendChild(row);
@@ -334,6 +378,7 @@ function renderAnnoActions() {
 async function showFrame(i) {
   store.setFrame(i);
   $('slider').value = String(i);
+  timeline?.setCurrent(i);
   $('frame-info').textContent = `${i + 1} / ${store.frameCount()}`; // 1-based 显示;内部仍 0-based(对齐不变)
   const a = store.current();
   if (a && store.hasSmpl()) {
@@ -373,9 +418,8 @@ async function showFrame(i) {
   if (syncUI) syncUI();
 }
 
-async function saveJson() {
-  if (!store || !model) return;
-  const doc = store.document();
+// 保存前为某人物补算 SMPL 派生字段(2D 关键点重投影 + 遮挡),写入其文档(不进 undo)。
+function bakeDerived(doc) {
   for (const id of doc.imageIds()) {
     const a = doc.getAnnotation(id);
     if (!a || !doc.hasSmpl(id)) continue;   // 仅 bbox 帧:保留框,不补算 SMPL 派生字段
@@ -390,75 +434,123 @@ async function saveJson() {
     tmpMesh.material.dispose();
     doc.setAnnotation(id, { keypoints, occlution_joint: occ });
   }
-  const obj = doc.serialize();
-  // 原地写回（已具抗只读重建）；写入仍抛异常时退回下载，避免标注丢失。
-  if (dirSource) {
-    try {
-      const path = await dirSource.saveJson(obj);
-      setStatus(`已保存 ${path}`);
-      return;
-    } catch (e) {
-      console.warn('原地保存失败，退回下载：', e);
-      setStatus(`⚠ 原地保存失败（${e?.name || e}），改为下载 player_0.json — 请手动覆盖回数据目录`);
-    }
-  }
+  return doc.serialize();
+}
+
+function downloadJson(name, obj) {
   const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
-  link.href = url; link.download = 'player_0.json'; link.click();
+  link.href = url; link.download = name; link.click();
   URL.revokeObjectURL(url);
-  if (!dirSource) setStatus('⚠ 当前浏览器不支持原地保存,已下载 player_0.json — 请手动覆盖回数据目录(原地保存请用 Chrome/Edge)');
 }
 
-// 手动加载标注 JSON：覆盖内存的标注，保存仍写回已打开目录的标准 json。
+// 保存:当前人物 + 所有有未保存修改的人物各写回自己的文件(player_N 同族),并删掉已删除人物的文件。
+// 原地写回（已具抗只读重建）；写入仍抛异常时把当前人物退回下载，避免标注丢失。
+async function saveJson() {
+  if (!persons || !model) return;
+  try {
+    const { written, removed } = await savePersonSet(persons, {
+      serialize: (s) => bakeDerived(s.document()),
+      writeJson: personSrc.writeJson,
+      removeFile: personSrc.removeFile,
+    });
+    const rmNote = removed.length ? (personSrc.removeFile ? ` · 已删除 ${removed.join(', ')}` : ` · ⚠ 请手动删除 ${removed.join(', ')}`) : '';
+    setStatus(`${dirSource ? '已保存' : '⚠ 当前浏览器不支持原地保存,已下载'} ${written.join(', ')}${rmNote}${dirSource ? '' : ' — 请手动覆盖回数据目录(原地保存请用 Chrome/Edge)'}`);
+  } catch (e) {
+    console.warn('原地保存失败，退回下载：', e);
+    const p = persons.current();
+    downloadJson(basename(p.path), p.store.document().serialize());
+    setStatus(`⚠ 原地保存失败（${e?.name || e}），改为下载 ${basename(p.path)} — 请手动覆盖回数据目录`);
+  }
+  personPanelKey = ''; refreshMarks();
+}
+
+// 手动加载标注 JSON：整份替换【当前人物】的标注，保存仍写回该人物的文件。
 // 需先打开数据（store 存在）；保留当前帧。
 async function loadAnnotationJson(file) {
   if (!store) { setStatus('请先打开数据（目录/视频）'); return; }
   const raw = JSON.parse(await file.text());
   if (!isCocoDoc(raw)) { setStatus('该文件不是 SMPL 标注（COCO）格式，未加载'); return; }
   const at = store.currentFrame();   // 新 store 从 0 帧起，先记住当前帧再重建以保留
-  store = new AnnotationStore(new CocoDocument(raw));
+  const p = persons.replaceStore(persons.currentId(), new AnnotationStore(new CocoDocument(raw)));
+  store = p.store;
   ui = new UIController({ readOnly, modes: editorModes });
   if (syncUI) ui.onChange(syncUI);
   $('slider').max = String(Math.max(0, store.frameCount() - 1));
   await showFrame(Math.min(at, store.frameCount() - 1));
-  setStatus(`已加载标注 JSON（${file.name}）`);
+  setStatus(`已加载标注 JSON（${file.name}）到 ${personLabel(p.id)} — 保存写回 ${p.path}`);
 }
 
+// 重置:丢弃全部人物的未保存修改(含新建/改号/删除),从同源重读;源里没有 json 时 = 清空(空帧轴沿用当前)。
+// 不复用 mountDataset:本函数语义是"重读同源并保留当前帧",不应重置相机
+// (snapTo/resize/prepareForSequence)或跳回第 0 帧,故保留独立装配。
 async function resetFromDisk() {
-  // 不复用 mountDataset:本函数语义是"重读同源并保留当前帧",不应重置相机
-  // (snapTo/resize/prepareForSequence)或跳回第 0 帧,故保留独立装配。
-  if (!store) return;
-  if (dirSource) {
-    const raw = await dirSource.readJson();
-    if (raw) {
-      store = new AnnotationStore(new CocoDocument(raw));
-    } else {
-      // 目录里没有 json:重置 = 清空所有标注(回到「未标注」空白态),而不是保留内存里的。
-      store = new AnnotationStore(emptyCocoLike(store.document()));
-    }
-    ui = new UIController({ readOnly, modes: editorModes });
-    if (syncUI) ui.onChange(syncUI);
-  } else if (loadedJsonFile) {
-    const coco = new CocoDocument(JSON.parse(await loadedJsonFile.text()));
-    store = new AnnotationStore(coco);
-    ui = new UIController({ readOnly, modes: editorModes });
-    if (syncUI) ui.onChange(syncUI);
-  } else {
-    // 无 json 来源(纯图像/视频):重置 = 清空所有标注。
-    store = new AnnotationStore(emptyCocoLike(store.document()));
-    ui = new UIController({ readOnly, modes: editorModes });
-    if (syncUI) ui.onChange(syncUI);
-  }
-  await showFrame(Math.min(store.currentFrame(), store.frameCount() - 1));
-  setStatus('已重置');
+  if (!store || !personSrc) return;
+  if (persons.anyDirty() && !window.confirm('丢弃所有人物的未保存修改(含新建/改号/删除),重新读取?')) return;
+  const at = store.currentFrame();
+  const base = store.document().serialize();
+  await loadPersons(() => ({ images: base.images ?? [], annotations: [], categories: base.categories ?? [] }), persons.currentId());
+  ui = new UIController({ readOnly, modes: editorModes });
+  if (syncUI) ui.onChange(syncUI);
+  $('slider').max = String(Math.max(0, store.frameCount() - 1));
+  await showFrame(Math.min(at, store.frameCount() - 1));
+  setStatus(`已重置 · ${marksSummary()}`);
 }
 
-// 构造一个保留 images[](帧序/尺寸/file_name)但 annotations 全空的 CocoDocument,
-// 用于「无 json 来源时」重置 → 清空全部标注。沿用原 images 以保持帧数与背景对齐。
-function emptyCocoLike(doc) {
-  const raw = doc.serialize();
-  return new CocoDocument({ images: raw.images ?? [], annotations: [], categories: raw.categories ?? [] });
+const isDragging = () => dragGuards.some((g) => g.isDragging());
+
+// 切换/新建/改号/删除人物后的公共收尾:store 指向新的当前人物,停在原帧重绘。
+async function afterPersonChange(msg) {
+  const at = store.currentFrame();
+  store = persons.current().store;
+  store.setFrame(Math.min(at, store.frameCount() - 1));
+  drawArmed = false;
+  if (ui?.mode === 'pose') ui.clearSelection();   // 关节选择不跨人物沿用
+  await showFrame(store.currentFrame());
+  if (msg) setStatus(msg);
+}
+
+function selectPerson(id) {
+  if (!persons || isDragging() || isBusy()) return;
+  persons.select(id, store.currentFrame());
+  afterPersonChange(`当前人物: ${personLabel(id)}`);
+}
+
+function addPerson() {
+  if (!persons || isDragging() || isBusy()) return;
+  if (ui?.readOnly) { setStatus('只读数据不可增删改人物'); return; }
+  const p = addEmptyPerson(persons, personSrc.primaryPath, store.currentFrame());
+  afterPersonChange(`已新建 ${personLabel(p.id)}(未保存,将写入 ${p.path})`);
+}
+
+function renumberCurrent(id) {
+  if (!persons || isDragging() || isBusy()) return;
+  if (ui?.readOnly) { setStatus('只读数据不可增删改人物'); return; }
+  const text = window.prompt(`把 ${personLabel(id)} 改为几号?(文件名随之改为 player_N)`, String(persons.nextId()));
+  if (text == null) return;
+  try {
+    const n = parsePersonId(text, persons);
+    const p = renumberPerson(persons, personSrc.primaryPath, id, n);
+    afterPersonChange(`已改号 ${personLabel(id)} → ${personLabel(n)}(保存后写入 ${p.path})`);
+  } catch (e) { setStatus(String(e.message ?? e)); }
+}
+
+function removePerson(id) {
+  if (!persons || isDragging() || isBusy()) return;
+  if (ui?.readOnly) { setStatus('只读数据不可增删改人物'); return; }
+  if (!window.confirm(`删除 ${personLabel(id)}?\n其标注文件将在「保存」时删除;保存前可「重置」反悔。`)) return;
+  try { persons.remove(id); } catch (e) { setStatus(String(e.message ?? e)); return; }
+  afterPersonChange(`已删除 ${personLabel(id)}(保存后生效)`);
+}
+
+// 上/下一个有标注帧(当前人物;口径同 hasData:框或 SMPL)。
+function jumpMarked(dir) {
+  if (!store) return;
+  setPlaying(false);
+  const j = findMarked(store.annotatedMask(), store.currentFrame(), dir);
+  if (j < 0) { setStatus(dir > 0 ? '后面没有已标注帧' : '前面没有已标注帧'); return; }
+  showFrame(j);
 }
 
 function boot() {
@@ -512,6 +604,14 @@ function boot() {
   $('btn-next').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.min(store.frameCount() - 1, store.currentFrame() + 1)); });
   $('btn-play').addEventListener('click', () => { if (store) setPlaying(!playing); });
   $('speed').addEventListener('input', (e) => { fps = +e.target.value; $('speed-val').textContent = `${fps} fps`; });
+  // 有/无标注条(点/拖跳帧)+ 上/下一有标注帧;人物面板(切换/新建/改号/删除)。
+  timeline = new AnnoTimeline({
+    host: $('anno-timeline'),
+    onSeek: (i) => { if (!store) return; setPlaying(false); showFrame(i); },
+    onJump: jumpMarked,
+  });
+  personPanel = new PersonPanel({ host: $('person-panel'), onSelect: selectPerson, onAdd: addPerson, onRenumber: renumberCurrent, onRemove: removePerson });
+  window.addEventListener('beforeunload', (e) => { if (persons?.anyDirty()) { e.preventDefault(); e.returnValue = ''; } });
 
   $('btn-undo').addEventListener('click', () => { if (store) { store.undo(); showFrame(store.currentFrame()); } });
   window.addEventListener('keydown', (e) => { if (store && !isBusy() && (e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); store.undo(); showFrame(store.currentFrame()); } });
@@ -519,13 +619,15 @@ function boot() {
   window.addEventListener('keydown', (e) => {
     if (!store || e.target.matches('input,select,textarea')) return;
     if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); setPlaying(!playing); }
+    else if ((e.key === '[' || e.key === ']') && !isDragging()) jumpMarked(e.key === ']' ? +1 : -1); // 上/下一有标注帧
   });
   window.addEventListener('keydown', (e) => {
     if (!store || isBusy() || e.target.matches('input,select,textarea')) return;
     if (e.key !== 'f' && e.key !== 'F') return;
+    const who = persons ? personLabel(persons.currentId()) : '人物';
     const b = bodyBounds(lastJoints);
-    if (!b) { setStatus('无人体可聚焦'); return; }
-    if (!cam.focusOn(b.center, b.radius)) setStatus('2D 模式不聚焦，切到 3D 后按 F');
+    if (!b) { setStatus(`本帧 ${who} 无 SMPL，无可居中`); return; }
+    setStatus(cam.focusOn(b.center, b.radius) ? `已居中 ${who}` : '2D 对齐视角不居中，切到 3D 后按 F');
   });
   $('kbd-hint-toggle').addEventListener('click', () => {
     const min = $('kbd-hint').classList.toggle('min');

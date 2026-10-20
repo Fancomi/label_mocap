@@ -68,6 +68,8 @@
     #joint-grid button.ik { outline:1px solid #2e9e60; } #joint-grid button:disabled { opacity:.35; cursor:not-allowed; }
     #right.disabled { opacity:.5; pointer-events:none; }
     #pose-rot-block[hidden] { display:none; }
+    .anno-timeline { display:flex; flex-direction:column; gap:3px; }
+    button:disabled { opacity:.4; cursor:not-allowed; }
   </style>
 </head>
 <body>
@@ -85,13 +87,19 @@
       <h3>当前帧</h3>
       <div id="frame-info" class="big">— / —</div>
       <input id="slider" type="range" min="0" max="0" value="0">
+      <div id="anno-timeline" title="有/无标注(绿=当前人物已标注)，点击/拖动跳帧"></div>
       <div class="row">
         <button id="btn-prev" title="上一帧">◀</button>
         <button id="btn-play" title="播放/暂停">▶ 播放</button>
         <button id="btn-next" title="下一帧">▶|</button>
       </div>
       <div class="row small"><span>速度</span><input id="speed" type="range" min="1" max="30" value="10"><span id="speed-val">10 fps</span></div>
-      <div class="row"><button id="btn-lock-person" title="开启后切帧跟随人物，保持距离/方向/相对位置">视野锁定人物</button></div>
+      <div class="row"><button id="btn-lock-person" title="开启后切帧时视野平移跟随【当前人物】，保持现在的距离/角度/画面位置；不会自动居中——要居中先按 F">📌 跟随人物</button></div>
+    </div>
+
+    <div class="card">
+      <h3>人物</h3>
+      <div id="person-panel"></div>
     </div>
 
     <div class="card">
@@ -134,8 +142,10 @@
     <div id="kbd-hint" class="kbd-hint">
       <div class="kbd-hint-head"><span>快捷键</span><button id="kbd-hint-toggle" title="最小化">▾</button></div>
       <div class="kbd-hint-body">
-        <div><b>F</b> 聚焦人体中心（三视口）</div>
+        <div><b>F</b> 居中当前人物（三视口，一次性）</div>
+        <div><b>📌</b> 跟随：切帧保持当前画面；先 F 再开即持续居中</div>
         <div><b>R</b> 重置当前视口朝向</div>
+        <div><b>[ / ]</b> 上 / 下一有标注帧</div>
         <div><b>⊙</b> 锁定为重置视角(侧/正)</div>
         <div class="kbd-hint-note">鼠标所在视口为当前视口</div>
       </div>

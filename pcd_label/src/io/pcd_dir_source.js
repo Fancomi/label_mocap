@@ -1,5 +1,5 @@
 // pcd_label/src/io/pcd_dir_source.js
-// 单序列目录：含 manifest.json + frame_%06d.png（+ 可选 player_0.json 标注）。
+// 单序列目录：含 manifest.json + frame_%06d.png（+ 可选 player_N.json 标注,每人一个文件）。
 import { parseManifest, frameFileName } from './manifest.js';
 import { writeFileResilient } from '../../../label/src/io/dir_source.js';
 
@@ -11,6 +11,8 @@ export async function pickDirectory() {
 }
 
 const ANNO_NAME = 'player_0.json';
+// 主标注(0 号人物)文件名;其余人物同目录 player_N.json(见 smpl_edit/person_files.js)。
+export const PRIMARY_ANNO = ANNO_NAME;
 
 export class PcdDirSource {
   constructor(dirHandle) { this._dir = dirHandle; this._manifest = null; }
@@ -40,6 +42,25 @@ export class PcdDirSource {
   async saveAnnotation(obj) {
     await writeFileResilient(this._dir, ANNO_NAME, JSON.stringify(obj, null, 2));
     return ANNO_NAME;
+  }
+
+  // ── 多人物:按文件名读写/删除任意 json ──
+  get canWrite() { return true; }
+  async listNames() {
+    const out = [];
+    for await (const [name, h] of this._dir.entries()) if (h.kind === 'file') out.push(name);
+    return out;
+  }
+  async readJsonNamed(name) {
+    try { return JSON.parse(await (await (await this._dir.getFileHandle(name)).getFile()).text()); }
+    catch { return null; }
+  }
+  async writeJsonNamed(name, obj) {
+    await writeFileResilient(this._dir, name, JSON.stringify(obj, null, 2));
+    return name;
+  }
+  async removeNamed(name) {
+    try { await this._dir.removeEntry(name); } catch (e) { if (e?.name !== 'NotFoundError') throw e; }
   }
 }
 
@@ -76,13 +97,28 @@ export class FileListSource {
   }
 
   // 无原地写权限:下载 player_0.json。
-  async saveAnnotation(obj) {
-    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = ANNO_NAME; a.click();
-    URL.revokeObjectURL(url);
-    return `${ANNO_NAME}(已下载,请手动覆盖回数据目录)`;
+  async saveAnnotation(obj) { return this.writeJsonNamed(ANNO_NAME, obj); }
+
+  // ── 多人物(只读源):读内存 FileList;写 = 下载;删 = 无法删盘,提示用户手动删 ──
+  get canWrite() { return false; }
+  async listNames() { return [...this._byName.keys()]; }
+  async readJsonNamed(name) {
+    const f = this._byName.get(name);
+    if (!f) return null;
+    try { return JSON.parse(await f.text()); } catch { return null; }
   }
+  async writeJsonNamed(name, obj) {
+    downloadJson(name, obj);
+    return `${name}(已下载,请手动覆盖回数据目录)`;
+  }
+  async removeNamed() { /* 无法删盘;由调用方提示 */ }
+}
+
+export function downloadJson(name, obj) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name; a.click();
+  URL.revokeObjectURL(url);
 }
 

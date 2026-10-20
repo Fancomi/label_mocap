@@ -68,6 +68,8 @@
     background:#262b33; border:1px solid #3a4150; border-radius:6px;
     box-shadow:0 6px 18px rgba(0,0,0,.5); }
   #open-menu[hidden] { display:none; }
+  .anno-timeline { display:flex; flex-direction:column; gap:3px; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
 </style>
 </head>
 <body>
@@ -128,7 +130,13 @@
   <div class="g">
     <label>帧</label>
     <input type="range" id="frame-slider" min="0" step="1" value="0">
+    <div id="anno-timeline" title="有/无标注(绿=当前人物已标注)，点击/拖动跳帧"></div>
     <div id="frame-info">— / —</div>
+  </div>
+
+  <div class="g">
+    <label>人物</label>
+    <div id="person-panel"></div>
   </div>
 
   <div class="g">

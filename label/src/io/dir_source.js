@@ -98,10 +98,13 @@ export class DirSource {
     // dataset writes <rootName>.json at the parent root. videoName lets the
     // explicit video-file flow name the json after the picked mp4.
     this._cls = classifyEntries(paths, { rootName: this._dir.name, ...opts });
+    this._paths = paths;
     return this._cls;
   }
 
   get classification() { return this._cls; }
+  // scan 时遍历到的全部相对路径(多人物发现 player_N.json 用)。
+  get paths() { return this._paths ?? []; }
 
   async readJson() {
     if (!this._cls?.jsonPath) return null;
@@ -132,18 +135,38 @@ export class DirSource {
   // the path written, and pins jsonPath so the next save is in place.
   async saveJson(obj) {
     const target = this._cls?.jsonPath ?? this._cls?.writeJsonPath;
-    await writeFileResilient(this._dir, target, JSON.stringify(obj, null, 2));
+    await this.writeFile(target, JSON.stringify(obj, null, 2));
     if (this._cls) this._cls.jsonPath = target;
     return target;
   }
 
   async writeFile(relPath, blob) {
-    return writeFileResilient(this._dir, relPath, blob);
+    await writeFileResilient(this._dir, relPath, blob);
+    if (this._paths && !this._paths.includes(relPath)) this._paths.push(relPath);
+    return relPath;
+  }
+
+  // 按相对路径读 json；不存在/解析失败返回 null。
+  async readJsonAt(relPath) {
+    const f = await this.readFile(relPath);
+    if (!f) return null;
+    try { return JSON.parse(await f.text()); } catch { return null; }
   }
 
   // 按相对路径读任意文件（与 writeFile 对称）；不存在返回 null。
   async readFile(relPath) {
     try { return await fileAt(this._dir, relPath); }
     catch { return null; }
+  }
+
+  // 按相对路径删文件；本就不存在视为成功。
+  async removeFile(relPath) {
+    const parts = relPath.split('/');
+    try {
+      let dir = this._dir;
+      for (let i = 0; i < parts.length - 1; i++) dir = await dir.getDirectoryHandle(parts[i]);
+      await dir.removeEntry(parts[parts.length - 1]);
+    } catch (e) { if (e?.name !== 'NotFoundError') throw e; }
+    this._paths = (this._paths ?? []).filter((p) => p !== relPath);
   }
 }

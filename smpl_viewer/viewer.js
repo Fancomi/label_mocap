@@ -5,6 +5,10 @@ import { loadLocalA1SequenceFromFileList, loadLocalA1SequenceFromFiles, loadLoca
 import { fsAccessSupported, DirSource, videoOpenSupported, pickVideoFile, jsonOpenSupported, pickJsonFile } from '../label/src/io/dir_source.js';
 import { VideoSource } from '../label/src/io/video_source.js';
 import { loadModel } from '../smpl_core/smpl_model.js';
+import { AnnoTimeline } from '../smpl_edit/anno_timeline.js';
+import { PersonPanel } from '../smpl_edit/person_panel.js';
+import { findMarked, countMarked, markedSummary } from '../smpl_edit/frame_marks.js';
+import { personLabel } from '../smpl_edit/person_files.js';
 
 // Shared schema with kps3d_viewer.html
 // BONES: [child_kp_idx, parent_kp_idx, group]
@@ -66,13 +70,14 @@ let gridSize = 20;
 let gridStep = 0.5;
 
 const flags = { mesh: true, points: true, bones: true, grid: true, axes: false, bg: true };
+let personShown = true;    // 当前帧当前人物有无可渲染 SMPL(无则只显示底图)
 
 // Re-evaluate visibility of mode-sensitive helpers (grid hidden in 2D).
 function applyVisibility() {
   if (!cam) return;
-  if (mesh) mesh.visible = flags.mesh;
-  if (pointsGroup) pointsGroup.visible = flags.points;
-  if (bonesGroup) bonesGroup.visible = flags.bones;
+  if (mesh) mesh.visible = flags.mesh && personShown;
+  if (pointsGroup) pointsGroup.visible = flags.points && personShown;
+  if (bonesGroup) bonesGroup.visible = flags.bones && personShown;
   if (grid) grid.visible = flags.grid && cam.mode === '3d';
   if (axes) axes.visible = flags.axes && cam.mode === '3d';
   // Two image planes: far always on (visible from both modes), near only in 3D.
@@ -163,6 +168,8 @@ let smplWorker = null;
 let requestId = 0;
 let fallbackJsonFile = null;
 let fallbackImageFiles = [];
+let curPersonId = 0;       // 多人物:当前查看的人物(curSeq.persons 里的 id)
+let timeline = null, personPanel = null;
 
 async function ensureSmplWorker() {
   if (!smplModel) {
@@ -235,6 +242,9 @@ async function selectSeq(seqOrId) {
   frameCache.clear();
 
   curSeq = { ...localSeq, meta, faces };
+  if (!curSeq.persons) curSeq.persons = [{ id: 0, frames: curSeq.frames, marks: new Uint8Array(meta.n_frames).fill(1) }];
+  curPersonId = curSeq.persons[0].id;
+  curSeq.frames = curSeq.persons[0].frames;
   curN = meta.n_frames;
   curFrame = 0;
   dataRotCw = 0;     // reset rotation per-sequence
@@ -325,11 +335,66 @@ async function selectSeq(seqOrId) {
   resize();   // 关键: snapTo('2d') 后按 2D letterbox 策略重排 buffer+aspect,
               // 否则 buffer 仍是构造时 3D/fill 的容器全尺寸 → 与 2D 图像 aspect 错配,
               // 纵向数据缩放时被非等比拉伸(与 label app.js snapTo→resize 对齐)。
-  setStatus(`${seqId} ready (${curN} frames) · 2D`);
+  refreshMarks();
+  setStatus(`${seqId} ready (${curN} frames) · ${marksSummary()} · 2D`);
+}
+
+// ── 有/无标注条 + 人物切换 ────────────────────────────────────────────────
+function curPerson() { return curSeq?.persons?.find((p) => p.id === curPersonId) ?? null; }
+
+function refreshMarks() {
+  if (!curSeq) return;
+  timeline?.setData({
+    n: curN, current: curFrame,
+    rows: curSeq.persons.map((p) => ({ mask: p.marks, active: p.id === curPersonId, label: personLabel(p.id) })),
+  });
+  personPanel?.render(curSeq.persons.map((p) => ({ id: p.id, count: countMarked(p.marks), dirty: false })), curPersonId);
+}
+
+function marksSummary() {
+  return markedSummary(curSeq.persons.map((p) => ({ label: personLabel(p.id), count: countMarked(p.marks) })));
+}
+
+function stopPlaying() {
+  playing = false;
+  $('btn-play').textContent = '▶ 播放';
+  $('btn-play').classList.remove('on');
+}
+
+// 切人物:换 frames 源,停在原帧重绘(纹理缓存共用,SMPL 缓存按人物 id 分开)。
+function selectPerson(id) {
+  if (!curSeq || id === curPersonId) return;
+  const p = curSeq.persons.find((q) => q.id === id); if (!p) return;
+  curPersonId = id;
+  curSeq.frames = p.frames;
+  refreshMarks();
+  setFrame(curFrame).catch(() => {});
+  setStatus(`当前人物: ${personLabel(id)}(已标注 ${countMarked(p.marks)} 帧)`);
+}
+
+function jumpMarked(dir) {
+  const p = curPerson(); if (!p) return;
+  stopPlaying();
+  const j = findMarked(p.marks, curFrame, dir);
+  if (j < 0) { setStatus(dir > 0 ? '后面没有已标注帧' : '前面没有已标注帧'); return; }
+  setFrame(j);
+}
+
+// 当前人物第 i 帧的 SMPL 前向(null = 该帧无 SMPL,只显示底图)。
+// 缓存挂在 frameCache 项的 smpl Map 上(按人物 id),切人物不必重载纹理。
+async function smplFor(i, cacheEntry) {
+  const frame = curSeq.frames[i];
+  if (!frame) return null;
+  const hit = cacheEntry?.smpl.get(curPersonId);
+  if (hit) return hit;
+  const out = await forwardFrame(frame);
+  const r = { verts: out.verts, joints: out.joints, rootPos: new Float32Array(frame.root_pos), rootRota: new Float32Array(frame.root_rota) };
+  cacheEntry?.smpl.set(curPersonId, r);
+  return r;
 }
 
 async function loadFrame(i) {
-  // Returns {verts, joints, root, tex} — fetched in parallel, cached.
+  // Returns {smpl|null, tex} — fetched in parallel, cached.
   // Caller must handle epoch/staleness; this is a pure data fetch.
   //
   // 视频分支:不进 frameCache(每次 seek 复用同一个共享 VideoTexture,缓存无意义且
@@ -337,49 +402,38 @@ async function loadFrame(i) {
   // 才走 createObjectURL+TextureLoader 的 per-frame 纹理 + 缓存复用。
   if (curSeq.videoSource) {
     const myEpoch = seqEpoch;
-    const frame = curSeq.frames[i];
-    const [smplOut] = await Promise.all([
-      forwardFrame(frame),
+    const [smpl] = await Promise.all([
+      smplFor(i, null),
       curSeq.videoSource.seek(i),   // seek 完成后 texture.needsUpdate=true
     ]);
     if (myEpoch !== seqEpoch) throw new Error('stale-epoch');
-    return {
-      verts: smplOut.verts,
-      joints: smplOut.joints,
-      rootPos: new Float32Array(frame.root_pos),
-      rootRota: new Float32Array(frame.root_rota),
-      tex: curSeq.videoSource.texture,   // 共享 VideoTexture,不缓存、不 dispose
-      isVideo: true,
-    };
+    return { smpl, tex: curSeq.videoSource.texture, isVideo: true };   // 共享 VideoTexture,不缓存、不 dispose
   }
-  if (frameCache.has(i)) return frameCache.get(i);
   const myEpoch = seqEpoch;
-
-  const frame = curSeq.frames[i];
-  const imageFile = curSeq.images[i]?.getFile ? await curSeq.images[i].getFile() : curSeq.images[i];
-  if (!imageFile) {
-    throw new Error(`missing image for frame ${i}`);
+  let entry = frameCache.get(i);
+  if (!entry) {
+    const imageFile = curSeq.images[i]?.getFile ? await curSeq.images[i].getFile() : curSeq.images[i];
+    if (!imageFile) {
+      throw new Error(`missing image for frame ${i}`);
+    }
+    const imageUrl = URL.createObjectURL(imageFile);
+    const tex = await new Promise((resolve, reject) => {
+      new THREE.TextureLoader().load(
+        imageUrl,
+        t => { URL.revokeObjectURL(imageUrl); t.colorSpace = THREE.SRGBColorSpace; resolve(t); },
+        undefined,
+        err => { URL.revokeObjectURL(imageUrl); reject(err); });
+    });
+    if (myEpoch !== seqEpoch) {
+      tex.dispose();
+      throw new Error('stale-epoch');
+    }
+    entry = { tex, smpl: new Map() };
+    frameCache.set(i, entry);
   }
-  const imageUrl = URL.createObjectURL(imageFile);
-  const texP = new Promise((resolve, reject) => {
-    new THREE.TextureLoader().load(
-      imageUrl,
-      t => { URL.revokeObjectURL(imageUrl); t.colorSpace = THREE.SRGBColorSpace; resolve(t); },
-      undefined,
-      err => { URL.revokeObjectURL(imageUrl); reject(err); });
-  });
-  const [smplOut, tex] = await Promise.all([forwardFrame(frame), texP]);
-  if (myEpoch !== seqEpoch) {
-    tex.dispose();
-    throw new Error('stale-epoch');
-  }
-  const verts = smplOut.verts;
-  const joints = smplOut.joints;
-  const rootPos = new Float32Array(frame.root_pos);
-  const rootRota = new Float32Array(frame.root_rota);
-  const entry = { verts, joints, rootPos, rootRota, tex };
-  frameCache.set(i, entry);
-  return entry;
+  const smpl = await smplFor(i, entry);
+  if (myEpoch !== seqEpoch) throw new Error('stale-epoch');
+  return { smpl, tex: entry.tex };
 }
 
 // Atomically apply a fully-loaded frame to the scene.
@@ -393,6 +447,27 @@ async function applyFrame(i) {
   curFrame = i;
   $('frame-slider').value = curFrame;
   $('frame-info').textContent = `${curFrame} / ${curN - 1}`;
+  timeline?.setCurrent(curFrame);
+
+  // background image — bind same texture to both planes
+  bgNear.material.map = f.tex;
+  bgNear.material.needsUpdate = true;
+  bgFar.material.map = f.tex;
+  bgFar.material.needsUpdate = true;
+  // bgTex 只追踪图像 per-frame 纹理(供下次 selectSeq dispose)。视频分支的纹理是
+  // VideoSource 持有的共享 VideoTexture,生命周期归 videoSource.dispose(),绝不让
+  // bgTex 指向它,否则 selectSeq 的 bgTex.dispose() 会误删正在用的视频纹理。
+  bgTex = f.isVideo ? null : f.tex;
+
+  // 当前人物本帧无 SMPL:只显示底图,隐藏人体,角度/根面板清空。
+  personShown = !!f.smpl;
+  if (!f.smpl) {
+    layoutBg();
+    $('angle-list').innerHTML = '<div class="ar"><span>本帧无标注</span><span>—</span></div>';
+    $('r-pos').textContent = '—'; $('r-rot').textContent = '—'; $('r-rotmag').textContent = '—';
+    return;
+  }
+  const sm = f.smpl;
 
   // Rotation about camera -Z (i.e. the source-coord +Z axis comes out of
   // screen → +Z is "out". A clockwise rotation as seen looking *down* the
@@ -410,10 +485,10 @@ async function applyFrame(i) {
   // mesh verts (rotated, write into geometry buffer in place)
   const pos = mesh.geometry.attributes.position;
   const dst = pos.array;
-  for (let v = 0, vlen = f.verts.length; v < vlen; v += 3) {
-    const x = f.verts[v], y = f.verts[v + 1];
+  for (let v = 0, vlen = sm.verts.length; v < vlen; v += 3) {
+    const x = sm.verts[v], y = sm.verts[v + 1];
     const [rx, ry] = rot(x, y);
-    dst[v] = rx; dst[v + 1] = ry; dst[v + 2] = f.verts[v + 2];
+    dst[v] = rx; dst[v + 1] = ry; dst[v + 2] = sm.verts[v + 2];
   }
   pos.needsUpdate = true;
   mesh.geometry.computeVertexNormals();
@@ -421,10 +496,10 @@ async function applyFrame(i) {
   // joints + bones (rotated)
   const rotJ = new Float32Array(24 * 3);
   for (let j = 0; j < 24; j++) {
-    const x = f.joints[j * 3], y = f.joints[j * 3 + 1];
+    const x = sm.joints[j * 3], y = sm.joints[j * 3 + 1];
     const [rx, ry] = rot(x, y);
-    rotJ[j * 3] = rx; rotJ[j * 3 + 1] = ry; rotJ[j * 3 + 2] = f.joints[j * 3 + 2];
-    pointsGroup.children[j].position.set(rx, ry, f.joints[j * 3 + 2]);
+    rotJ[j * 3] = rx; rotJ[j * 3 + 1] = ry; rotJ[j * 3 + 2] = sm.joints[j * 3 + 2];
+    pointsGroup.children[j].position.set(rx, ry, sm.joints[j * 3 + 2]);
   }
   for (let bi = 0; bi < BONES.length; bi++) {
     const [a, b] = BONES[bi];
@@ -437,26 +512,16 @@ async function applyFrame(i) {
   }
   cam.set3DFollowTarget(new THREE.Vector3(rotJ[0], rotJ[1], rotJ[2]));
 
-  // background image — bind same texture to both planes
-  bgNear.material.map = f.tex;
-  bgNear.material.needsUpdate = true;
-  bgFar.material.map = f.tex;
-  bgFar.material.needsUpdate = true;
-  // bgTex 只追踪图像 per-frame 纹理(供下次 selectSeq dispose)。视频分支的纹理是
-  // VideoSource 持有的共享 VideoTexture,生命周期归 videoSource.dispose(),绝不让
-  // bgTex 指向它,否则 selectSeq 的 bgTex.dispose() 会误删正在用的视频纹理。
-  bgTex = f.isVideo ? null : f.tex;
-
   // SMPL root pos/rota — also rotated about camera -Z, then displayed.
-  const [rpx, rpy] = rot(f.rootPos[0], f.rootPos[1]);
-  const rotatedRootPos = [rpx, rpy, f.rootPos[2]];
+  const [rpx, rpy] = rot(sm.rootPos[0], sm.rootPos[1]);
+  const rotatedRootPos = [rpx, rpy, sm.rootPos[2]];
   // Compose camera-out rotation onto the root axis-angle.
   // Axis-angle (vec, magnitude=angle) → quaternion → premultiply → axis-angle.
-  const rrAngle = Math.hypot(f.rootRota[0], f.rootRota[1], f.rootRota[2]);
+  const rrAngle = Math.hypot(sm.rootRota[0], sm.rootRota[1], sm.rootRota[2]);
   const qRoot = new THREE.Quaternion();
   if (rrAngle > 1e-9) {
     qRoot.setFromAxisAngle(
-      new THREE.Vector3(f.rootRota[0] / rrAngle, f.rootRota[1] / rrAngle, f.rootRota[2] / rrAngle),
+      new THREE.Vector3(sm.rootRota[0] / rrAngle, sm.rootRota[1] / rrAngle, sm.rootRota[2] / rrAngle),
       rrAngle);
   }
   // CW rotation about camera-out (-Z world): rotation axis is +Z (camera out
@@ -688,6 +753,17 @@ $('btn-play').addEventListener('click', () => {
 });
 $('btn-prev').addEventListener('click', () => setFrame(curFrame - 1));
 $('btn-next').addEventListener('click', () => setFrame(curFrame + 1));
+// 有/无标注条(点/拖跳帧)+ 上/下一有标注帧;人物切换(查看器只读:不增删改)。
+timeline = new AnnoTimeline({
+  host: $('anno-timeline'),
+  onSeek: (i) => { if (!curN) return; stopPlaying(); setFrame(i); },
+  onJump: jumpMarked,
+});
+personPanel = new PersonPanel({ host: $('person-panel'), onSelect: selectPerson, readOnly: true });
+window.addEventListener('keydown', (e) => {
+  if (!curN || e.target.matches('input,select,textarea')) return;
+  if (e.key === '[' || e.key === ']') jumpMarked(e.key === ']' ? +1 : -1);
+});
 
 // Data rotation: rotate verts/joints/bg by N×90° about camera -Z (camera frame
 // stays put, but its fov/aspect swap with N to follow rotated content).

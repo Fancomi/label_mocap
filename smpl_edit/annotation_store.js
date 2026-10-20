@@ -1,4 +1,6 @@
 // smpl_edit/annotation_store.js
+import { buildMask } from './frame_marks.js';
+
 const DEFAULT_ROOT_POS = [0, 0, -4];
 
 export class AnnotationStore {
@@ -8,7 +10,11 @@ export class AnnotationStore {
     this._frame = 0;
     this._undo = [];
     this._pendingBefore = undefined; // undefined = no open drag transaction
+    this._rev = 0;                   // 任何数据改动 +1:供「是否需要保存」与掩码缓存判定
+    this._mask = null; this._maskRev = -1;
   }
+
+  revision() { return this._rev; }
 
   frameCount() { return this._ids.length; }
   setFrame(i) { this._frame = i; }
@@ -21,6 +27,19 @@ export class AnnotationStore {
   }
   hasSmpl() { return this._doc.hasSmpl(this.currentImageId()); }
   hasBbox() { return this._doc.hasBbox(this.currentImageId()); }
+  // 第 i 帧(按帧位置)是否有标注(框或 SMPL),口径与 hasData 一致。
+  hasDataAt(i) {
+    const id = this._ids[i];
+    return id !== undefined && (this._doc.hasBbox(id) || this._doc.hasSmpl(id));
+  }
+  // 全序列有/无标注掩码(Uint8Array,1=有)。按 revision 缓存,播放时逐帧调用不重算。
+  annotatedMask() {
+    if (this._maskRev !== this._rev || !this._mask) {
+      this._mask = buildMask(this._ids.length, (i) => this.hasDataAt(i));
+      this._maskRev = this._rev;
+    }
+    return this._mask;
+  }
 
   _snapshot() {
     const a = this.current();
@@ -36,6 +55,7 @@ export class AnnotationStore {
     const imageId = this.currentImageId();
     const before = this._snapshot();
     fn(imageId);
+    this._rev++;
     this._pushUndo(imageId, before);
   }
 
@@ -79,7 +99,7 @@ export class AnnotationStore {
   // We use `undefined` (not null) as the "no open transaction" sentinel so a
   // legitimately-null before-state is never confused with "nothing to commit".
   beginEdit() { if (this._pendingBefore === undefined) this._pendingBefore = this._snapshot(); }
-  applyFields(fields) { this._doc.setAnnotation(this.currentImageId(), fields); }
+  applyFields(fields) { this._doc.setAnnotation(this.currentImageId(), fields); this._rev++; }
   commitEdit() {
     if (this._pendingBefore === undefined) return; // no open transaction → ignore double-commit
     this._pushUndo(this.currentImageId(), this._pendingBefore);
@@ -90,6 +110,7 @@ export class AnnotationStore {
     const u = this._undo.pop();
     if (!u) return;
     this._restore(u.imageId, u.before);
+    this._rev++;
   }
 
   document() { return this._doc; }
