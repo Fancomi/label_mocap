@@ -1,0 +1,3 @@
+# test:tools（smpl_web_viewer/tests、kpt_label/tools）与 SMPL 导出脚本只依赖 numpy；
+# 前端与静态服务只要 Node 18+，无 npm 依赖。
+numpy

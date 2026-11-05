@@ -24,7 +24,8 @@ https://<user>.github.io/<repo>/smpl_viewer/viewer.html
 
 ## Tests
 
-The reproducible top-level test entry does not require `pytest`:
+The reproducible top-level test entry does not require `pytest`. It needs Node 18+
+and a `python3` with `numpy` (`pip install -r requirements.txt`):
 
 ```bash
 npm test
