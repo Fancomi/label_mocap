@@ -205,18 +205,18 @@ async function showFrame(i) {
   if (syncUI) syncUI();
 }
 
-// 📌 跟随人物：以当前人物中心的帧间位移刚性平移三视口（相机+target 同步加 delta）。
-// 与 F 的分工：F = 一次性把人物放到画面中心；跟随 = 之后保持「此刻」的画面关系(不主动居中)。
-// 两者叠加(先 F 再开跟随,或跟随中按 F)即「持续居中」。
-// 距离/朝向/缩放/相对位置全保持，不解锁用户操作。切换人物时同样按两人中心差平移,
-// 新人物落在原人物的画面位置上。过渡规则：
+// 📌 跟随人物：开启时先做一次 F(居中当前人物),之后按人物中心的帧间位移刚性平移三视口
+// （相机+target 同步加 delta）→ 人物持续居中。之后用户自己转/缩/挪的视角照样保持,
+// 不解锁用户操作。切换人物时同样按两人中心差平移,新人物落在原人物的画面位置上。过渡规则：
 //   有→无：本帧无人 → 不更新基准、相机不动（延续最后位置）；
-//   无→有：首次出现只立基准、不跳，下一帧起跟随。
+//   尚无基准(开启时本帧无人)：人物首次出现即居中一次(等同 F),之后照常跟随。
 function followLockedPerson() {
   if (!lockPerson) return;
-  const cur = bodyBounds(lastJoints)?.center ?? null;
+  const body = bodyBounds(lastJoints);
+  const cur = body?.center ?? null;
   if (!cur) return;                                   // 本帧无人：保持不动
-  const delta = centerDelta(lockCenter, cur);         // 无基准(无→有首帧)→零位移
+  if (!lockCenter) { focusViewports(body.center, body.radius); lockCenter = cur; return; }
+  const delta = centerDelta(lockCenter, cur);
   if (delta[0] || delta[1] || delta[2]) {
     for (const n of ['main', 'side', 'front']) mgr.viewport(n)?.translateBy(delta);
   }
@@ -452,14 +452,19 @@ function boot() {
   $('btn-prev').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.max(0, store.currentFrame() - 1)); });
   $('btn-next').addEventListener('click', () => { if (!store) return; setPlaying(false); showFrame(Math.min(store.frameCount() - 1, store.currentFrame() + 1)); });
   $('btn-play').addEventListener('click', () => { if (store) setPlaying(!playing); });
-  // 视野锁定人物：开启即以当前人体中心为基准（不动相机），之后切帧刚性跟随位移。
+  // 📌 跟随人物：开启即居中一次当前人物(同 F),之后切帧刚性跟随位移。
   $('btn-lock-person').addEventListener('click', () => {
     lockPerson = !lockPerson;
-    lockCenter = lockPerson ? (bodyBounds(lastJoints)?.center ?? null) : null;
+    lockCenter = null;
     paintLockButton();
-    setStatus(lockPerson
-      ? `已开启跟随 ${curPersonLabel()}：切帧保持当前画面关系（不自动居中，需要居中按 F）`
-      : '已关闭跟随');
+    if (!lockPerson) { setStatus('已关闭跟随'); return; }
+    const who = curPersonLabel();
+    if (bodyBounds(lastJoints)) {
+      followLockedPerson();   // 无基准 → 居中一次(等同 F)并立基准
+      setStatus(`已开启跟随 ${who}：已居中，切帧持续居中`);
+    } else {
+      setStatus(`已开启跟随 ${who}：本帧无标注，${who} 出现时自动居中`);
+    }
   });
   $('speed').addEventListener('input', (e) => { fps = +e.target.value; $('speed-val').textContent = `${fps} fps`; });
   $('btn-undo').addEventListener('click', () => { if (store) { store.undo(); showFrame(store.currentFrame()); } });
