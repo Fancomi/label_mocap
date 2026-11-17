@@ -57,4 +57,7 @@ export class DragHandle extends TransformHandle {
   }
 
   markerMesh() { return this._marker; }
+
+  // 只移动位置(拖别的手柄时让本柄随动),不重挂、不改活动态;本柄正被拖时不动。
+  moveTo(pos) { if (pos && !this.isDragging()) { this._proxy.position.set(pos[0], pos[1], pos[2]); this._proxy.updateMatrixWorld(true); } }
 }

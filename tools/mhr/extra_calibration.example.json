@@ -1,0 +1,17 @@
+{
+  "_说明": "交付包 calibration/cameras.json 里没有的相机,按同一格式补在这里。外参是「该相机原生光学系 ← 交付包公共系(orb1 原生光学系)」,OpenCV 约定、列向量、米。clock_map 把该相机视频时间映射到参考时间(同交付包)。fps/frame_count 可省,省略时用 ffprobe 读视频。",
+  "cameras": {
+    "zcam1": {
+      "native_image_size": [1920, 1080],
+      "K_native": [[0, 0, 960], [0, 0, 540], [0, 0, 1]],
+      "R_native_from_common": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+      "t_native_from_common_m": [0, 0, 0],
+      "upright": {
+        "fixed_clockwise_rotation_deg": -90,
+        "R_native_camera_from_upright_camera": [[0, -1, 0], [1, 0, 0], [0, 0, 1]]
+      },
+      "clock_map": { "reference_origin_s": 0, "media_origin_s": -0.14877097281252394, "rate": 1 },
+      "camera_calibration_accepted": false
+    }
+  }
+}

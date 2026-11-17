@@ -57,3 +57,16 @@ test('custom modes restrict setMode (e.g. no bbox)', () => {
   ui.setMode('root');
   assert.equal(ui.mode, 'root');
 });
+
+test('release(): clears joint and hides handles until a joint, the body or a tab is picked again', () => {
+  const ui = new UIController({ modes: ['root', 'pose'] });
+  ui.selectJoint(3);
+  ui.release();
+  assert.equal(ui.selectedJoint, null);
+  assert.equal(ui.released, true);
+  assert.equal(ui.mode, 'pose');
+  ui.setMode('root');
+  assert.equal(ui.released, false);
+  ui.release(); ui.selectJoint(2);
+  assert.equal(ui.released, false);
+});

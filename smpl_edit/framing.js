@@ -61,3 +61,14 @@ export function centerDelta(prev, cur) {
   return [cur[0]-prev[0], cur[1]-prev[1], cur[2]-prev[2]];
 }
 
+
+// F 键的聚焦目标(三页统一,见 docs/CONTRACTS.md):选中了关节 → 聚焦该关节(半径按关节尺寸,手指更近);
+// 没选关节 → 聚焦整个人体。joint = 骨架关节索引或 null;scale = 该关节显示尺寸系数(BodyModel.jointScale)。
+export const JOINT_FOCUS_RADIUS = 0.25;   // 米:关节周围约一个肢段的范围
+export function focusTarget(joints, joint = null, scale = 1) {
+  if (joint != null && joints && joint * 3 + 2 < joints.length) {
+    return { center: [joints[joint * 3], joints[joint * 3 + 1], joints[joint * 3 + 2]], radius: JOINT_FOCUS_RADIUS * scale, kind: 'joint' };
+  }
+  const b = bodyBounds(joints);
+  return b ? { ...b, kind: 'body' } : null;
+}

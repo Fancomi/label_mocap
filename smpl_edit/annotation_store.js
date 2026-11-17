@@ -1,8 +1,6 @@
 // smpl_edit/annotation_store.js
 import { buildMask } from './frame_marks.js';
 
-const DEFAULT_ROOT_POS = [0, 0, -4];
-
 export class AnnotationStore {
   constructor(cocoDoc) {
     this._doc = cocoDoc;
@@ -12,7 +10,19 @@ export class AnnotationStore {
     this._pendingBefore = undefined; // undefined = no open drag transaction
     this._rev = 0;                   // 任何数据改动 +1:供「是否需要保存」与掩码缓存判定
     this._mask = null; this._maskRev = -1;
+    this._committed = new Set();     // 监听者:某帧人体参数「定稿」(一个 undo 单元结束)时调用 fn(imageId)
   }
+
+  // 定稿事件:拖拽/面板编辑松手、新建/复制/采用、撤销后触发,每个 undo 单元一次(删除帧不触发)。
+  // 宿主在此为该帧算派生量(keypoints/遮挡/逐视角框),保存只做序列化 —— 不在保存时逐帧重算。
+  onCommitted(fn) { this._committed.add(fn); return () => this._committed.delete(fn); }
+  _emitCommitted(imageId) {
+    if (!this._doc.getAnnotation(imageId)) return;
+    for (const fn of this._committed) fn(imageId);
+  }
+
+  // 派生量写回(不进 undo、不算改动):它们是人体参数的函数,随参数一起被 undo 快照覆盖。
+  setDerived(imageId, fields) { this._doc.setAnnotation(imageId, fields); }
 
   revision() { return this._rev; }
 
@@ -57,13 +67,11 @@ export class AnnotationStore {
     fn(imageId);
     this._rev++;
     this._pushUndo(imageId, before);
+    this._emitCommitted(imageId);
   }
 
   addTpose() {
-    this._txn((id) => this._doc.setAnnotation(id, {
-      root_pos: DEFAULT_ROOT_POS.slice(), root_rota: [0, 0, 0],
-      body_pose: Array(63).fill(0), betas: Array(10).fill(0),
-    }));
+    this._txn((id) => this._doc.setAnnotation(id, this._doc.bodySchema().defaultFields()));
   }
 
   addFromPrevious() {
@@ -73,10 +81,8 @@ export class AnnotationStore {
       if (a) { src = a; break; }
     }
     if (!src) { this.addTpose(); return; }
-    const fields = {
-      bbox: src.bbox, root_pos: src.root_pos, root_rota: src.root_rota,
-      body_pose: src.body_pose, betas: src.betas,
-    };
+    const fields = { bbox: src.bbox };
+    for (const k of this._doc.bodySchema().fieldKeys) fields[k] = src[k];
     if (src.pole_vectors) fields.pole_vectors = src.pole_vectors;
     this._txn((id) => this._doc.setAnnotation(id, fields));
   }
@@ -104,13 +110,17 @@ export class AnnotationStore {
     if (this._pendingBefore === undefined) return; // no open transaction → ignore double-commit
     this._pushUndo(this.currentImageId(), this._pendingBefore);
     this._pendingBefore = undefined;
+    this._emitCommitted(this.currentImageId());
   }
+
+  canUndo() { return this._undo.length > 0; }
 
   undo() {
     const u = this._undo.pop();
     if (!u) return;
     this._restore(u.imageId, u.before);
     this._rev++;
+    this._emitCommitted(u.imageId);
   }
 
   document() { return this._doc; }

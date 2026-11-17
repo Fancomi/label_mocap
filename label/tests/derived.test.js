@@ -23,3 +23,38 @@ test('reprojectKeypoints marks behind-camera joints conf 0', () => {
   assert.equal(kps[2], 0);
 });
 
+
+test('reprojectKeypoints maps slot k to jointIdx[k] and accepts a project function', () => {
+  const joints = new Float32Array(5 * 3);
+  joints[4 * 3] = 7; joints[4 * 3 + 1] = 8; joints[4 * 3 + 2] = -1;
+  const kps = reprojectKeypoints(joints, (X) => [X[0] * 10, X[1] * 10], 3, [4, 0]);
+  assert.deepEqual(kps.slice(0, 3), [70, 80, 2]);
+  assert.equal(kps.length, 9);
+  assert.equal(kps[2 * 3 + 2], 0);   // 第 3 槽无关节
+});
+
+test('reprojectKeypoints: a null projection marks the slot invisible', () => {
+  const kps = reprojectKeypoints(new Float32Array(3), () => null, 1, [0]);
+  assert.deepEqual(kps, [0, 0, 0]);
+});
+
+test('bboxFromProjected skips unprojectable points and returns null when none project', async () => {
+  const { bboxFromProjected } = await import('../src/edit/derived.js');
+  const verts = new Float32Array([1, 2, 0, 5, 4, 0, 9, 9, 1]);
+  const proj = (X) => (X[2] > 0 ? null : [X[0], X[1]]);
+  assert.deepEqual(bboxFromProjected(verts, proj), [1, 2, 4, 2]);
+  assert.equal(bboxFromProjected(verts, () => null), null);
+});
+
+test('occlusionFromMesh: a front-facing triangle between camera and joint occludes; back faces do not', async () => {
+  const { occlusionFromMesh } = await import('../src/edit/derived.js');
+  // 相机在原点看 −Z;三角形在 z = −1 平面,关节 0 在其后(z = −3),关节 1 在旁边不被挡。
+  const verts = new Float32Array([-1, -1, -1, 1, -1, -1, 0, 1, -1]);
+  const joints = new Float32Array([0, 0, -3, 5, 5, -3]);
+  const front = new Int32Array([0, 1, 2]);   // 逆时针朝 +Z = 朝向相机
+  const back = new Int32Array([0, 2, 1]);
+  assert.deepEqual(occlusionFromMesh(joints, verts, front, [0, 0, 0], 3, [0, 1]), [1, 0, 0]);
+  assert.deepEqual(occlusionFromMesh(joints, verts, back, [0, 0, 0], 2, [0, 1]), [0, 0]);
+  // 关节就在三角形前方(未被挡)
+  assert.deepEqual(occlusionFromMesh(new Float32Array([0, 0, -0.5]), verts, front, [0, 0, 0], 1, [0]), [0]);
+});

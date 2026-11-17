@@ -80,7 +80,7 @@ export class CameraModes {
   effectiveAspect() { return this._effectiveAspect(); }
 
   _quatLookingAt(eye, target) {
-    const m = new THREE.Matrix4().lookAt(eye, target, new THREE.Vector3(0, 1, 0));
+    const m = new THREE.Matrix4().lookAt(eye, target, this.camera ? this.camera.up : new THREE.Vector3(0, 1, 0));
     return new THREE.Quaternion().setFromRotationMatrix(m);
   }
 
@@ -121,13 +121,14 @@ export class CameraModes {
 
   // 采用数据集真实图像尺寸为工厂基线：主点居中(cx=W/2,cy=H/2)，焦距仅 finite 时改。
   // 否则一切按写死的 1920×1080，非该分辨率时主点落错像素 → 人体偏左上、偏小。成为 reset 基线。
-  configureForImage({ width, height, fx, fy }) {
+  // 给了 cx/cy(标定内参)则用标定主点,否则居中。
+  configureForImage({ width, height, fx, fy, cx, cy }) {
     if (Number.isFinite(width) && width > 0) { this._meta_W = width; this.imageW = width; }
     if (Number.isFinite(height) && height > 0) { this._meta_H = height; this.imageH = height; }
     if (Number.isFinite(fx)) this._meta_K.fx = fx;
     if (Number.isFinite(fy)) this._meta_K.fy = fy;
-    this._meta_K.cx = this.imageW / 2;
-    this._meta_K.cy = this.imageH / 2;
+    this._meta_K.cx = Number.isFinite(cx) ? cx : this.imageW / 2;
+    this._meta_K.cy = Number.isFinite(cy) ? cy : this.imageH / 2;
     this.K = { ...this._meta_K };
     this.setIntrinsics(this.K);
   }
@@ -176,7 +177,21 @@ export class CameraModes {
     return canvasNormToImage(u, v, this._win);
   }
 
-  // PLACEHOLDER_POSE
+  // 2D 对齐视角 = 数据相机的位姿(相机→世界,R 行主序 9、t 3)。单视角旧数据不调用:
+  // 保持原点、看 −Z。多相机 / 转正配置下由 CameraRig 视图相机给出(已含显示旋转)。
+  // 同时把 3D 环绕的「上」设为该视图画面的上方向,转正后的画面上 = 3D 上。
+  setViewPose({ R, t }) {
+    const m = new THREE.Matrix4().set(R[0], R[1], R[2], 0, R[3], R[4], R[5], 0, R[6], R[7], R[8], 0, 0, 0, 0, 1);
+    const q = new THREE.Quaternion().setFromRotationMatrix(m);
+    this._pose2D.position.set(t[0], t[1], t[2]);
+    this._pose2D.quaternion.copy(q);
+    this._pose2D.target.copy(new THREE.Vector3(0, 0, -1).applyQuaternion(q).add(this._pose2D.position));
+    this.camera.up.copy(new THREE.Vector3(0, 1, 0).applyQuaternion(q));
+    this._pose3D.quaternion.copy(this._quatLookingAt(this._pose3D.position, this._pose3D.target));
+  }
+
+  // 数据相机位姿(背景平面/视锥挂在它上面)。
+  viewPose() { return { position: this._pose2D.position.clone(), quaternion: this._pose2D.quaternion.clone() }; }
 
   _applyPose(p) {
     this.camera.position.copy(p.position);

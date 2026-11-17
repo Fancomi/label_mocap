@@ -1,34 +1,26 @@
 // label/src/ui/panels.js — numeric/slider readout + edit panels.
 // Pure DOM glue; mutates RotationState / AnnotationStore / CameraModes via
 // the provided getter callbacks (no app singletons imported).
-import { JOINT_NAMES } from '../../../smpl_core/joint_names.js';
-
 const $ = (id) => document.getElementById(id);
 const RAD = Math.PI / 180;
 const DEG = 180 / Math.PI;
 
 
-
-const ANGLES = [
-  ['R-Elbow', 16, 18, 20], ['L-Elbow', 17, 19, 21],
-  ['R-Knee', 1, 4, 7], ['L-Knee', 2, 5, 8],
-  ['R-Shoulder', 9, 16, 18], ['L-Shoulder', 9, 17, 19],
-  ['R-Hip', 0, 1, 4], ['L-Hip', 0, 2, 5],
-  ['Spine', 0, 6, 12],
-];
-
 export class Panels {
-  constructor({ getRotation, getStore, getCam, getUI, getLastJoints, onEdit }) {
+  // getBody:当前 BodyModel(关节角读数表 angleReadouts 来自它)。
+  constructor({ getRotation, getStore, getCam, getUI, getLastJoints, getBody, onEdit }) {
     this._getRotation = getRotation;
+    this._getBody = getBody;
     this._getStore = getStore;
     this._getCam = getCam;
     this._getUI = getUI;
     this._getLastJoints = getLastJoints;
     this._onEdit = onEdit;
-    this._betaEditing = false;
+    this._shapeEditing = false;
+    this._shapeSliders = [];     // [{ el, key, index }],由 setBody 按 body.shapeGroups 重建
     this._activeDragEl = null;   // element currently being dragged (slider)
     this._bindEulerInputs();
-    this._buildBetaSliders();
+    this._bindShapeReset();
     this._bindPosInputs();
     this._bindIntrinsicsInputs();
   }
@@ -58,7 +50,7 @@ export class Panels {
       for (const id of [`${prefix}-eul-x`, `${prefix}-eul-y`, `${prefix}-eul-z`, `${prefix}-eul-x-s`, `${prefix}-eul-y-s`, `${prefix}-eul-z-s`]) this._setVal($(id), '');
     };
     // 体型滑块归位到中心(0)。range 无法置空,0 即「无数据」的视觉表示。
-    const clearBetas = () => { for (let i = 0; i < 10; i++) this._setVal($(`beta-${i}`), '0'); };
+    const clearShape = () => { for (const { el } of this._shapeSliders) this._setVal(el, '0'); };
     const writeSet = (prefix, e) => {
       const dx = (e[0] * DEG).toFixed(1), dy = (e[1] * DEG).toFixed(1), dz = (e[2] * DEG).toFixed(1);
       this._setVal($(`${prefix}-eul-x`), dx);
@@ -71,7 +63,7 @@ export class Panels {
 
     // bbox 读出独立于 rotation:仅 bbox 帧(rot 为 null)也要显示框值。
     const bb = cur && Array.isArray(cur.bbox) && cur.bbox.some((v) => v !== 0) ? cur.bbox : null;
-    $('bbox-ro').textContent = bb
+    if ($('bbox-ro')) $('bbox-ro').textContent = bb
       ? `${Math.round(bb[0])}, ${Math.round(bb[1])}, ${Math.round(bb[2])}, ${Math.round(bb[3])}`
       : '—';
 
@@ -82,11 +74,16 @@ export class Panels {
       clearSet('root');
       for (const id of ['pos-x', 'pos-y', 'pos-z']) this._setVal($(id), '');
       $('angle-list').innerHTML = '';
-      clearBetas();
+      clearShape();
     } else {
       // POSE set: only when a joint is selected in pose mode.
       if (ui && ui.mode === 'pose' && ui.selectedJoint != null) {
         writeSet('pose', rot.getJointEuler(ui.selectedJoint));
+        // MHR 关节的自由度受 rig 限制(如肘只有 rz):不可编辑的轴只读显示。
+        const editable = rot.editableChannels ? rot.editableChannels(ui.selectedJoint) : [0, 1, 2];
+        ['x', 'y', 'z'].forEach((ax, i) => {
+          for (const id of [`pose-eul-${ax}`, `pose-eul-${ax}-s`]) { const el = $(id); if (el) el.disabled = !editable.includes(i); }
+        });
       } else {
         clearSet('pose');
       }
@@ -98,19 +95,13 @@ export class Panels {
       this._setVal($('pos-z'), (+p[2]).toFixed(3));
       const lj = this._getLastJoints();
       if (lj) this.renderAngles(lj);
-      // beta sliders reflect current betas. _setVal skips the slider that is
-      // currently focused (i.e. being dragged), so an active drag is never
-      // clobbered while post-undo / frame-nav refreshes all others.
-      const betas = cur.betas || [];
-      for (let i = 0; i < 10; i++) {
-        const s = $(`beta-${i}`);
-        if (s) this._setVal(s, String(betas[i] ?? 0));
-      }
+      // 体型滑块反映当前参数。_setVal 跳过正在拖的滑块,undo/切帧刷新其余滑块不冲掉拖拽。
+      for (const { el, key, index } of this._shapeSliders) this._setVal(el, String(cur[key]?.[index] ?? 0));
     }
 
     // Intrinsics always reflect live K.
     const cam = this._getCam();
-    if (cam && cam.K) {
+    if (cam && cam.K && $('k-fx')) {
       this._setVal($('k-fx'), String(cam.K.fx));
       this._setVal($('k-fy'), String(cam.K.fy));
       this._setVal($('k-cx'), String(cam.K.cx));
@@ -119,7 +110,7 @@ export class Panels {
   }
 
   renderAngles(joints) {
-    const html = ANGLES.map(([label, a, v, b]) => {
+    const html = (this._getBody()?.angleReadouts ?? []).map(([label, a, v, b]) => {
       const ax = joints[a * 3] - joints[v * 3], ay = joints[a * 3 + 1] - joints[v * 3 + 1], az = joints[a * 3 + 2] - joints[v * 3 + 2];
       const bx = joints[b * 3] - joints[v * 3], by = joints[b * 3 + 1] - joints[v * 3 + 1], bz = joints[b * 3 + 2] - joints[v * 3 + 2];
       const la = Math.hypot(ax, ay, az), lb = Math.hypot(bx, by, bz);
@@ -157,6 +148,13 @@ export class Panels {
         const ui = this._getUI();
         if (!ui || ui.selectedJoint == null) return;
         rot.setJointEuler(ui.selectedJoint, e);
+        // 姿态状态可能把值夹在关节限位内(MHR):滑块/输入框回到实际值,拖过限位就「拖不下去」。
+        const back = rot.getJointEuler(ui.selectedJoint);
+        axes.forEach(([num, slider], i) => {
+          if (Math.abs(back[i] - e[i]) * DEG < 0.05) return;
+          const v = (back[i] * DEG).toFixed(1);
+          $(num).value = v; $(slider).value = v;
+        });
       } else {
         rot.setRootEuler(e);
       }
@@ -196,61 +194,87 @@ export class Panels {
     }
   }
 
-  // ── Beta sliders ──────────────────────────────────────────────────────────
-  _buildBetaSliders() {
+  // ── Shape sliders(按 body.shapeGroups 生成;SMPL = 10 个 β,MHR = 分组体型/缩放)──
+  setBody(body) {
     const host = $('beta-sliders');
     host.innerHTML = '';
-    for (let i = 0; i < 10; i++) {
-      const wrap = document.createElement('div');
-      wrap.style.cssText = 'display:flex;align-items:center;gap:5px';
-      const lab = document.createElement('span');
-      lab.textContent = `β${i}`;
-      lab.style.cssText = 'font-size:10px;color:#888;width:22px';
-      const s = document.createElement('input');
-      s.type = 'range'; s.id = `beta-${i}`;
-      s.min = '-5'; s.max = '5'; s.step = '0.1'; s.value = '0';
-      wrap.appendChild(lab); wrap.appendChild(s);
-      host.appendChild(wrap);
-    }
-    const readBetas = () => {
-      const out = [];
-      for (let i = 0; i < 10; i++) out.push(parseFloat($(`beta-${i}`).value) || 0);
-      return out;
-    };
-    for (let i = 0; i < 10; i++) {
-      const s = $(`beta-${i}`);
-      s.addEventListener('pointerdown', () => { this._activeDragEl = s; });
-      s.addEventListener('input', () => {
-        if (this._readOnly()) return;
-        const store = this._getStore();
-        if (!store || !store.current()) return;
-        if (!this._betaEditing) { store.beginEdit(); this._betaEditing = true; }
-        store.applyFields({ betas: readBetas() });
-        this._onEdit();
+    this._shapeSliders = [];
+    for (const g of body.shapeGroups ?? []) {
+      const box = document.createElement('details');
+      box.open = !!g.open;
+      const sum = document.createElement('summary');
+      sum.textContent = `${g.title} (${g.indices.length})`;
+      box.appendChild(sum);
+      g.indices.forEach((index, n) => {
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'display:flex;align-items:center;gap:5px';
+        const lab = document.createElement('span');
+        lab.textContent = g.labels[n];
+        lab.title = g.labels[n];
+        lab.style.cssText = 'font-size:10px;color:#888;width:84px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+        const el = document.createElement('input');
+        el.type = 'range'; el.min = String(g.min); el.max = String(g.max); el.step = String(g.step); el.value = '0';
+        el.style.flex = '1';
+        wrap.appendChild(lab); wrap.appendChild(el);
+        box.appendChild(wrap);
+        this._bindShapeSlider(el, g.key, index);
+        this._shapeSliders.push({ el, key: g.key, index });
       });
-      // Commit on release. 'change' alone is unreliable (it may not fire before
-      // the user clicks elsewhere); pointerup/pointercancel guarantee the undo
-      // unit is closed the moment the drag ends, so an immediate Ctrl+Z reverts
-      // this beta edit (was the bug: release→undo left sliders un-reverted).
-      const endDrag = () => {
-        this._activeDragEl = null;
-        if (this._readOnly() || !this._betaEditing) return;
-        this._getStore().commitEdit();
-        this._betaEditing = false;
-      };
-      s.addEventListener('pointerup', endDrag);
-      s.addEventListener('pointercancel', endDrag);
-      s.addEventListener('change', endDrag);
+      host.appendChild(box);
     }
+  }
+
+  _bindShapeSlider(el, key, index) {
+    el.addEventListener('pointerdown', () => { this._activeDragEl = el; });
+    el.addEventListener('input', () => {
+      if (this._readOnly()) return;
+      const store = this._getStore();
+      const cur = store?.current();
+      if (!cur || !Array.isArray(cur[key])) return;
+      if (!this._shapeEditing) { store.beginEdit(); this._shapeEditing = true; }
+      const arr = cur[key].slice();
+      arr[index] = parseFloat(el.value) || 0;
+      store.applyFields({ [key]: arr });
+      this._onShapeEdit(key, arr);
+    });
+    // Commit on release. 'change' alone is unreliable (it may not fire before
+    // the user clicks elsewhere); pointerup/pointercancel guarantee the undo
+    // unit is closed the moment the drag ends, so an immediate Ctrl+Z reverts it.
+    const endDrag = () => {
+      this._activeDragEl = null;
+      if (this._readOnly() || !this._shapeEditing) return;
+      this._getStore().commitEdit();
+      this._shapeEditing = false;
+    };
+    el.addEventListener('pointerup', endDrag);
+    el.addEventListener('pointercancel', endDrag);
+    el.addEventListener('change', endDrag);
+  }
+
+  // 姿态参数里的体型项(MHR 柔性长度)也在姿态编辑状态里:同步过去,避免下次姿态拖拽把它写回旧值。
+  _onShapeEdit(key, arr) {
+    const rot = this._getRotation();
+    if (rot && key === 'mhr_pose' && rot.setPoseParams) rot.setPoseParams(arr);
+    this._onEdit();
+  }
+
+  _bindShapeReset() {
     $('btn-beta-reset').addEventListener('click', () => {
       if (this._readOnly()) return;
       const store = this._getStore();
-      if (!store || !store.current()) return;
-      for (let i = 0; i < 10; i++) $(`beta-${i}`).value = '0';
+      const cur = store?.current();
+      if (!cur) return;
+      const fields = {};
+      for (const { el, key, index } of this._shapeSliders) {
+        fields[key] ??= cur[key].slice();
+        fields[key][index] = 0;
+        el.value = '0';
+      }
       store.beginEdit();
-      store.applyFields({ betas: Array(10).fill(0) });
+      store.applyFields(fields);
       store.commitEdit();
-      this._onEdit();
+      if (fields.mhr_pose) this._onShapeEdit('mhr_pose', fields.mhr_pose);
+      else this._onEdit();
     });
   }
 
@@ -284,7 +308,9 @@ export class Panels {
   }
 
   // ── Intrinsics inputs ─────────────────────────────────────────────────────
+  // 页面没有内参输入框(如多视角页:内参来自标定,不可改)时跳过。
   _bindIntrinsicsInputs() {
+    if (!$('k-fx')) return;
     const ids = ['k-fx', 'k-fy', 'k-cx', 'k-cy'];
     for (const id of ids) {
       $(id).addEventListener('input', () => {

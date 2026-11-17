@@ -17,3 +17,10 @@ export function worldGizmoFromLocal(qParentWorld, qLocal) {
 export function localFromWorldGizmo(qParentWorld, qWorld) {
   return quatNormalize(quatMultiply(quatConjugate(qParentWorld), qWorld));
 }
+
+// 手柄增量求解:把「上一步目标 → 本步目标」的增量作用到关节实际朝向上(都是局部四元数)。
+// 姿态状态精确执行时(实际 = 上一步目标)结果就是本步目标;被限位挡住时不会累计、不会换向跳变。
+export function incrementalTarget(prevTarget, target, actual) {
+  if (!prevTarget) return target;
+  return quatNormalize(quatMultiply(quatMultiply(target, quatConjugate(prevTarget)), actual));
+}

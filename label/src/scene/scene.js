@@ -3,13 +3,7 @@ import * as THREE from 'three';
 import { createRenderer } from '../../../smpl_render/renderer.js';
 import { applyContainerResize } from '../../../smpl_render/resize.js';
 
-const BONES = [
-  [0,3,0],[3,6,0],[6,9,0],[9,12,0],[12,15,0],
-  [9,13,1],[13,16,1],[16,18,1],[18,20,1],[20,22,1],
-  [9,14,2],[14,17,2],[17,19,2],[19,21,2],[21,23,2],
-  [0,1,3],[1,4,3],[4,7,3],[7,10,3],
-  [0,2,4],[2,5,4],[5,8,4],[8,11,4],
-];
+// 骨骼表 / 显示关节来自 BodyModel(smpl_core/body_model.js),本文件不写死任何骨架。
 const BONE_COLORS = [0xd4b800, 0x4da6ff, 0xff7733, 0x33cc66, 0xcc44cc];
 
 export class LabelScene {
@@ -44,12 +38,29 @@ export class LabelScene {
     this._flags = { mesh: true, points: true, bones: true, grid: true, axes: false, bg: true };
     this._personVisible = true;
     this._lastJoints = null;
+    this._bones = [];
+    this._displayJoints = [];
+    // 数据相机挂点:背景平面与视锥都在数据相机系里建,随相机位姿(多相机/转正)整体摆放。
+    // 单视角旧数据相机在原点 → 恒等,行为同前。
+    this._dataCam = new THREE.Group();
+    this._scene.add(this._dataCam);
+    this._bgRotationDeg = 0;
+  }
+
+  // 数据相机位姿 + 背景显示旋转(顺时针度数,来自 cameras[].view_rotation_deg)。
+  setDataCamera({ position, quaternion }, rotationDeg = 0) {
+    this._dataCam.position.copy(position);
+    this._dataCam.quaternion.copy(quaternion);
+    this._bgRotationDeg = rotationDeg;
+    if (this._bgTex) this._applyBgTexture(this._bgTex);
   }
 
   // The underlying THREE.Scene — gizmos attach their proxy objects here.
   threeScene() { return this._scene; }
+  // 宿主自行分区渲染(多视图,如 mhr_label 的 ViewHub)时用。
+  renderer() { return this._renderer; }
 
-  // World position [x,y,z] of SMPL joint j from the last posed joints buffer.
+  // 关节球(userData.jointIndex = 骨架关节索引),供 JointPicker 射线拾取。
   jointMeshes() {
     return this._jointsGroup ? this._jointsGroup.children : [];
   }
@@ -62,11 +73,11 @@ export class LabelScene {
   // The posed mesh object (THREE.Mesh) for raycasting/occlusion, or null.
   meshObject() { return this._mesh; }
 
-  // Highlight the selected joint sphere (SMPL index). Pass -1 to clear.
-  setSelectedJoint(smplIndex) {
+  // Highlight the selected joint sphere (skeleton index). Pass -1 to clear.
+  setSelectedJoint(jointIndex) {
     if (!this._jointsGroup) return;
-    this._jointsGroup.children.forEach((s, i) => {
-      const sel = (i === smplIndex);
+    this._jointsGroup.children.forEach((s) => {
+      const sel = (s.userData.jointIndex === jointIndex);
       s.material.color.set(sel ? 0x33ff88 : 0xffffff);
       s.scale.setScalar(sel ? 1.8 : 1.0);
     });
@@ -74,7 +85,7 @@ export class LabelScene {
 
   buildFrustum(meta) {
     if (this._frustum) {
-      this._scene.remove(this._frustum);
+      this._dataCam.remove(this._frustum);
       this._frustum.geometry.dispose();
       this._frustum.material.dispose();
     }
@@ -92,7 +103,7 @@ export class LabelScene {
     const geom = new THREE.BufferGeometry().setFromPoints(segs);
     this._frustum = new THREE.LineSegments(geom, new THREE.LineBasicMaterial({ color: 0x66aaff }));
     this._frustum.frustumCulled = false;
-    this._scene.add(this._frustum);
+    this._dataCam.add(this._frustum);
   }
 
   buildGrid() {
@@ -136,14 +147,15 @@ export class LabelScene {
   setPersonVisible(v) { this._personVisible = v; this._applyVisibility(); }
 
   _applyVisibility() {
-    const is3d = this._cam && this._cam.mode === '3d';
+    const is3d = !!(this._cam && this._cam.mode === '3d');   // 无相机(宿主自管渲染)时为 false;Object3D.visible 只认 === false
     if (this._mesh) this._mesh.visible = this._flags.mesh && this._personVisible;
     if (this._jointsGroup) this._jointsGroup.visible = this._flags.points && this._personVisible;
     if (this._bonesGroup) this._bonesGroup.visible = this._flags.bones && this._personVisible;
     if (this._grid) this._grid.visible = this._flags.grid && is3d;
     if (this._axes) this._axes.visible = this._flags.axes && is3d;
-    if (this._bgFar) this._bgFar.visible = this._flags.bg;
-    if (this._bgNear) this._bgNear.visible = this._flags.bg && is3d;
+    // 没有底图(该帧无画面 / 加载失败)时整块隐藏,而不是显示一块白色平面。
+    if (this._bgFar) this._bgFar.visible = this._flags.bg && !!this._bgTex;
+    if (this._bgNear) this._bgNear.visible = this._flags.bg && is3d && !!this._bgTex;
     if (this._frustum) this._frustum.visible = is3d;
   }
 
@@ -152,7 +164,17 @@ export class LabelScene {
     this._applyVisibility();
   }
 
-  setTopology(faces) {
+  // 换人体模型(或首次装载)时调用:body = BodyModel。旧网格/关节/骨骼整体替换。
+  setBody(body) {
+    for (const obj of [this._mesh, this._jointsGroup, this._bonesGroup]) {
+      if (!obj) continue;
+      this._scene.remove(obj);
+      obj.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
+    }
+    const faces = body.faces;
+    this._bones = body.bones;
+    this._displayJoints = body.displayJoints;
+    this._lastJoints = null;
     // Mesh
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
@@ -167,9 +189,9 @@ export class LabelScene {
     // Joint spheres
     this._jointsGroup = new THREE.Group();
     this._jointsGroup.frustumCulled = false;
-    for (let i = 0; i < 24; i++) {
+    for (const i of this._displayJoints) {
       const s = new THREE.Mesh(
-        new THREE.SphereGeometry(0.025, 8, 6),
+        new THREE.SphereGeometry(0.025 * (body.jointScale?.(i) ?? 1), 8, 6),
         new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, depthWrite: false }));
       s.userData.jointIndex = i;
       s.frustumCulled = false;
@@ -181,7 +203,7 @@ export class LabelScene {
     // Bone line segments
     this._bonesGroup = new THREE.Group();
     this._bonesGroup.frustumCulled = false;
-    for (const [, , g] of BONES) {
+    for (const [, , g] of this._bones) {
       const line = new THREE.Line(
         new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
         new THREE.LineBasicMaterial({ color: BONE_COLORS[g], depthTest: false }));
@@ -190,7 +212,8 @@ export class LabelScene {
       this._bonesGroup.add(line);
     }
     this._scene.add(this._bonesGroup);
-    this.buildGrid();
+    if (!this._grid) this.buildGrid();
+    this._applyVisibility();
   }
 
   setCamera(cameraModes) {
@@ -229,16 +252,18 @@ export class LabelScene {
     pos.array.set(vertices);
     pos.needsUpdate = true;
     this._mesh.geometry.computeVertexNormals();
+    this._mesh.geometry.computeBoundingSphere();   // 点选人体网格(JointPicker.onPickBody)要用最新包围球
+    this._mesh.geometry.computeBoundingBox();
 
     // Joint positions
-    for (let j = 0; j < 24; j++) {
-      this._jointsGroup.children[j].position.set(
-        joints[j * 3], joints[j * 3 + 1], joints[j * 3 + 2]);
+    for (const s of this._jointsGroup.children) {
+      const j = s.userData.jointIndex;
+      s.position.set(joints[j * 3], joints[j * 3 + 1], joints[j * 3 + 2]);
     }
 
     // Bone endpoints
-    for (let bi = 0; bi < BONES.length; bi++) {
-      const [a, b] = BONES[bi];
+    for (let bi = 0; bi < this._bones.length; bi++) {
+      const [a, b] = this._bones[bi];
       const line = this._bonesGroup.children[bi];
       line.geometry.setFromPoints([
         new THREE.Vector3(joints[a * 3], joints[a * 3 + 1], joints[a * 3 + 2]),
@@ -273,8 +298,8 @@ export class LabelScene {
       const mk = () => new THREE.Mesh(
         new THREE.PlaneGeometry(1, 1),
         new THREE.MeshBasicMaterial({ color: 0xffffff, depthWrite: false, side: THREE.DoubleSide }));
-      this._bgFar = mk(); this._bgFar.renderOrder = -1; this._scene.add(this._bgFar);
-      this._bgNear = mk(); this._bgNear.renderOrder = 0; this._scene.add(this._bgNear);
+      this._bgFar = mk(); this._bgFar.renderOrder = -1; this._dataCam.add(this._bgFar);
+      this._bgNear = mk(); this._bgNear.renderOrder = 0; this._dataCam.add(this._bgNear);
     }
     this._bgFar.geometry.dispose();
     this._bgFar.geometry = new THREE.PlaneGeometry(p.far.w, p.far.h);
@@ -286,6 +311,10 @@ export class LabelScene {
     texture.minFilter = THREE.LinearFilter;
     texture.magFilter = THREE.LinearFilter;
     texture.generateMipmaps = false;
+    // 原生帧按显示配置整幅旋转(顺时针 deg)。three 的 texture.rotation 正值 = UV 逆时针,
+    // 画面随之逆时针 → 顺时针显示取负。
+    texture.center.set(0.5, 0.5);
+    texture.rotation = -this._bgRotationDeg * Math.PI / 180;
     texture.needsUpdate = true;
     for (const plane of [this._bgFar, this._bgNear]) {
       plane.material.map = texture;

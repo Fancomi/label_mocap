@@ -46,7 +46,10 @@
     #tabs .tab:disabled { opacity:.4; cursor:not-allowed; }
     .tabpanel { border:1px solid #333; border-radius:0 0 4px 4px; padding:8px; display:flex; flex-direction:column; gap:6px; }
     .tabpanel[hidden] { display:none; }
-    #joint-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:3px; }
+    .body-diagram { width:100%; height:230px; background:#11151c; border:1px solid #333; border-radius:4px; }
+    .figure-tabs button { padding:3px 6px; font-size:11px; }
+    .joint-group-title { font-size:10px; margin:4px 0 1px; }
+    .joint-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:3px; }
     #joint-grid button { font-size:10px; padding:4px 2px; } #joint-grid button.on { background:#0066cc; }
     #joint-grid button.ik { outline:1px solid #2e9e60; } #joint-grid button:disabled { opacity:.35; cursor:not-allowed; }
     #right.disabled { opacity:.5; pointer-events:none; }
@@ -154,6 +157,7 @@
         <span style="font-size:10px;color:#8ab">开启后拖手腕/脚踝自动反解</span>
       </div>
       <div class="row" data-space-toggle title="手柄参考系"></div>
+      <div id="joint-figure"></div>
       <div id="joint-grid"></div>
       <div id="sel-joint" class="status">未选择关节</div>
       <div id="pose-rot-block" hidden>
@@ -204,7 +208,7 @@
     </section>
 
     <section class="tabpanel" data-mode="beta" hidden>
-      <p class="hint">调整体型参数,实时改变胖瘦高矮。</p>
+      <p class="hint">调整体型参数,实时改变胖瘦高矮;MHR 另有骨长缩放(分组可折叠)。</p>
       <div id="beta-sliders"></div>
       <button id="btn-beta-reset">归零</button>
     </section>

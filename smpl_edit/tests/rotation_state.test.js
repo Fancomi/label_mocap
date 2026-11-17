@@ -33,3 +33,11 @@ test('euler draft is preserved until quaternion changes elsewhere', () => {
   s.setJointEuler(1, [0.1, 0, 0]);     // different joint changes
   arrClose(s.getJointEuler(0), [Math.PI, 0, 0]); // joint 0 draft intact
 });
+
+test('root-only state (no body_pose, e.g. MHR) round-trips root_rota without emitting body_pose', () => {
+  const s = RotationState.fromAxisAngle({ root_rota: [0.2, -0.4, 0.1] });
+  assert.equal(s.jointCount, 0);
+  const out = s.toAxisAngle();
+  arrClose(out.root_rota, [0.2, -0.4, 0.1]);
+  assert.equal('body_pose' in out, false);
+});

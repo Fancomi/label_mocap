@@ -1,7 +1,7 @@
 // smpl_edit/tests/framing.test.js
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { bodyBounds, focusPlacement, relativeBearing, placeFromBearing, centerDelta } from '../framing.js';
+import { bodyBounds, focusPlacement, relativeBearing, placeFromBearing, centerDelta, focusTarget, JOINT_FOCUS_RADIUS } from '../framing.js';
 
 const j = (pts) => { const a = new Float32Array(24 * 3); pts.forEach(([i, x, y, z]) => { a[i*3]=x; a[i*3+1]=y; a[i*3+2]=z; }); return a; };
 
@@ -72,4 +72,12 @@ test('centerDelta with null prev (无→有人首帧) returns zero — 只立基
 
 test('centerDelta with null cur returns zero', () => {
   assert.deepEqual(centerDelta([1, 1, 1], null), [0, 0, 0]);
+});
+
+test('focusTarget: selected joint wins, else whole body, null without joints', () => {
+  const joints = j([[0, 0, 0, 0], [5, 1, 2, 3]]);
+  assert.deepEqual(focusTarget(joints, 5), { center: [1, 2, 3], radius: JOINT_FOCUS_RADIUS, kind: 'joint' });
+  assert.equal(focusTarget(joints, 5, 0.35).radius, JOINT_FOCUS_RADIUS * 0.35);
+  assert.equal(focusTarget(joints, null).kind, 'body');
+  assert.equal(focusTarget(null, null), null);
 });

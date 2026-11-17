@@ -7,7 +7,7 @@
 // 写回 RotationState 局部四元数,复用 forwardSmpl/撤销/保存链路;不依赖 three.js。
 import { solveTwoBoneIK, shortestArcQuat } from './ik_solver.js';
 import { endEffectorChain } from './ik_chains.js';
-import { mat3ToQuat, quatConjugate, quatMultiply, quatNormalize } from '../smpl_core/rotations.js';
+import { mat3ToQuat, quatToMat3, quatConjugate, quatMultiply, quatNormalize } from '../smpl_core/rotations.js';
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const scale = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
@@ -44,13 +44,21 @@ export class IKController {
 
   // 自动推导弯曲方向的可视化世界点(无存储 pole 时用于摆放极向量柄):
   // chainRoot + perp0 * 上臂/大腿骨长。
+  // 有真铰链(chain.flex)时用铰链给出的弯曲方向 −(a×dir),直肢时也稳定,与求解用的方向一致。
   autoPoleViz(chain) {
     const joints = this._getLastJoints();
     const [jRoot, jMid, jEnd] = chain.joints;
     const root = j3(joints, jRoot), mid = j3(joints, jMid), end = j3(joints, jEnd);
     const upper0 = sub(mid, root);
     const dir0 = norm(sub(end, root));
-    const perp0 = norm(sub(upper0, scale(dir0, dot(upper0, dir0))));
+    let perp0 = norm(sub(upper0, scale(dir0, dot(upper0, dir0))));
+    const worldRot = this._getLastWorldRot();
+    if (chain.flex && worldRot) {
+      const m = m9(worldRot, jMid);
+      const a = scale(norm([m[chain.flex.ch], m[3 + chain.flex.ch], m[6 + chain.flex.ch]]), chain.flex.sign);
+      const b = norm(scale(cross(a, dir0), -1));
+      if (len(b) > 0) perp0 = b;
+    }
     const L = len(upper0);
     return [root[0] + perp0[0] * L, root[1] + perp0[1] * L, root[2] + perp0[2] * L];
   }
@@ -81,7 +89,14 @@ export class IKController {
     // 屈伸符号:使 sign·(hinge×dir0) 与当前弯曲侧(肘/膝相对肩腕轴的偏移)同向。
     const perp0 = norm(sub(upper0, scale(dir0, dot(upper0, dir0))));
     const ref0 = cross(hinge, dir0);
-    const sign = dot(perp0, ref0) >= 0 ? 1 : -1;
+    let sign = dot(perp0, ref0) >= 0 ? 1 : -1;
+    // 模型给出了中间关节的真实铰链(chain.flex,MHR):铰链 = 该关节弯曲轴的世界方向 × 屈曲方向。
+    // 绕 a 正向屈曲时中间关节偏向 −(a × 肢体方向),故 sign = −1。直肢时也不会选错平面/反关节。
+    if (chain.flex) {
+      const m = m9(worldRot, jMid);
+      const a = norm([m[chain.flex.ch], m[3 + chain.flex.ch], m[6 + chain.flex.ch]]);
+      if (len(a) > 0) { hinge = scale(a, chain.flex.sign); sign = -1; }
+    }
 
     const pShoulder = parents[jRoot];
     this._ref = {
@@ -126,8 +141,24 @@ export class IKController {
     const newLower = sub(newEnd, newMid);
 
     // 对参考世界朝向施加「参考骨向→新骨向」最短弧:方向对齐、参考 twist 保留。
-    const shoulderWorldNew = quatNormalize(quatMultiply(shortestArcQuat(ref.upper0, newUpper), ref.shoulderWorld0));
-    const elbowWorldNew = quatNormalize(quatMultiply(shortestArcQuat(ref.lower0, newLower), ref.elbowWorld0));
+    let shoulderWorldNew = quatNormalize(quatMultiply(shortestArcQuat(ref.upper0, newUpper), ref.shoulderWorld0));
+    let elbowWorldNew = quatNormalize(quatMultiply(shortestArcQuat(ref.lower0, newLower), ref.elbowWorld0));
+    // 真铰链(chain.flex):上段的旋转要把铰链轴也带到新弯曲平面的法向上,否则中间关节的单轴屈伸够不到目标。
+    // 用 (骨向, 铰链⊥骨向) 两组正交基对齐求上段旋转,下段再绕新铰链补齐。
+    if (ref.chain.flex) {
+      const n = cross(newUpper, newLower);
+      if (len(n) > 1e-6) {
+        const frame = (u, h) => { const x = norm(u); const y = norm(sub(h, scale(x, dot(h, x)))); return [x, y, cross(x, y)]; };
+        const h1 = dot(n, ref.hinge) >= 0 ? n : scale(n, -1);
+        const F0 = frame(ref.upper0, ref.hinge), F1 = frame(newUpper, h1);
+        // R = F1·F0ᵀ(列为基向量)→ 四元数
+        const R = [0, 1, 2].flatMap((r) => [0, 1, 2].map((c) => F1[0][r] * F0[0][c] + F1[1][r] * F0[1][c] + F1[2][r] * F0[2][c]));
+        const qR = mat3ToQuat(R);
+        shoulderWorldNew = quatNormalize(quatMultiply(qR, ref.shoulderWorld0));
+        const lowerRot = (q, v) => { const m = quatToMat3(q); return [0, 1, 2].map((r) => m[r * 3] * v[0] + m[r * 3 + 1] * v[1] + m[r * 3 + 2] * v[2]); };
+        elbowWorldNew = quatNormalize(quatMultiply(shortestArcQuat(lowerRot(qR, ref.lower0), newLower), quatMultiply(qR, ref.elbowWorld0)));
+      }
+    }
 
     // 世界朝向 → 局部:肩父系冻结;肘父系是(已转动的)肩新世界朝向。
     const shoulderLocal = quatNormalize(quatMultiply(quatConjugate(ref.parentShoulderWorld), shoulderWorldNew));

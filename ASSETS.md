@@ -9,6 +9,11 @@ tests remain predictable.
 | `smpl_web_viewer/public/models/smpl_neutral.meta.json` | Web runtime model | Yes | Loaded by both current viewers. |
 | `smpl_web_viewer/public/models/smpl_neutral.f32.bin` | Web runtime model | Yes | Must be a real file for GitHub Pages. |
 | `smpl_web_viewer/public/models/smpl_neutral.i32.bin` | Web runtime model | Yes | Must be a real file for GitHub Pages. |
+| `smpl_web_viewer/public/models/mhr_lod1.meta.json` | Web runtime model | Yes (MHR data) | MHR v1.0.1 LOD1, no pose correctives / expressions. Exported by `tools/mhr/export_mhr_web_model.py`. |
+| `smpl_web_viewer/public/models/mhr_lod1.f32.bin` / `.i32.bin` | Web runtime model | Yes (MHR data) | ~11MB total. Must be a real file for GitHub Pages. |
+| `smpl_web_viewer/public/models/mhr_lod1.LICENSE.txt` | License | — | Apache-2.0 from the MHR release; ship alongside the model. |
+| `tools/mhr/` | Offline tooling | No | MHR export, numpy reference forward, sam-3d-body bundle converter, offline batch derivation (`derive_dataset.mjs`, node). Needs torch + the MHR release `assets/` (kept outside the repo). |
+| `smpl_core/tests/fixtures/mhr_forward_cases.json` | Test fixture | No | Synthetic params + official MHR outputs; no capture data. |
 | `smpl_viewer/vendor/` | Web runtime vendor JS | Yes | Vendored Three.js for `smpl_viewer/viewer.html`. |
 | `smpl_web_viewer/public/vendor/` | Web runtime vendor JS | Yes for sample app | Vendored Three.js for `smpl_web_viewer/index.html`. |
 | `smpl_viewer/_data/smpl/*.pkl` and `*.npy` | Offline Python SMPL source | No | Used by Python tools/tests/exporters, not by browser playback. |

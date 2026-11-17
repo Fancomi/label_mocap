@@ -4,7 +4,7 @@ import {
   eulerXYZToQuat, quatToEulerXYZ,
 } from '../smpl_core/rotations.js';
 
-const JOINTS = 21;
+const SMPL_JOINTS = 21;
 
 export class RotationState {
   constructor(rootQ, jointQ) {
@@ -13,17 +13,19 @@ export class RotationState {
     this._draftEuler = new Map();     // index (-1=root) -> [rx,ry,rz]
   }
 
+  // body_pose 缺省(如 MHR:身体姿态不以每关节轴角存储)→ 只管整体朝向,jointCount = 0。
   static fromAxisAngle({ root_rota, body_pose }) {
     const rootQ = axisAngleToQuat(root_rota);
     const jointQ = [];
-    for (let j = 0; j < JOINTS; j++) {
+    const n = Array.isArray(body_pose) ? SMPL_JOINTS : 0;
+    for (let j = 0; j < n; j++) {
       const k = j * 3;
       jointQ.push(axisAngleToQuat([body_pose[k], body_pose[k + 1], body_pose[k + 2]]));
     }
     return new RotationState(rootQ, jointQ);
   }
 
-  get jointCount() { return JOINTS; }
+  get jointCount() { return this._jointQ.length; }
 
   getJointQuat(j) { return this._jointQ[j]; }
   getRootQuat() { return this._rootQ; }
@@ -57,10 +59,13 @@ export class RotationState {
     }
   }
 
+  // jointCount = 0 时只返回 root_rota(不写出空 body_pose)。
   toAxisAngle() {
     const root_rota = quatToAxisAngle(this._rootQ);
-    const body_pose = new Array(JOINTS * 3);
-    for (let j = 0; j < JOINTS; j++) {
+    const n = this._jointQ.length;
+    if (n === 0) return { root_rota };
+    const body_pose = new Array(n * 3);
+    for (let j = 0; j < n; j++) {
       const aa = quatToAxisAngle(this._jointQ[j]);
       body_pose[j * 3] = aa[0]; body_pose[j * 3 + 1] = aa[1]; body_pose[j * 3 + 2] = aa[2];
     }

@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>MHR 标注器</title>
+  <script type="importmap">
+    { "imports": {
+        "three": "../smpl_web_viewer/public/vendor/three.module.js",
+        "three/addons/controls/OrbitControls.js": "../smpl_web_viewer/public/vendor/OrbitControls.js",
+        "three/addons/controls/TransformControls.js": "../smpl_web_viewer/public/vendor/TransformControls.js"
+    } }
+  </script>
+  <style>
+    html,body { height:100%; margin:0; background:#1a1f2a; color:#eee; font-family:system-ui,monospace; font-size:12px; }
+    body { display:flex; }
+    #left, #right { width:270px; flex:0 0 270px; background:#1a1a1a; padding:10px; display:flex; flex-direction:column; gap:8px; overflow-y:auto; box-sizing:border-box; }
+    #left { border-right:1px solid #333; } #right { border-left:1px solid #333; }
+    #views { flex:1; position:relative; min-width:0; background:#0f1216; overflow:hidden; }
+    #views canvas { display:block; width:100%; height:100%; }
+    #overlay { position:absolute; inset:0; pointer-events:none; }
+    .vbox { position:absolute; box-sizing:border-box; border:1px solid #2a3340; }
+    .vbox.active { border:2px solid #3399ff; }
+    .vhead { position:absolute; top:6px; left:6px; right:6px; display:flex; gap:6px; align-items:center; }
+    .vhead .tag { background:rgba(0,0,0,.65); padding:4px 8px; border-radius:3px; color:#9cf; }
+    .vbox.active .vhead .tag { color:#fff; background:rgba(0,80,170,.85); }
+    .vhead button { pointer-events:auto; padding:3px 7px; }
+    #status { position:absolute; bottom:8px; left:8px; background:rgba(0,0,0,.65); padding:5px 9px; border-radius:3px; z-index:5; max-width:90%; }
+    #loading { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:240px; background:rgba(0,0,0,.7); padding:14px 16px; border-radius:8px; text-align:center; z-index:7; }
+    #loading[hidden] { display:none; }
+    #loading-track { height:6px; background:#2a3140; border-radius:3px; overflow:hidden; margin-top:8px; }
+    #loading-bar { height:100%; width:0%; background:#3399ff; }
+    h2 { font-size:14px; color:#7df; margin:0 0 4px; } h3 { font-size:11px; color:#8ab; margin:0 0 2px; }
+    .card { border-top:1px solid #2a2a2a; padding-top:8px; display:flex; flex-direction:column; gap:5px; }
+    button { padding:6px 8px; background:#2a2a2a; border:1px solid #444; color:#eee; border-radius:4px; cursor:pointer; font:inherit; }
+    button:hover { background:#3a3a3a; } button.on { background:#0066cc; border-color:#3399ff; }
+    button.primary { background:#1f6f43; border-color:#2e9e60; } button:disabled { opacity:.4; cursor:not-allowed; }
+    .row { display:flex; gap:5px; } .row.wrap { flex-wrap:wrap; } .row > * { flex:1; }
+    .row.small { align-items:center; color:#888; } .row.small span { flex:0 0 auto; }
+    .big { font-size:16px; color:#ffa; text-align:center; }
+    .status { background:#222; border:1px solid #333; color:#ffa; padding:4px 6px; border-radius:3px; min-height:16px; }
+    .hint { color:#9ab; font-size:11px; line-height:1.5; margin:0; background:#222b33; padding:6px 8px; border-radius:4px; }
+    .hint code { color:#cde; }
+    input[type=range] { width:100%; } input[type=number] { background:#222; border:1px solid #444; color:#eee; padding:3px 4px; border-radius:3px; font:inherit; width:100%; }
+    input:disabled { opacity:.45; }
+    .kgrid { display:grid; grid-template-columns:auto 70px 1fr; gap:4px 6px; align-items:center; }
+    .kgrid2 { display:grid; grid-template-columns:auto 1fr; gap:4px 6px; align-items:center; }
+    .kgrid > label, .kgrid2 > label { font-size:11px; color:#9ab; text-align:right; }
+    .mono { font-size:11px; line-height:1.6; }
+    #tabs { display:flex; gap:3px; } #tabs .tab { flex:1; border-radius:4px 4px 0 0; }
+    .tabpanel { border:1px solid #333; border-radius:0 0 4px 4px; padding:8px; display:flex; flex-direction:column; gap:6px; }
+    .tabpanel[hidden] { display:none; }
+    .body-diagram { width:100%; height:230px; background:#11151c; border:1px solid #333; border-radius:4px; }
+    .figure-tabs button { padding:3px 6px; font-size:11px; }
+    .joint-group-title { font-size:10px; margin:4px 0 1px; }
+    .joint-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:3px; }
+    #joint-grid button { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #joint-grid button { font-size:10px; padding:4px 2px; } #joint-grid button.on { background:#0066cc; }
+    #right.disabled, #frame-card.disabled { opacity:.5; pointer-events:none; }
+    #pose-rot-block[hidden], #hands-row[hidden] { display:none !important; }
+    .kbd b { color:#2fd6e0; } .kbd div { margin:1px 0; }
+    details summary { cursor:pointer; color:#8ab; margin:4px 0; }
+  </style>
+</head>
+<body>
+  <aside id="left">
+    <h2>MHR 标注器</h2>
+    <button id="btn-open" class="primary">📂 打开数据集</button>
+    <p class="hint">选择<b>数据集根目录</b>(Chrome / Edge)。有几个视角、各用哪个视频、怎么转正、帧怎么对应,
+      都由目录里的 <code>json_results/player_0/player_0.json</code> 的 <code>cameras[]</code> 决定,页面上不用设置。</p>
+
+    <div class="row"><button id="btn-undo">↶ 撤销 (Ctrl/⌘+Z)</button><button id="btn-save" class="primary">💾 保存</button><button id="btn-reset">↺ 重读</button></div>
+    <div class="card" id="frame-card">
+      <h3>当前帧</h3>
+      <div id="frame-info" class="big">— / —</div>
+      <input id="slider" type="range" min="0" max="0" value="0">
+      <div id="anno-timeline"></div>
+      <div class="row"><button id="btn-prev">◀</button><button id="btn-play">▶ 播放</button><button id="btn-next">▶|</button></div>
+      <div class="row small"><span>速度</span><input id="speed" type="range" min="1" max="60" value="30"><span id="speed-val">30 fps</span></div>
+    </div>
+
+    <div class="card">
+      <h3>本帧</h3>
+      <div id="anno-state" class="status">—</div>
+      <div id="anno-actions" class="row wrap"></div>
+    </div>
+
+    <div class="card">
+      <h3>分屏</h3>
+      <div class="row">
+        <button data-layout="A" class="on" title="左侧 3D 自由视角,右侧各相机对齐视频">A 3D+对齐</button>
+        <button data-layout="B" title="各相机对齐视频平铺(纯二维)">B 纯二维</button>
+        <button data-layout="C" title="只看一个相机的对齐视频;视图左上角可切换相机">C 聚焦</button>
+      </div>
+      <p class="hint">点一下某个视图设为「当前」(蓝框),手柄只在当前视图出现。</p>
+      <h3 style="margin-top:6px">显示</h3>
+      <div class="row wrap">
+        <button id="t-mesh" class="on">网格</button><button id="t-points" class="on">关键点</button>
+        <button id="t-bones" class="on">骨骼</button><button id="t-bg" class="on">底图</button>
+      </div>
+      <div class="row small"><span>网格透明度</span><input id="mesh-opacity" type="range" min="0.1" max="1" step="0.05" value="0.7"></div>
+    </div>
+
+    <div class="card"><h3>关节角度 (只读)</h3><div id="angle-list" class="mono"></div></div>
+
+    <div class="card">
+      <h3>快捷键</h3>
+      <div id="kbd-hint" class="hint kbd"></div>
+    </div>
+  </aside>
+
+  <main id="views"><canvas id="c"></canvas><div id="overlay"></div>
+    <div id="status">就绪 — 请先打开数据集</div>
+    <div id="loading" hidden><div id="loading-text">加载模型…</div><div id="loading-track"><div id="loading-bar"></div></div></div>
+  </main>
+
+  <aside id="right" class="disabled">
+    <div id="tabs">
+      <button class="tab on" data-mode="root">整体</button>
+      <button class="tab" data-mode="pose">姿势</button>
+      <button class="tab" data-mode="beta">体型</button>
+    </div>
+    <section class="tabpanel" data-mode="root">
+      <p class="hint">拖箭头平移整个人体,切到「旋转」改朝向。多视角时所有视角都贴合才算修好。</p>
+      <div class="row"><button id="root-translate" class="on">移动</button><button id="root-rotate">旋转</button></div>
+      <div class="row" data-space-toggle title="手柄参考系"></div>
+      <h3>整体平移 (米,世界系)</h3>
+      <div class="kgrid2">
+        <label>x</label><input type="number" id="pos-x" step="0.01">
+        <label>y</label><input type="number" id="pos-y" step="0.01">
+        <label>z</label><input type="number" id="pos-z" step="0.01">
+      </div>
+      <h3>整体旋转 (欧拉 XYZ, 度)</h3>
+      <div class="kgrid">
+        <label>X</label><input type="number" id="root-eul-x" step="1"><input type="range" id="root-eul-x-s" min="-180" max="180" step="1">
+        <label>Y</label><input type="number" id="root-eul-y" step="1"><input type="range" id="root-eul-y-s" min="-180" max="180" step="1">
+        <label>Z</label><input type="number" id="root-eul-z" step="1"><input type="range" id="root-eul-z-s" min="-180" max="180" step="1">
+      </div>
+    </section>
+    <section class="tabpanel" data-mode="pose" hidden>
+      <p class="hint">点画面里的关节点或下面的按钮,再拖旋转环。肘、膝只能弯曲;灰掉的轴该关节不能动。</p>
+      <div class="row" style="align-items:center;gap:6px">
+        <button id="ik-toggle" hidden>🔗 IK 拖拽</button>
+        <span style="font-size:10px;color:#8ab">开启后拖手腕/脚踝,肩肘/髋膝自动反解</span>
+      </div>
+      <div class="row" data-space-toggle title="手柄参考系"></div>
+      <label style="display:flex;align-items:center;gap:6px;color:#9ab" title="MHR rig 自带的关节活动范围(如膝只能单向弯)。已超出范围的数据不会被拉回,只是不能再往外拖"><input type="checkbox" id="t-limits" checked style="width:auto;margin:0"> 遵守关节限位</label>
+      <label id="hands-row" hidden style="display:flex;align-items:center;gap:6px;color:#9ab"><input type="checkbox" id="t-hands" style="width:auto;margin:0"> 显示手部(手指关节 / 手部体型)</label>
+      <div id="joint-figure"></div>
+      <div id="joint-grid"></div>
+      <div id="sel-joint" class="status">未选择关节</div>
+      <div id="pose-rot-block" hidden>
+        <h3>旋转 (欧拉 XYZ, 度)</h3>
+        <div class="kgrid">
+          <label>X</label><input type="number" id="pose-eul-x" step="1"><input type="range" id="pose-eul-x-s" min="-180" max="180" step="1">
+          <label>Y</label><input type="number" id="pose-eul-y" step="1"><input type="range" id="pose-eul-y-s" min="-180" max="180" step="1">
+          <label>Z</label><input type="number" id="pose-eul-z" step="1"><input type="range" id="pose-eul-z-s" min="-180" max="180" step="1">
+        </div>
+        <div id="pose-range" class="hint"></div>
+      </div>
+    </section>
+    <section class="tabpanel" data-mode="beta" hidden>
+      <p class="hint">体型与骨长缩放(分组可折叠)。</p>
+      <div id="beta-sliders"></div>
+      <button id="btn-beta-reset">归零</button>
+    </section>
+  </aside>
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>

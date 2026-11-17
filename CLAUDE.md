@@ -43,12 +43,15 @@ The central design is a layered kernel that multiple apps consume. When changing
 
 - **Apps** (each `<app>/index.html` + `<app>/src/app.js` assembles the kernels):
   - **`label/`** — main 2D-image/video SMPL annotator. Tabbed exclusive edit modes [Pose/Root/Bbox/Beta]; in-place JSON save (Chrome/Edge File System Access, else download). `src/io/` = data sources, `src/scene/` = three.js wiring, `src/edit/` = bbox/derived/occlusion.
+  - **`mhr_label/`** — MHR (sam-3d-body) annotator for bad-case repair: one or more calibrated videos, one world-frame body, edit in any view. **Apps are split by body model, not by view count** (`label/` = SMPL, `mhr_label/` = MHR; either may gain single/multi-view). Dataset = a directory whose `json_results/player_0/player_0.json` `cameras[]` names the videos and display rotation; built offline by `tools/mhr/convert_sam3d_bundle.py`. Reuses `label/src/scene|ui|io|edit`.
   - **`pcd_label/`** — 3D LiDAR point-cloud + SMPL annotator. Reuses `smpl_edit` wholesale; adds `pcd_scene`, `orbit_cam`, point-cloud decode/colormap. Up-axis/front-axis are **camera-only** (geometry never rotates).
   - **`smpl_viewer/` & `smpl_web_viewer/`** — read-only viewers. `smpl_viewer` is the GitHub Pages main entry; `smpl_web_viewer` is the sample app and home of most Python tooling + many unit tests. Annotator output (`player_0.json`) loads directly in the viewers — keep that format compatible.
 
 three.js is **vendored** (`smpl_web_viewer/public/vendor/`) and wired through an `importmap` in each app's `index.html`; all apps share that one copy.
 
 ## Conventions and pitfalls
+
+- **Cross-app contract: `docs/CONTRACTS.md`.** Click semantics, handle sizing/axis lock, joint panel, shortcuts, derived-label timing, data formats and display rotation are shared by `label/`, `pcd_label/`, `mhr_label/`. Change them together and update that file.
 
 - **Tests cover pure logic only.** three.js / WebGL / DOM code is verified in-browser, not unit-tested. New code that *can* be pure should be, and should get a `*.test.js`.
 - **Data rotation is forbidden for editing.** Portrait/N×90° image data is view-only; never bake a rotation into stored pose. Frame identity = image **position** in the ordered list, not the `image_id` value.

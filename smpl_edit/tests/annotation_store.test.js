@@ -157,3 +157,75 @@ test('addFromPrevious omits pole_vectors when the source has none', () => {
   store.addFromPrevious();
   assert.equal('pole_vectors' in store.current(), false);
 });
+
+// ── MHR 文档(info.body_model = 'mhr'):字段契约随人体模型切换 ──
+const mhrAnn = (imageId) => ({
+  id: imageId, image_id: imageId, root_pos: [1, 0, -3], root_rota: [0, 1, 0],
+  mhr_pose: Array(130).fill(0.1), mhr_scale: Array(68).fill(0), mhr_shape: Array(45).fill(0.2),
+  mhr_expr: Array(72).fill(0), source: { camera: 'orb1', decode_index: imageId },
+});
+
+test('mhr doc: presence is mhr_pose, T-pose uses MHR defaults', () => {
+  const doc = new CocoDocument({ info: { body_model: 'mhr' }, images: [{ id: 0 }, { id: 1 }], annotations: [mhrAnn(0)] });
+  const store = new AnnotationStore(doc);
+  assert.equal(store.hasSmpl(), true);
+  store.setFrame(1);
+  assert.equal(store.hasSmpl(), false);
+  store.addTpose();
+  assert.equal(store.current().mhr_pose.length, 130);
+  assert.equal(store.current().mhr_shape.length, 45);
+  assert.equal('body_pose' in store.current(), false);
+});
+
+test('mhr doc: addFromPrevious copies MHR fields, not body_pose or stale derived fields', () => {
+  const src = { ...mhrAnn(0), per_view: { orb1: { bbox: [1, 2, 3, 4] } } };
+  const doc = new CocoDocument({ info: { body_model: 'mhr' }, images: [{ id: 0 }, { id: 1 }], annotations: [src] });
+  const store = new AnnotationStore(doc);
+  store.setFrame(1);
+  store.addFromPrevious();
+  const a = store.current();
+  assert.deepEqual(a.mhr_pose, src.mhr_pose);
+  assert.equal('per_view' in a, false);
+  assert.equal('body_pose' in a, false);
+});
+
+test('mhr doc: untouched extra keys (mhr_expr, source) survive edits and serialize', () => {
+  const doc = new CocoDocument({ info: { body_model: 'mhr' }, images: [{ id: 0 }], annotations: [mhrAnn(0)] });
+  const store = new AnnotationStore(doc);
+  store.beginEdit();
+  store.applyFields({ root_pos: [2, 0, -3], body_pose: Array(63).fill(1) });   // body_pose 不属于 MHR,应被忽略
+  store.commitEdit();
+  const out = doc.serialize().annotations[0];
+  assert.deepEqual(out.root_pos, [2, 0, -3]);
+  assert.equal('body_pose' in out, false);
+  assert.equal(out.mhr_expr.length, 72);
+  assert.deepEqual(out.source, { camera: 'orb1', decode_index: 0 });
+});
+
+test('unknown body_model is rejected instead of silently treated as SMPL', () => {
+  assert.throws(() => new CocoDocument({ info: { body_model: 'smplx' }, images: [] }), /smplx/);
+});
+
+test('onCommitted fires once per undo unit (drag commit, txn, undo) and not for deletes', () => {
+  const doc = new CocoDocument({ info: { body_model: 'mhr' }, images: [{ id: 0 }, { id: 1 }], annotations: [mhrAnn(0)] });
+  const store = new AnnotationStore(doc);
+  const seen = [];
+  store.onCommitted((id) => seen.push(id));
+  store.beginEdit(); store.applyFields({ root_pos: [1, 1, -3] }); store.applyFields({ root_pos: [2, 1, -3] });
+  assert.deepEqual(seen, [], 'not during drag');
+  store.commitEdit();
+  store.setFrame(1); store.addTpose();
+  store.deleteCurrent();
+  store.undo();          // 撤销删除 → 帧 1 回来
+  assert.deepEqual(seen, [0, 1, 1]);
+});
+
+test('setDerived writes without an undo entry or revision bump', () => {
+  const doc = new CocoDocument({ info: { body_model: 'mhr' }, images: [{ id: 0 }], annotations: [mhrAnn(0)] });
+  const store = new AnnotationStore(doc);
+  const rev = store.revision();
+  store.setDerived(0, { keypoints: [1, 2, 2] });
+  assert.equal(store.revision(), rev);
+  store.undo();
+  assert.deepEqual(store.current().keypoints, [1, 2, 2]);
+});

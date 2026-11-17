@@ -86,3 +86,12 @@ test('loadPersonSet accepts a lazy fallback', async () => {
   assert.equal(called, 1);
   assert.equal(persons.current().store.frameCount(), 3);
 });
+
+test('emptyDocLike keeps body model and camera config, drops annotations', () => {
+  const raw = { info: { body_model: 'mhr' }, cameras: [{ id: 'orb1' }], images: [{ id: 0 }], annotations: [{ id: 0, image_id: 0 }], categories: [] };
+  const e = emptyDocLike(raw);
+  assert.deepEqual(e.info, { body_model: 'mhr' });
+  assert.deepEqual(e.cameras, [{ id: 'orb1' }]);
+  assert.deepEqual(e.annotations, []);
+  assert.equal('info' in emptyDocLike({ images: [] }), false);
+});

@@ -13,7 +13,16 @@ test('chainsFor(smpl) 返回 4 条链,各含三关节,bodyIdx = joints − 1', (
 });
 
 test('未知骨骼返回空数组(不抛错)', () => {
-  assert.deepEqual(chainsFor('mhr'), []);
+  assert.deepEqual(chainsFor('nope'), []);
+});
+
+test('resolveChains 按名字解析骨架索引与姿态序号;已解析数组原样返回', async () => {
+  const { resolveChains } = await import('../ik_chains.js');
+  const body = { jointNames: ['root', 'a', 'b', 'c'], poseJoints: [3, 1, 2] };
+  const chains = resolveChains(body, [{ name: 'X', joints: ['a', 'b', 'c'] }, { name: 'Y', joints: ['a', 'zz', 'c'] }]);
+  assert.deepEqual(chains, [{ name: 'X', joints: [1, 2, 3], bodyIdx: [1, 2, 0] }]);
+  assert.equal(chainsFor(chains), chains);
+  assert.equal(endEffectorChain(chains, 3).name, 'X');
 });
 
 test('endEffectorChain 命中末端关节,返回其链', () => {

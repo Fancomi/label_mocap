@@ -9,8 +9,12 @@ import { discoverPersons, personTemplate } from './person_files.js';
 const isCoco = (o) => typeof o === 'object' && o !== null && Array.isArray(o.images);
 
 // 同帧轴的空文档:沿用 images[]/categories,annotations 清空(新建人物 / 无标注序列用)。
+// info(含 body_model)与 cameras 也沿用:新人物必须与同数据集同一人体模型、同一相机配置。
 export function emptyDocLike(raw) {
-  return { images: structuredClone(raw?.images ?? []), annotations: [], categories: structuredClone(raw?.categories ?? []) };
+  const out = { images: structuredClone(raw?.images ?? []), annotations: [], categories: structuredClone(raw?.categories ?? []) };
+  if (raw?.info) out.info = structuredClone(raw.info);
+  if (raw?.cameras) out.cameras = structuredClone(raw.cameras);
+  return out;
 }
 
 // paths:数据源里全部相对路径;primaryPath:0 号人物(主标注)路径(可尚不存在);

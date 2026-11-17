@@ -32,13 +32,16 @@ export function installIK(ctx) {
     getStore: ctx.getStore,
     getLastJoints: ctx.getLastJoints,
     getLastWorldRot: ctx.getLastWorldRot,
-    getSkeleton: () => 'smpl',
+    // 骨架名由宿主按当前人体模型给出(ik_chains.js 的键);null = 该模型无 IK 链,插件静默不生效。
+    getSkeleton: ctx.getSkeleton ?? (() => 'smpl'),
     getParents: ctx.getParents,
     onEdit: ctx.onEdit,
   });
 
+  // 姿态按钮序号 k → 骨架关节:SMPL 为 k+1(关节 0 是 root);其他模型由宿主给出(如 body.poseJoints[k])。
+  const poseJointOf = ctx.poseJointOf ?? ((k) => k + 1);
   // 当前选中链(末端柄/极向量柄共用的解析入口):依 UI 选中关节求链,无则 null。
-  const currentChain = () => ikController.chainFor((ctx.getUI()?.selectedJoint ?? -1) + 1);
+  const currentChain = () => { const k = ctx.getUI()?.selectedJoint; return k == null ? null : ikController.chainFor(poseJointOf(k)); };
 
   // 两柄共享的场景接线;差异仅在 marker 外观、回调、活动态是否仍显示 marker。
   const handleBase = { scene: ctx.scene.threeScene(), camera: ctx.camera, canvas: ctx.canvas, getStore: ctx.getStore, space: ctx.gizmoSpace };
@@ -48,7 +51,13 @@ export function installIK(ctx) {
     ...handleBase,
     marker: makeHandleMarker(new THREE.BoxGeometry(0.04, 0.04, 0.04), 0xcccccc),
     onStart: () => { const c = currentChain(); if (c) ikController.beginDrag(c); },
-    onDrag: (worldPos) => ikController.solveTo(worldPos),
+    onDrag: (worldPos) => {
+      ikController.solveTo(worldPos);
+      // 极向量柄随动:未存人控 pole 时它表示「当前弯曲方向」,拖末端时肢体在变,它要跟着走,
+      // 否则下次选中会从旧位置跳到新位置。
+      const c = currentChain();
+      if (c && !ikController.storedPole(c.name)) poleHandle.moveTo(ikController.autoPoleViz(c));
+    },
     onEnd: () => ikController.endDrag(),
   });
   ctx.registerGuard(ikHandle);
@@ -64,6 +73,8 @@ export function installIK(ctx) {
     onEnd: () => ikController.endPoleDrag(),
   });
   ctx.registerGuard(poleHandle);
+  // 视图缩放补偿(2D 放大时 1/zoom),与本体的关节/整体手柄同一尺寸规则。
+  ctx.registerHandleScale?.((s) => { ikHandle.setHandleScale(s); poleHandle.setHandleScale(s); });
 
   // active 视口切换时,两柄也要换相机(多视口下 TransformControls 须跟随 active 相机)。
   // 其它 app(单视口)不传 registerCameraConsumer 时 ?. 静默跳过。
@@ -97,18 +108,19 @@ export function installIK(ctx) {
     if (!ui) return false;
     // joint-grid 末端灰显/描边:IK 开启时只有末端关节(腕/踝)可拖,其余灰掉;
     // 关闭时复位(disabled=false、去 .ik)。
+    const ikActive = ikEnabled && !!(ctx.getSkeleton ? ctx.getSkeleton() : 'smpl');
     ctx.jointGridButtons.forEach((b, j) => {
-      const isEnd = ikEnabled && !!ikController.chainFor(j + 1);
-      b.disabled = ikEnabled && !isEnd;
+      const isEnd = ikActive && !!ikController.chainFor(poseJointOf(j));
+      b.disabled = ikActive && !isEnd;
       b.classList.toggle('ik', isEnd);
     });
-    const ikChain = ikEnabled ? currentChain() : null;
+    const ikChain = ikActive ? currentChain() : null;
     if (!ctx.isPlaying() && ui.mode === 'pose' && ikChain && ctx.getLastJoints()) {
       selection.bindChain(ikChain.name);            // 换链重置回 'end',同链保持
       // 自身轴:末端柄沿末端关节(腕/踝)朝向,极向量柄沿链根关节(肩/髋)朝向。
       const worldRot = ctx.getLastWorldRot();
       const [jRoot, , jEnd] = ikChain.joints;
-      ikHandle.attach(ctx.scene.jointWorldPosition(ui.selectedJoint + 1), worldRot && jointWorldQuat(worldRot, jEnd));
+      ikHandle.attach(ctx.scene.jointWorldPosition(poseJointOf(ui.selectedJoint)), worldRot && jointWorldQuat(worldRot, jEnd));
       const stored = ikController.storedPole(ikChain.name);
       poleHandle.attach(stored ?? ikController.autoPoleViz(ikChain), worldRot && jointWorldQuat(worldRot, jRoot));
       // 单活动:按 selection 决定谁出箭头、谁作占位标识(attach 后再 setActive,以 setActive 为准)。

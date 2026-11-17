@@ -107,6 +107,8 @@ export class PcdScene {
     this._mesh.geometry.attributes.position.array.set(vertices);
     this._mesh.geometry.attributes.position.needsUpdate = true;
     this._mesh.geometry.computeVertexNormals();
+    this._mesh.geometry.computeBoundingSphere();   // 点选人体网格(JointPicker.onPickBody)要用最新包围球
+    this._mesh.geometry.computeBoundingBox();
     for (let j = 0; j < 24; j++) this._jointsGroup.children[j].position.set(joints[j*3], joints[j*3+1], joints[j*3+2]);
     for (let bi = 0; bi < BONES.length; bi++) {
       const [a, b] = BONES[bi];

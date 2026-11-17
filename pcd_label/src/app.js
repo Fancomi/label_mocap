@@ -1,4 +1,5 @@
 // pcd_label/src/app.js — 点云 SMPL 标注器装配。复用 smpl_edit 的世界系编辑内核。
+import { bindShortcuts, shortcutHintHtml } from '../../smpl_edit/shortcuts.js';
 import { loadModel } from '../../smpl_core/smpl_model.js';
 import { forwardSmpl } from '../../smpl_core/lbs.js';
 import { JOINT_NAMES } from '../../smpl_core/joint_names.js';
@@ -23,7 +24,7 @@ import { BackgroundLoop } from './io/background_loop.js';
 import { FRONT_OPTIONS, viewFrame, axisName } from '../../smpl_edit/view_frame.js';
 import { Viewport } from '../../smpl_edit/viewport.js';
 import { ViewportManager } from '../../smpl_edit/viewport_manager.js';
-import { bodyBounds, centerDelta } from '../../smpl_edit/framing.js';
+import { focusTarget, bodyBounds, centerDelta } from '../../smpl_edit/framing.js';
 import { jsonOpenSupported, pickJsonFile } from '../../label/src/io/dir_source.js';
 import { isCocoDoc } from '../../label/src/io/anno_validate.js';
 import { AnnoTimeline } from '../../smpl_edit/anno_timeline.js';
@@ -232,15 +233,19 @@ function focusViewports(center, radius) {
 const curPersonLabel = () => (persons ? personLabel(persons.currentId()) : '人物');
 
 // F：居中当前人物(一次性)。本帧当前人物无标注 → 退回居中点云,并明说退回了。
+// F:当前人物 = 最后选定的人物(多人时由人物面板 / 切换决定)。选中了关节 → 聚焦该关节;
+// 否则聚焦该人物;该人物本帧无标注 → 退到点云。见 docs/CONTRACTS.md。
 function focusCurrent() {
-  const body = bodyBounds(lastJoints);
-  const b = body ?? scene.pointCloud.bounds();
+  const sel = ui?.mode === 'pose' && ui.selectedJoint != null ? ui.selectedJoint + 1 : null;   // SMPL:姿态序号 k ↔ 关节 k+1
+  const t = focusTarget(lastJoints, sel);
+  const b = t ?? scene.pointCloud.bounds();
   if (!b) { setStatus('本帧无人物、无点云，无可居中'); return; }
   focusViewports(b.center, b.radius);
+  const body = bodyBounds(lastJoints);
   if (lockPerson && body) lockCenter = body.center;   // 跟随基准对齐到居中后的画面:之后持续居中
   const who = curPersonLabel();
-  setStatus(body
-    ? `已居中 ${who}${lockPerson ? '（跟随中：之后持续居中）' : ''}`
+  setStatus(t?.kind === 'joint' ? `已居中 ${who} 的 ${JOINT_NAMES[sel]}`
+    : t ? `已居中 ${who}${lockPerson ? '（跟随中：之后持续居中）' : ''}`
     : `本帧 ${who} 无标注 → 已居中点云`);
 }
 
@@ -468,7 +473,6 @@ function boot() {
   });
   $('speed').addEventListener('input', (e) => { fps = +e.target.value; $('speed-val').textContent = `${fps} fps`; });
   $('btn-undo').addEventListener('click', () => { if (store) { store.undo(); showFrame(store.currentFrame()); } });
-  window.addEventListener('keydown', (e) => { if (store && (e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); store.undo(); showFrame(store.currentFrame()); } });
   $('btn-save').addEventListener('click', () => saveAnnotation().catch((e) => setStatus(String(e))));
   $('btn-load-json').addEventListener('click', () => {
     if (!store) { setStatus('请先打开序列目录'); return; }
@@ -614,20 +618,24 @@ function boot2() {
     $('kbd-hint-toggle').textContent = min ? '▸' : '▾';
   });
 
-  window.addEventListener('keydown', (e) => {
-    if (!store || e.target.matches('input,select,textarea')) return;
-    if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); setPlaying(!playing); return; } // 空格随时暂停/播放
-    if (e.key === '[' || e.key === ']') { if (!isDragging()) jumpMarked(e.key === ']' ? +1 : -1); return; } // 上/下一有标注帧
-    if (dragGuards.some((g) => g.isDragging())) return;  // 仅拖拽中不抢键；播放中允许 F/R
-    const b = viewBounds();
-    if (e.key === 'f' || e.key === 'F') {
-      focusCurrent();   // F 居中当前人物(三视口,一次性)
-    } else if (e.key === 'r' || e.key === 'R') {
-      // R 重置当前视口朝向+距离,走与「开新数据」同一取景源(viewBounds)。
+  // 快捷键:与 label / mhr_label 同一张表(smpl_edit/shortcuts.js)。
+  const shortcutActions = {
+    undo: () => { store.undo(); showFrame(store.currentFrame()); },
+    play: () => setPlaying(!playing),
+    prevFrame: () => $('btn-prev').click(),
+    nextFrame: () => $('btn-next').click(),
+    prevMarked: () => jumpMarked(-1),
+    nextMarked: () => jumpMarked(+1),
+    focus: () => focusCurrent(),   // 居中当前人物(三视口,一次性)
+    reset: () => {                 // 重置当前视口朝向+距离,走与「开新数据」同一取景源(viewBounds)
       const vp = mgr.activeViewport(); if (!vp) return;
+      const b = viewBounds();
       vp.resetOrientation(b ? b.center : undefined, b ? b.radius : undefined);
-    }
-  });
+    },
+  };
+  bindShortcuts({ actions: shortcutActions, enabled: (a) => !!store && (a === 'play' || a === 'undo' || !isDragging()) });
+  document.querySelector('#kbd-hint .kbd-hint-body').innerHTML = shortcutHintHtml(shortcutActions, [
+    '<b>📌</b> 跟随：开启即居中(同 F)，切帧持续居中', '<b>⊙</b> 锁定为重置视角(侧/正)', '<span class="kbd-hint-note">鼠标所在视口为当前视口</span>']);
 
   boot3();
 }
@@ -636,7 +644,10 @@ function boot3() {
   jointPicker = new JointPicker({
     canvas: $('c'), camera: cam.camera, getJointMeshes: () => scene.jointMeshes(),
     onPick: (smpl) => { setPlaying(false); if (smpl === 0) ui.setMode('root'); else if (smpl >= 1 && smpl <= 21) ui.selectJoint(smpl - 1); },
-    onMiss: () => { if (ui && ui.mode === 'pose') ui.clearSelection(); },
+    // 点人体网格 = 调整整体;点人体以外 = 取消调整(收起手柄,视角自由拖动)。见 docs/CONTRACTS.md。
+    getBodyMesh: () => scene.meshObject(),
+    onPickBody: () => { setPlaying(false); ui.setMode('root'); },
+    onMiss: () => ui?.release(),
     canPick: () => !engageGuards.some((g) => g.isEngaged()),
     getNdc: (e) => mgr.pointerToNdc(e), // 多视口:按 active 视口子矩形算 NDC(单视口时等价整块 canvas)
   });
@@ -666,7 +677,7 @@ function boot3() {
     $('sel-joint').textContent = ui.selectedJoint == null ? '未选择关节' : `已选择: ${JOINT_NAMES[ui.selectedJoint + 1]}`;
     const prb = $('pose-rot-block'); if (prb) prb.hidden = !(ui.mode === 'pose' && ui.selectedJoint != null);
     scene.setSelectedJoint(ui.mode === 'pose' && ui.selectedJoint != null ? ui.selectedJoint + 1 : -1);
-    if (jointPicker) jointPicker.setEnabled(ui.mode === 'pose');
+    if (jointPicker) jointPicker.setEnabled(ui.mode === 'pose' || ui.mode === 'root');
     let claimed = false;
     for (const h of syncHooks) { if (h()) claimed = true; }
     if (claimed) { poseGizmo.detach(); rootHandle.detach(); }
@@ -674,13 +685,13 @@ function boot3() {
       const j = ui.selectedJoint, smplJ = j + 1, parent = model.parents[smplJ];
       const qParentWorld = jointWorldQuat(lastWorldRot, parent);
       poseGizmo.attach(j, scene.jointWorldPosition(smplJ), qParentWorld); rootHandle.detach();
-    } else if (!playing && ui.mode === 'root' && store && store.current()) { rootHandle.attach(store.current().root_pos); poseGizmo.detach(); }
+    } else if (!playing && ui.mode === 'root' && !ui.released && store && store.current()) { rootHandle.attach(store.current().root_pos); poseGizmo.detach(); }
     else { poseGizmo.detach(); rootHandle.detach(); }
     renderAnnoActions(); panels.syncFromState();
   };
 
-  $('root-translate').addEventListener('click', () => { setPlaying(false); rootHandle.setMode('translate'); $('root-translate').classList.add('on'); $('root-rotate').classList.remove('on'); if (syncUI) syncUI(); });
-  $('root-rotate').addEventListener('click', () => { setPlaying(false); rootHandle.setMode('rotate'); $('root-rotate').classList.add('on'); $('root-translate').classList.remove('on'); if (syncUI) syncUI(); });
+  $('root-translate').addEventListener('click', () => { setPlaying(false); if (ui?.released) ui.setMode('root'); rootHandle.setMode('translate'); $('root-translate').classList.add('on'); $('root-rotate').classList.remove('on'); if (syncUI) syncUI(); });
+  $('root-rotate').addEventListener('click', () => { setPlaying(false); if (ui?.released) ui.setMode('root'); rootHandle.setMode('rotate'); $('root-rotate').classList.add('on'); $('root-translate').classList.remove('on'); if (syncUI) syncUI(); });
 
   boot4();
 }

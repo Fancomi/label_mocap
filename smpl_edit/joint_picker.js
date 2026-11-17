@@ -8,7 +8,11 @@ const CLICK_THRESH = 4;
 // Raycast a pointer event against the scene's joint spheres.
 // Returns the SMPL joint index (0..23) or null. onPick(smplIndex) is called on hit.
 export class JointPicker {
-  constructor({ canvas, camera, getJointMeshes, onPick, onMiss, canPick, getNdc }) {
+  // 交互契约(docs/CONTRACTS.md「点选」):点中关节 → onPick(j);点中人体网格(非关节)→ onPickBody();
+  // 点人体以外 → onMiss()。getBodyMesh 不给则只区分关节/空白。
+  constructor({ canvas, camera, getJointMeshes, onPick, onMiss, canPick, getNdc, getBodyMesh, onPickBody }) {
+    this._getBodyMesh = getBodyMesh || null;
+    this._onPickBody = onPickBody || null;
     this._canvas = canvas;
     this._camera = camera;
     this._getJointMeshes = getJointMeshes;
@@ -65,9 +69,11 @@ export class JointPicker {
     if (hits.length) {
       const idx = hits[0].object.userData.jointIndex;
       if (typeof idx === 'number') this._onPick(idx);
-    } else {
-      this._onMiss && this._onMiss();
+      return;
     }
+    const mesh = this._getBodyMesh?.();
+    if (mesh?.visible && this._onPickBody && this._ray.intersectObject(mesh, false).length) { this._onPickBody(); return; }
+    this._onMiss && this._onMiss();
   }
 
   dispose() {

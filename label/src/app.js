@@ -1,15 +1,15 @@
 // label/src/app.js — M2: load, render, navigate, annotate (add/del/undo + display toggles).
 import { loadModel } from '../../smpl_core/smpl_model.js';
-import { forwardSmpl } from '../../smpl_core/lbs.js';
-import { JOINT_NAMES } from '../../smpl_core/joint_names.js';
+import { BODY_ASSETS, createBody } from '../../smpl_core/body_model.js';
+import { viewConfigOf } from './io/view_config.js';
 import { CocoDocument } from '../../smpl_edit/coco_document.js';
-import { bodyBounds } from '../../smpl_edit/framing.js';
+import { bodyBounds, focusTarget } from '../../smpl_edit/framing.js';
 import { assertHasContent, isPortrait } from './io/source_loader.js';
 import { orderedImageNames, basename } from './io/image_order.js';
 import { AnnotationStore } from '../../smpl_edit/annotation_store.js';
-import { reprojectKeypoints } from './edit/derived.js';
-import { computeOcclusion } from './edit/occlusion_raycast.js';
-import { RotationState } from '../../smpl_edit/rotation_state.js';
+import { deriveFrame } from './edit/frame_derive.js';
+import { createPoseState } from '../../smpl_edit/pose_state.js';
+import { JointFigure } from '../../smpl_edit/joint_figure.js';
 import { UIController } from '../../smpl_edit/ui_controller.js';
 import { JointPicker } from '../../smpl_edit/joint_picker.js';
 import { CameraModes } from '../../smpl_render/camera_modes.js';
@@ -32,18 +32,19 @@ import { PersonPanel } from '../../smpl_edit/person_panel.js';
 import { findMarked, countMarked, markedSummary } from '../../smpl_edit/frame_marks.js';
 import { personLabel, inferPrimaryPath } from '../../smpl_edit/person_files.js';
 import { loadPersonSet, addEmptyPerson, renumberPerson, savePersonSet, parsePersonId } from '../../smpl_edit/person_io.js';
+import { bindShortcuts, shortcutHintHtml } from '../../smpl_edit/shortcuts.js';
 import * as THREE from 'three';
 
 const $ = (id) => document.getElementById(id);
 const setStatus = (t) => { $('status').textContent = t; };
 
-// Load the SMPL model once, showing a download progress bar (the .bin is ~19MB,
-// so first load over the network is noticeable). The overlay hides on finish.
-async function loadModelWithProgress() {
+// Load a body model asset once, showing a download progress bar (SMPL ~19MB,
+// MHR ~11MB, so first load over the network is noticeable). The overlay hides on finish.
+async function loadModelWithProgress(url) {
   const box = $('loading'); const bar = $('loading-bar'); const txt = $('loading-text');
   if (box) box.hidden = false;
   try {
-    return await loadModel(MODEL_URL, {
+    return await loadModel(url, {
       onProgress: ({ loaded, total }) => {
         if (!bar) return;
         if (total > 0) {
@@ -60,8 +61,15 @@ async function loadModelWithProgress() {
   }
 }
 
-const MODEL_URL = new URL('../../smpl_web_viewer/public/models/smpl_neutral.meta.json', import.meta.url);
-let model = null, scene = null, cam = null, store = null;
+const MODELS_DIR = new URL('../../smpl_web_viewer/public/models/', import.meta.url);
+// 人体模型按数据集 info.body_model 选择(缺省 smpl),资产按名缓存;body = 当前 BodyModel。
+// 关节数/骨骼/关节按钮/keypoints 槽位等全部来自 body 的配置,本文件不写死任何骨架。
+const modelCache = new Map();
+let body = null;
+let scene = null, cam = null, store = null;
+// 多相机/转正显示配置(来自数据 cameras[],下发时写定);单视角旧数据为 null。
+// 多视角数据(cameras ≥ 2)不在本页标注,打开时引导到 /mhr_label/。
+let viewCfg = null;
 let images = new Map();      // index -> File
 // 多人物:persons 持有全部人物(各自 store/undo),store 恒指向当前人物的 store。
 // personSrc = 本次数据源的人物装载参数({ paths, primaryPath, readJson, fallbackRaw }),重置时原样重读。
@@ -79,7 +87,8 @@ let acc = 0;
 let rotation = null;
 let ui = null;
 let jointPicker = null;
-let jointGridButtons = [];
+let jointGridButtons = [];   // = jointFigure.buttons()(数组身份不变,IK 插件持有引用)
+let jointFigure = null;
 let lastVertices = null;
 let lastJoints = null;
 let lastWorldRot = null;
@@ -102,6 +111,7 @@ let dragGuards = [];
 let engageGuards = [];
 let busyGuards = [];
 let pluginTabs = [];
+const handleScalers = [];   // 插件手柄(IK)的视图缩放补偿
 let drawArmed = false;   // 「新建框」按钮按下后置真:允许在画布上拖出一个新框,画一次即复位
 const isBusy = () => busyGuards.some((fn) => fn());
 // ── 视图-模式互斥的单一事实源 ───────────────────────────────────────────────
@@ -112,6 +122,8 @@ const isBusy = () => busyGuards.some((fn) => fn());
 //   3) bbox 叠加层仅在「当前模式 ∈ twoDOnlyModes 且视图(目标)为 2D」时显示。
 // 'bbox' 是本体的;插件可经 registerTab({ requires2d:true }) 加入(如云端 'cloud')。
 const twoDOnlyModes = new Set(['bbox']);
+// 由「当前人体模型 / 数据配置」禁用的模式(如无体型参数、云端只出 SMPL、多相机暂无逐视角框)。
+let configDisabledModes = new Set();
 const SAFE_MODE_3D = 'root';   // 3D 下允许的默认模式(姿势/整体均可,取整体)
 const bboxShownNow = () => !!ui && twoDOnlyModes.has(ui.mode);
 // 编辑模式列表:本体四个 + 插件注册的额外 tab(registerTab 追加)。UIController 用它校验 setMode。
@@ -126,6 +138,7 @@ function syncHandleScale() {
   const s = (cam && cam.mode === '2d') ? 1 / Math.max(1e-3, cam.getZoom()) : 1;
   poseGizmo?.setHandleScale(s);
   rootHandle?.setHandleScale(s);
+  handleScalers.forEach((fn) => fn(s));
 }
 
 // 切 2D/3D 后重排画布:3D 用 fill(填满容器)、2D 用 letterbox(图像比例),由
@@ -136,6 +149,9 @@ function onModeSwitched() {
   if (bboxOverlay) bboxOverlay.render(store?.current()?.bbox ?? null);
   syncHandleScale();
 }
+
+// 姿态 tab 的关节选择:人形图 + 分组按钮,由 body 配置生成(smpl_edit/joint_figure.js)。
+function buildJointGrid() { jointFigure.setBody(body); }
 
 function setPlaying(on) {
   playing = on && store && store.frameCount() > 0;
@@ -154,7 +170,9 @@ async function mountDataset({ background, hint = {} }) {
   const dataFrameIndices = ids.map((_, idx) => (persons.list().some((p) => p.store.hasDataAt(idx)) ? idx : -1)).filter((x) => x >= 0);
   assertHasContent({ bgCount: background ? background.count : 0, dataFrameIndices, hint });
   const info = coco.imageInfo(ids[0]);
-  readOnly = info ? isPortrait(info) : false;
+  await applyDocConfig(coco);
+  // 竖拍拦截只针对旧单视角数据;带 cameras(含转正配置)的数据由配置负责显示方向。
+  readOnly = !viewCfg && info ? isPortrait(info) : false;
   if (readOnly) setStatus('⚠ 该数据为竖拍/旋转,标注器仅支持查看;请用其他软件转正后再标注');
   ui = new UIController({ readOnly, modes: editorModes });
   if (syncUI) ui.onChange(syncUI);
@@ -162,13 +180,20 @@ async function mountDataset({ background, hint = {} }) {
   $('slider').max = String(Math.max(0, store.frameCount() - 1));
   $('slider').value = '0';
   $('right').classList.remove('disabled');
-  if (!model) { model = await loadModelWithProgress(); scene.setTopology(model.faces); }
   // 让相机学习本数据集的真实图像尺寸(否则一切按写死的 1920×1080,非该分辨率时
   // 主点 cx/cy 落错像素 → 人体朝左上偏、且相对焦距偏小)。优先用 json 的 width/height,
   // 否则解码首帧/取视频尺寸。cx=W/2、cy=H/2 居中,焦距保持工厂默认(用户可在面板微调)。
-  const dims = await resolveImageDims(info);
-  if (dims) cam.configureForImage(dims);
-  else cam.resetIntrinsics();
+  if (viewCfg) {
+    // 多相机:视图相机(已含转正)= 标定内参 + 外参位姿,不猜主点。
+    cam.configureForImage({ width: viewCfg.width, height: viewCfg.height, ...viewCfg.K });
+  } else {
+    const dims = await resolveImageDims(info);
+    if (dims) cam.configureForImage(dims);
+    else cam.resetIntrinsics();
+  }
+  const pose = viewCfg ? viewCfg.pose : { R: [1, 0, 0, 0, 1, 0, 0, 0, 1], t: [0, 0, 0] };
+  cam.setViewPose(pose);
+  scene.setDataCamera(cam.viewPose(), viewCfg ? viewCfg.rotationDeg : 0);
   cam.resetZoom();
   scene.prepareForSequence({ K: cam.K, image_w: cam.imageW, image_h: cam.imageH });
   cam.snapTo('2d');
@@ -178,11 +203,42 @@ async function mountDataset({ background, hint = {} }) {
   if (!readOnly) setStatus(`已加载 ${store.frameCount()} 帧 · ${marksSummary()}${personSrc?.skipped?.length ? ` · ⚠ 跳过非标注格式: ${personSrc.skipped.join(', ')}` : ''}`);
 }
 
+// 按当前文档装载人体模型与显示配置。人体模型变了才重建场景骨架与关节按钮。
+// 页面按人体模型划分:本页只标 SMPL,MHR 数据引导到 /mhr_label/。视角数不是划分依据;
+// SMPL 多视角(cameras ≥ 2)将来在本页支持,目前先明确拒绝。
+async function applyDocConfig(coco) {
+  const name = coco.bodyModelName();
+  if (name !== 'smpl') throw new Error(`这是 ${name.toUpperCase()} 数据,请用「MHR 标注器」页面 /mhr_label/ 打开`);
+  const cams = coco.cameras();
+  if (cams && cams.length > 1) throw new Error(`这是 SMPL 多视角数据(${cams.map((c) => c.id).join(' / ')}),本页暂只支持单视角`);
+  if (!body || body.name !== name) {
+    if (!modelCache.has(name)) modelCache.set(name, await loadModelWithProgress(new URL(BODY_ASSETS[name], MODELS_DIR)));
+    setBody(createBody(name, modelCache.get(name)));
+  }
+  viewCfg = viewConfigOf({ cameras: cams, images: coco.images() });
+  configDisabledModes = new Set([
+    ...(body.canEditPose ? [] : ['pose']),
+    ...(body.shapeGroups?.length ? [] : ['beta']),
+    ...(body.cloudInference ? [] : ['cloud']),
+    // 带标定相机的数据:框由人体网格投影派生,不手画;云端只认无外参的单相机。
+    ...(viewCfg ? ['bbox', 'cloud'] : []),
+  ]);
+}
+
+// 换 BodyModel:场景骨架、关节按钮、体型面板一起重建。
+function setBody(next) {
+  body = next;
+  scene.setBody(body);
+  buildJointGrid();
+  panels?.setBody(body);
+}
+
 // 按 personSrc 装载全部人物(player_N 同族文件);一份都没有时 0 号人物用 fallbackRaw()(空帧轴)。
 // keepId:重置时尽量留在原人物上。
 async function loadPersons(fallbackRaw, keepId = null) {
   const r = await loadPersonSet({ paths: personSrc.getPaths(), primaryPath: personSrc.primaryPath, readJson: personSrc.readJson, fallbackRaw });
   persons = r.persons; personSrc.skipped = r.skipped;
+  watchStores();
   if (keepId != null && persons.has(keepId)) persons.select(keepId);
   store = persons.current().store;
   personPanelKey = '';
@@ -284,6 +340,16 @@ async function openFromDirSource(opts = {}) {
   await loadPersons(() => (availableNames.length
     ? synthDocFromNames(orderedImageNames({ cocoImages: [], availableNames }))
     : synthDocFromCount(bgCount)));
+  // 带单个标定相机的数据:视频与帧率由 cameras[0] 指定。
+  const cams = store.document().cameras();
+  if (cams?.length === 1 && cams[0].video && !availableNames.length) {
+    const f = await dirSource.readFile(cams[0].video);
+    if (!f) throw new Error(`数据指定的视频不存在: ${cams[0].video}`);
+    videoSource?.dispose();
+    videoSource = await new VideoSource(f, { fps: cams[0].fps > 0 ? cams[0].fps : fps }).ready();
+    bgCount = store.frameCount();
+    backgroundKind = 'video';
+  }
   if (availableNames.length) {
     // Authoritative ordering: json images[] when file_names exist, else numeric
     // sort. Match each frame's background file by basename, not by position.
@@ -312,21 +378,26 @@ async function openVideoData() {
   await openFromDirSource({ videoFileOverride: v });
 }
 
+// 前向输入 = 标注里该模型的全部参数键,旋转部分以姿态编辑状态(四元数权威)为准。
+function bodyFields(a) {
+  const f = {};
+  for (const k of body.fieldKeys) f[k] = a[k];
+  return f;
+}
 function buildFrame() {
-  const a = store.current();
-  const { root_rota, body_pose } = rotation.toAxisAngle();
-  return { root_pos: a.root_pos, root_rota, body_pose, betas: a.betas };
+  return { ...bodyFields(store.current()), ...rotation.toAxisAngle() };
 }
 
 function applyAnnotation() {
   if (!rotation || !store.current()) return;
-  const out = forwardSmpl(model, buildFrame(), { worldRot: true });
+  const out = body.forward(buildFrame(), { worldRot: true });
   lastVertices = out.vertices;
   lastJoints = out.joints;
   lastWorldRot = out.worldRot;
   rootHandle?.syncFromState(); poseGizmo?.syncFromState();
   scene.updateMesh(out.vertices, out.joints);
-  cam.set3DFollowTarget(new THREE.Vector3(out.joints[0], out.joints[1], out.joints[2]));
+  const r = body.rootJoint * 3;
+  cam.set3DFollowTarget(new THREE.Vector3(out.joints[r], out.joints[r + 1], out.joints[r + 2]));
   scene.setFollowCenter(lastJoints ? (bodyBounds(lastJoints)?.center ?? null) : null);
   if (panels) panels.syncFromState();
   if (bboxOverlay) bboxOverlay.render(store.current()?.bbox ?? null);
@@ -358,9 +429,10 @@ function renderAnnoActions() {
   const hasB = store && store.hasBbox();
   const hasS = store && store.hasSmpl();
   const who = persons && persons.size() > 1 ? `${personLabel(persons.currentId())} ` : '';
+  const B = body ? body.name.toUpperCase() : '人体';
   $('anno-state').textContent = !store ? '—'
-    : (hasB && hasS) ? `✅ ${who}框 + SMPL`
-    : hasS ? `🧍 ${who}已有 SMPL`
+    : (hasB && hasS) ? `✅ ${who}框 + ${B}`
+    : hasS ? `🧍 ${who}已有 ${B}`
     : hasB ? `📦 ${who}仅框选(可云端推理)`
     : `— ${who}本帧无标注`;
   host.innerHTML = '';
@@ -382,7 +454,7 @@ async function showFrame(i) {
   $('frame-info').textContent = `${i + 1} / ${store.frameCount()}`; // 1-based 显示;内部仍 0-based(对齐不变)
   const a = store.current();
   if (a && store.hasSmpl()) {
-    rotation = RotationState.fromAxisAngle({ root_rota: a.root_rota, body_pose: a.body_pose });
+    rotation = createPoseState(body, a);
     applyAnnotation();
     scene.setPersonVisible(true);
   } else {
@@ -396,8 +468,9 @@ async function showFrame(i) {
   }
   renderAnnoActions();
   if (videoSource) {
-    await videoSource.seek(i);
-    scene.setBackgroundTexture(videoSource.texture);
+    const di = viewCfg ? viewCfg.decodeIndex(i) : i;   // 帧位置 → 该相机视频解码序号
+    if (di == null) scene.setBackgroundTexture(null);
+    else { await videoSource.seek(di); scene.setBackgroundTexture(videoSource.texture); }
   } else {
     const file = images.get(i);
     if (file) {
@@ -418,23 +491,46 @@ async function showFrame(i) {
   if (syncUI) syncUI();
 }
 
-// 保存前为某人物补算 SMPL 派生字段(2D 关键点重投影 + 遮挡),写入其文档(不进 undo)。
-function bakeDerived(doc) {
-  for (const id of doc.imageIds()) {
-    const a = doc.getAnnotation(id);
-    if (!a || !doc.hasSmpl(id)) continue;   // 仅 bbox 帧:保留框,不补算 SMPL 派生字段
-    const out = forwardSmpl(model, { root_pos: a.root_pos, root_rota: a.root_rota, body_pose: a.body_pose, betas: a.betas });
-    const keypoints = reprojectKeypoints(out.joints, cam.K, 52);
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(out.vertices, 3));
-    g.setIndex(new THREE.BufferAttribute(new Uint32Array(model.faces), 1));
-    const tmpMesh = new THREE.Mesh(g);
-    const occ = computeOcclusion(out.joints, tmpMesh, cam.camera, 52);
-    g.dispose();
-    tmpMesh.material.dispose();
-    doc.setAnnotation(id, { keypoints, occlution_joint: occ });
+// 派生量(2D 关键点 / 遮挡 / 多相机逐视角框)在帧「定稿」时单帧计算并缓存进文档(见 frame_derive.js),
+// 保存只序列化。定稿事件可能连发(撤销连按),合并到下一个宏任务里算;保存前 flush。
+const watchedStores = new WeakSet();
+const pendingDerive = new Map();   // store → Set(imageId)
+let deriveTimer = null;
+
+function watchStores() {
+  for (const p of persons?.list() ?? []) {
+    if (watchedStores.has(p.store)) continue;
+    watchedStores.add(p.store);
+    const s = p.store;
+    s.onCommitted((id) => {
+      if (!pendingDerive.has(s)) pendingDerive.set(s, new Set());
+      pendingDerive.get(s).add(id);
+      deriveTimer ??= setTimeout(flushDerived, 0);
+    });
   }
-  return doc.serialize();
+}
+
+// 派生量以文档主相机 cameras[0] 为准,与用户此刻选哪个主视角、是否在 3D 环绕无关。
+function derivationViews(doc) {
+  const cams = doc.cameras();
+  if (!cams) return [{ cameraId: null, project: cam.K, camPos: [0, 0, 0] }];
+  return cams.map((c) => ({ cameraId: c.id, cfg: viewConfigOf({ cameras: cams, images: doc.images() }, c.id) }));
+}
+
+function flushDerived() {
+  clearTimeout(deriveTimer); deriveTimer = null;
+  for (const [s, ids] of pendingDerive) {
+    const doc = s.document();
+    const views = derivationViews(doc);
+    const order = doc.imageIds();
+    for (const id of ids) {
+      const a = doc.getAnnotation(id);
+      if (!a || !doc.hasSmpl(id)) continue;   // 仅 bbox 帧:无人体,无派生量
+      const out = body.forward(bodyFields(a));
+      s.setDerived(id, deriveFrame(body, out, views, order.indexOf(id)));
+    }
+  }
+  pendingDerive.clear();
 }
 
 function downloadJson(name, obj) {
@@ -448,10 +544,11 @@ function downloadJson(name, obj) {
 // 保存:当前人物 + 所有有未保存修改的人物各写回自己的文件(player_N 同族),并删掉已删除人物的文件。
 // 原地写回（已具抗只读重建）；写入仍抛异常时把当前人物退回下载，避免标注丢失。
 async function saveJson() {
-  if (!persons || !model) return;
+  if (!persons || !body) return;
+  flushDerived();
   try {
     const { written, removed } = await savePersonSet(persons, {
-      serialize: (s) => bakeDerived(s.document()),
+      serialize: (s) => s.document().serialize(),
       writeJson: personSrc.writeJson,
       removeFile: personSrc.removeFile,
     });
@@ -474,7 +571,9 @@ async function loadAnnotationJson(file) {
   if (!isCocoDoc(raw)) { setStatus('该文件不是 SMPL 标注（COCO）格式，未加载'); return; }
   const at = store.currentFrame();   // 新 store 从 0 帧起，先记住当前帧再重建以保留
   const p = persons.replaceStore(persons.currentId(), new AnnotationStore(new CocoDocument(raw)));
+  watchStores();
   store = p.store;
+  await applyDocConfig(store.document());
   ui = new UIController({ readOnly, modes: editorModes });
   if (syncUI) ui.onChange(syncUI);
   $('slider').max = String(Math.max(0, store.frameCount() - 1));
@@ -521,6 +620,7 @@ function addPerson() {
   if (!persons || isDragging() || isBusy()) return;
   if (ui?.readOnly) { setStatus('只读数据不可增删改人物'); return; }
   const p = addEmptyPerson(persons, personSrc.primaryPath, store.currentFrame());
+  watchStores();
   afterPersonChange(`已新建 ${personLabel(p.id)}(未保存,将写入 ${p.path})`);
 }
 
@@ -614,21 +714,31 @@ function boot() {
   window.addEventListener('beforeunload', (e) => { if (persons?.anyDirty()) { e.preventDefault(); e.returnValue = ''; } });
 
   $('btn-undo').addEventListener('click', () => { if (store) { store.undo(); showFrame(store.currentFrame()); } });
-  window.addEventListener('keydown', (e) => { if (store && !isBusy() && (e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); store.undo(); showFrame(store.currentFrame()); } });
-  // 空格随时暂停/播放（输入框内不拦）。播放中其他按键照常可用（F 等不受 playing 影响）。
-  window.addEventListener('keydown', (e) => {
-    if (!store || e.target.matches('input,select,textarea')) return;
-    if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); setPlaying(!playing); }
-    else if ((e.key === '[' || e.key === ']') && !isDragging()) jumpMarked(e.key === ']' ? +1 : -1); // 上/下一有标注帧
-  });
-  window.addEventListener('keydown', (e) => {
-    if (!store || isBusy() || e.target.matches('input,select,textarea')) return;
-    if (e.key !== 'f' && e.key !== 'F') return;
-    const who = persons ? personLabel(persons.currentId()) : '人物';
-    const b = bodyBounds(lastJoints);
-    if (!b) { setStatus(`本帧 ${who} 无 SMPL，无可居中`); return; }
-    setStatus(cam.focusOn(b.center, b.radius) ? `已居中 ${who}` : '2D 对齐视角不居中，切到 3D 后按 F');
-  });
+  // 快捷键:与 pcd_label / mhr_label 同一张表(smpl_edit/shortcuts.js)。
+  const shortcutActions = {
+    undo: () => { store.undo(); showFrame(store.currentFrame()); },
+    play: () => setPlaying(!playing),
+    prevFrame: () => $('btn-prev').click(),
+    nextFrame: () => $('btn-next').click(),
+    prevMarked: () => jumpMarked(-1),
+    nextMarked: () => jumpMarked(+1),
+    focus: () => {
+      const who = persons ? personLabel(persons.currentId()) : '人物';
+      const sel = ui?.mode === 'pose' && ui.selectedJoint != null ? body.poseJoints[ui.selectedJoint] : null;
+      const t = focusTarget(lastJoints, sel, sel == null ? 1 : body.jointScale(sel));
+      if (!t) { setStatus(`本帧 ${who} 无人体，无可居中`); return; }
+      const what = t.kind === 'joint' ? `${who} 的 ${body.poseLabels[ui.selectedJoint]}` : who;
+      setStatus(cam.focusOn(t.center, t.radius) ? `已居中 ${what}` : '2D 对齐视角不居中，切到 3D 后按 F');
+    },
+    reset: () => {
+      if (cam.mode !== '2d') { setStatus('3D 视角按 F 居中;R 复位 2D 对齐视角的缩放/平移'); return; }
+      cam.resetZoom(); syncHandleScale();
+      if (bboxOverlay) bboxOverlay.render(bboxShownNow() ? (store?.current()?.bbox ?? null) : null);
+      setStatus('已复位 2D 缩放/平移');
+    },
+  };
+  bindShortcuts({ actions: shortcutActions, enabled: (a) => !!store && !isBusy() && (a === 'play' || a === 'undo' || !isDragging()) });
+  document.querySelector('#kbd-hint .kbd-hint-body').innerHTML = shortcutHintHtml(shortcutActions, ['2D:滚轮缩放 · 空白处拖动平移 · <b>Alt+滚轮</b> 调深度']);
   $('kbd-hint-toggle').addEventListener('click', () => {
     const min = $('kbd-hint').classList.toggle('min');
     $('kbd-hint-toggle').textContent = min ? '▸' : '▾';
@@ -644,25 +754,21 @@ function boot() {
   $('mesh-opacity').addEventListener('input', (e) => scene.setMeshOpacity(+e.target.value));
 
   // --- Task 8: panels, gizmos, tabs, joint grid, canvas picking ---
+  jointFigure = new JointFigure({
+    figureHost: $('joint-figure'), gridHost: $('joint-grid'),
+    onSelectPose: (k) => { setPlaying(false); ui && ui.selectJoint(k); },
+    onPick: (j) => { if (!ui) return; setPlaying(false); if (j === body.rootJoint) ui.setMode('root'); else ui.selectJoint(body.poseJoints.indexOf(j)); },
+  });
+  jointGridButtons = jointFigure.buttons();
   panels = new Panels({
     getRotation: () => rotation,
     getStore: () => store,
     getCam: () => cam,
     getUI: () => ui,
     getLastJoints: () => lastJoints,
+    getBody: () => body,
     onEdit: applyAnnotation,
   });
-
-  // Joint grid: 21 body-joint buttons (SMPL joints 1..21).
-  const grid = $('joint-grid');
-  jointGridButtons = [];
-  for (let j = 0; j < 21; j++) {
-    const b = document.createElement('button');
-    b.textContent = JOINT_NAMES[j + 1];
-    b.addEventListener('click', () => { setPlaying(false); ui && ui.selectJoint(j); });
-    grid.appendChild(b);
-    jointGridButtons.push(b);
-  }
 
   // Tab buttons. bindTab 既用于本体四个静态 tab,也用于插件 registerTab 动态追加的 tab。
   const bindTab = (btn) => btn.addEventListener('click', () => {
@@ -701,12 +807,17 @@ function boot() {
     canvas: $('c'),
     camera: cam.camera,
     getJointMeshes: () => scene.jointMeshes(),
-    onPick: (smpl) => {
+    // 拾取到骨架关节 j:根关节 → 整体模式;姿态关节 → 选中对应按钮(姿态 tab 可用时)。
+    onPick: (j) => {
       setPlaying(false);
-      if (smpl === 0) ui.setMode('root');
-      else if (smpl >= 1 && smpl <= 21) ui.selectJoint(smpl - 1);
+      if (j === body.rootJoint) { ui.setMode('root'); return; }
+      const k = body.poseJoints.indexOf(j);
+      if (k >= 0 && !configDisabledModes.has('pose')) ui.selectJoint(k);
     },
-    onMiss: () => { if (ui && ui.mode === 'pose') ui.clearSelection(); },
+    // 点人体网格 = 调整整体;点人体以外 = 取消调整(收起手柄,视角自由拖动)。见 docs/CONTRACTS.md。
+    getBodyMesh: () => scene.meshObject(),
+    onPickBody: () => { setPlaying(false); ui.setMode('root'); },
+    onMiss: () => ui?.release(),
     canPick: () => !engageGuards.some((g) => g.isEngaged()),
   });
 
@@ -751,7 +862,7 @@ function boot() {
   function refreshTabAvailability() {
     const is3d = cam.intendedMode() === '3d';
     document.querySelectorAll('#tabs .tab').forEach((b) => {
-      if (twoDOnlyModes.has(b.dataset.mode)) b.disabled = is3d;
+      b.disabled = configDisabledModes.has(b.dataset.mode) || (twoDOnlyModes.has(b.dataset.mode) && is3d);
     });
   }
 
@@ -763,14 +874,16 @@ function boot() {
 
   syncUI = () => {
     if (!ui) return;
+    if (configDisabledModes.has(ui.mode)) { drawArmed = false; ui.setMode('root'); return; }   // setMode 触发 onChange → 重入 syncUI
     refreshTabAvailability();
     document.querySelectorAll('#tabs .tab').forEach((b) => b.classList.toggle('on', b.dataset.mode === ui.mode));
     document.querySelectorAll('.tabpanel').forEach((p) => { p.hidden = p.dataset.mode !== ui.mode; });
     jointGridButtons.forEach((b, j) => b.classList.toggle('on', ui.mode === 'pose' && ui.selectedJoint === j));
-    $('sel-joint').textContent = ui.selectedJoint == null ? '未选择关节' : `已选择: ${JOINT_NAMES[ui.selectedJoint + 1]}`;
+    jointFigure.setSelected(ui.mode === 'root' ? body?.rootJoint : ui.mode === 'pose' && ui.selectedJoint != null ? body.poseJoints[ui.selectedJoint] : null);
+    $('sel-joint').textContent = ui.selectedJoint == null ? '未选择关节' : `已选择: ${body.poseLabels[ui.selectedJoint]}`;
     const prb = $('pose-rot-block'); if (prb) prb.hidden = !(ui.mode === 'pose' && ui.selectedJoint != null);
-    scene.setSelectedJoint(ui.mode === 'pose' && ui.selectedJoint != null ? ui.selectedJoint + 1 : -1);
-    if (jointPicker) jointPicker.setEnabled(ui.mode === 'pose');
+    scene.setSelectedJoint(ui.mode === 'pose' && ui.selectedJoint != null ? body.poseJoints[ui.selectedJoint] : -1);
+    if (jointPicker) jointPicker.setEnabled(ui.mode === 'pose' || ui.mode === 'root');
 
     // Exactly one interaction at a time. Gizmo attach is STATE-DRIVEN and safe
     // to run every frame (incl. undo/showFrame): it never pauses playback.
@@ -784,13 +897,12 @@ function boot() {
       poseGizmo.detach();
       rootHandle.detach();
     } else if (!playing && ui.mode === 'pose' && ui.selectedJoint != null && rotation && lastWorldRot) {
-      const j = ui.selectedJoint;
-      const smplJ = j + 1;
-      const parent = model.parents[smplJ];
-      const qParentWorld = jointWorldQuat(lastWorldRot, parent);
-      poseGizmo.attach(j, scene.jointWorldPosition(smplJ), qParentWorld);
+      const j = ui.selectedJoint;                 // 姿态按钮序号 = 姿态编辑状态的关节序号
+      const sj = body.poseJoints[j];              // 对应骨架关节
+      const qParentWorld = jointWorldQuat(lastWorldRot, body.parents[sj]);
+      poseGizmo.attach(j, scene.jointWorldPosition(sj), qParentWorld);
       rootHandle.detach();
-    } else if (!playing && ui.mode === 'root' && store && store.current()) {
+    } else if (!playing && ui.mode === 'root' && !ui.released && store && store.current()) {
       rootHandle.attach(store.current().root_pos);
       poseGizmo.detach();
     } else {
@@ -806,14 +918,14 @@ function boot() {
   // Root translate/rotate sub-mode buttons (inside the root tabpanel).
   $('root-translate').addEventListener('click', () => {
     setPlaying(false);
-    rootHandle.setMode('translate');
+    if (ui?.released) ui.setMode('root'); rootHandle.setMode('translate');
     $('root-translate').classList.add('on');
     $('root-rotate').classList.remove('on');
     if (syncUI) syncUI();
   });
   $('root-rotate').addEventListener('click', () => {
     setPlaying(false);
-    rootHandle.setMode('rotate');
+    if (ui?.released) ui.setMode('root'); rootHandle.setMode('rotate');
     $('root-rotate').classList.add('on');
     $('root-translate').classList.remove('on');
     if (syncUI) syncUI();
@@ -926,13 +1038,15 @@ function boot() {
       scene, camera: cam.camera, canvas: $('c'), controls: cam.controls,
       getMode: () => cam.mode, getStore: () => store, getRotation: () => rotation,
       getLastJoints: () => lastJoints, getLastWorldRot: () => lastWorldRot,
-      getUI: () => ui, getParents: () => model && model.parents, isPlaying: () => playing,
+      getUI: () => ui, getParents: () => body && body.parents, isPlaying: () => playing,
+      getSkeleton: () => body?.ikSkeleton ?? null,
       onEdit: applyAnnotation, jointGridButtons, setStatus,
       requestSync: () => { if (syncUI) syncUI(); },
       toggleButton: $('ik-toggle'),
       gizmoSpace,
       registerSyncHook: (fn) => syncHooks.push(fn),
       registerGuard: (g) => { dragGuards.push(g); engageGuards.push(g); },
+      registerHandleScale: (fn) => handleScalers.push(fn),
     });
   }
 
