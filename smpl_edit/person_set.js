@@ -16,12 +16,15 @@ export class PersonSet {
   has(id) { return this._list.some((p) => p.id === id); }
   get(id) { return this._list.find((p) => p.id === id) ?? null; }
   currentId() { return this._cur; }
+  // 显示名:命名文件人物用文件名,其余 player_N。
+  labelOf(id) { const p = this.get(id); return p?.name ?? `player_${id}`; }
   current() { return this.get(this._cur); }
   nextId() { return this._list.reduce((m, p) => Math.max(m, p.id), -1) + 1; }
 
-  add({ id, path, store, isNew = false }) {
+  // name:非 player_N 命名的标注文件(如 player_pred.json)作人物时的显示名(文件名去扩展名)。
+  add({ id, path, store, isNew = false, name = null }) {
     if (this.has(id)) throw new Error(`人物 ${id} 已存在`);
-    this._list.push({ id, path, store, isNew, savedRev: isNew ? -1 : store.revision() });
+    this._list.push({ id, path, store, isNew, name, savedRev: isNew ? -1 : store.revision() });
     // 若同路径此前被删过(删了又建回同号),就不再删盘。
     this._removed = this._removed.filter((p) => p !== path);
     if (this._cur == null) this._cur = id;
@@ -55,6 +58,7 @@ export class PersonSet {
   renumber(id, newId, newPath) {
     const p = this.get(id);
     if (!p) throw new Error(`人物 ${id} 不存在`);
+    if (p.name) throw new Error(`${p.name} 是独立的标注文件,不能改号(改号会把它改名为 player_N 并删除原文件)`);
     if (newId === id) return p;
     if (this.has(newId)) throw new Error(`人物 ${newId} 已存在`);
     if (!p.isNew && p.path) this._removed.push(p.path);

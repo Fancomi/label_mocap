@@ -44,7 +44,9 @@ createServer((req, res) => {
       st = statSync(file);
     }
     if (!st.isFile()) throw new Error('not file');
-    res.writeHead(200, { 'content-type': types.get(extname(file)) ?? 'application/octet-stream' });
+    // 开发服务器:每次都回源取最新文件。ES 模块被浏览器启发式缓存时,改动后会出现「新模块 import 旧模块」
+    // (例如 does not provide an export named …),强制刷新也不一定重新校验被 import 的子模块。
+    res.writeHead(200, { 'content-type': types.get(extname(file)) ?? 'application/octet-stream', 'cache-control': 'no-store' });
     createReadStream(file).pipe(res);
   } catch {
     res.writeHead(404).end('Not found');

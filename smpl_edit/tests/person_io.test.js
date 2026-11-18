@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { loadPersonSet, addEmptyPerson, renumberPerson, savePersonSet, parsePersonId, emptyDocLike } from '../person_io.js';
+import { loadPersonSet, addEmptyPerson, renumberPerson, savePersonSet, parsePersonId, emptyDocLike, probeAnnotation } from '../person_io.js';
 
 const ann = (k, img) => ({ id: k, image_id: img, root_pos: [0, 0, 0], root_rota: [0, 0, 0], body_pose: Array(63).fill(0), betas: Array(10).fill(0) });
 const doc = (imgs) => ({ images: [{ id: 0 }, { id: 1 }, { id: 2 }], annotations: imgs.map((i, k) => ann(k, i)), categories: [] });
@@ -94,4 +94,44 @@ test('emptyDocLike keeps body model and camera config, drops annotations', () =>
   assert.deepEqual(e.cameras, [{ id: 'orb1' }]);
   assert.deepEqual(e.annotations, []);
   assert.equal('info' in emptyDocLike({ images: [] }), false);
+});
+
+test('extras: other annotation jsons beside player_N load as named persons; junk and manifests are not', async () => {
+  const f = fakeFs({
+    'player_0.json': doc([0]), 'player_pred.json': doc([1, 2]), 'manifest.json': { kind: 'lidar' },
+    '.lai_viewer.json': doc([0]), 'notes.json': { foo: 1 }, 'long.json': { images: [0, 1, 2, 3].map((id) => ({ id })), annotations: [] },
+    'analysis/diving.analysis.json': doc([0]),
+  });
+  const { persons, skipped, extras } = await loadPersonSet({ paths: f.paths(), primaryPath: 'player_0.json', readJson: f.readJson, fallbackRaw: emptyDocLike(doc([])), extras: true, frameCount: 3 });
+  assert.deepEqual(persons.list().map((p) => [p.id, persons.labelOf(p.id)]), [[0, 'player_0'], [1, 'player_pred']]);
+  assert.deepEqual(extras, ['player_pred.json']);
+  assert.deepEqual(skipped.sort(), ['long.json', 'notes.json']);
+  assert.throws(() => renumberPerson(persons, 'player_0.json', 1, 5), /不能改号/);
+});
+
+test('extras: a directory with only a prediction file opens it instead of an empty placeholder', async () => {
+  const f = fakeFs({ 'player_pred.json': doc([0, 1]), 'manifest.json': {} });
+  const { persons } = await loadPersonSet({ paths: f.paths(), primaryPath: 'player_0.json', readJson: f.readJson, fallbackRaw: emptyDocLike(doc([])), extras: true, frameCount: 3 });
+  assert.deepEqual(persons.list().map((p) => persons.labelOf(p.id)), ['player_pred']);
+  assert.equal(persons.current().path, 'player_pred.json');
+});
+
+test('probeAnnotation: rejects with a reason; shorter-than-sequence files load with a note', () => {
+  assert.deepEqual(probeAnnotation(doc([0]), 3), { ok: true });
+  const short = probeAnnotation(doc([0]), 5);
+  assert.equal(short.ok, true);
+  assert.match(short.note, /按位置对齐前 3 帧/);
+  assert.match(probeAnnotation(doc([0]), 2).reason, /多于/);
+  assert.match(probeAnnotation({ images: [], annotations: [{ id: 0 }] }).reason, /人体参数/);
+  assert.match(probeAnnotation({ a: 1 }).reason, /COCO/);
+});
+
+test('extras: a prediction covering only the first frames still loads (real pred data: 20 of 41 frames)', async () => {
+  const f = fakeFs({ 'player_pred.json': doc([0, 1]), 'manifest.json': {} });
+  const { persons, notes } = await loadPersonSet({ paths: f.paths(), primaryPath: 'player_0.json', readJson: f.readJson, fallbackRaw: emptyDocLike(doc([])), extras: true, frameCount: 41 });
+  assert.deepEqual(persons.list().map((p) => persons.labelOf(p.id)), ['player_pred']);
+  assert.match(notes['player_pred.json'], /41/);
+  const st = persons.current().store;
+  assert.equal(st.frameCount(), 41, 'frame axis padded to the sequence');
+  assert.deepEqual([...st.annotatedMask()].slice(0, 4), [1, 1, 0, 0]);
 });

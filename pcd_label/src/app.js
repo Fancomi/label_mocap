@@ -145,22 +145,22 @@ function refreshMarks() {
   const list = persons.list();
   timeline?.setData({
     n: store.frameCount(), current: store.currentFrame(),
-    rows: list.map((p) => ({ mask: p.store.annotatedMask(), active: p.id === curId, label: personLabel(p.id) })),
+    rows: list.map((p) => ({ mask: p.store.annotatedMask(), active: p.id === curId, label: plabel(p.id) })),
   });
-  const rows = list.map((p) => ({ id: p.id, count: countMarked(p.store.annotatedMask()), dirty: persons.dirty(p) }));
+  const rows = list.map((p) => ({ id: p.id, label: plabel(p.id), count: countMarked(p.store.annotatedMask()), dirty: persons.dirty(p) }));
   const key = JSON.stringify([curId, rows]);
   if (key !== personPanelKey) { personPanelKey = key; personPanel?.render(rows, curId); }
 }
 
 function marksSummary() {
-  return markedSummary(persons.list().map((p) => ({ label: personLabel(p.id), count: countMarked(p.store.annotatedMask()) })));
+  return markedSummary(persons.list().map((p) => ({ label: plabel(p.id), count: countMarked(p.store.annotatedMask()) })));
 }
 
 function renderAnnoActions() {
   refreshMarks();
   const host = $('anno-actions'); if (!host) return;
   const has = store && store.hasData();
-  const who = persons && persons.size() > 1 ? `${personLabel(persons.currentId())} ` : '';
+  const who = persons && persons.size() > 1 ? `${plabel(persons.currentId())} ` : '';
   $('anno-state').textContent = !store ? '—' : (has ? `✅ ${who}本帧已标注` : `— ${who}本帧无标注`);
   host.innerHTML = '';
   if (!store || ui?.readOnly) return;
@@ -230,7 +230,7 @@ function focusViewports(center, radius) {
   for (const n of ['main', 'side', 'front']) mgr.viewport(n)?.focus(center, radius);
 }
 
-const curPersonLabel = () => (persons ? personLabel(persons.currentId()) : '人物');
+const curPersonLabel = () => (persons ? plabel(persons.currentId()) : '人物');
 
 // F：居中当前人物(一次性)。本帧当前人物无标注 → 退回居中点云,并明说退回了。
 // F:当前人物 = 最后选定的人物(多人时由人物面板 / 切换决定)。选中了关节 → 聚焦该关节;
@@ -274,21 +274,29 @@ async function mountSequence() {
   // 初次取景:相机按当前上轴/前轴环绕点云包围球,几何不动。
   applyAxisFrame(true);
   if (syncUI) syncUI();
-  setStatus(`已加载 ${manifest.frameCount} 帧 · ${marksSummary()}${skipped.length ? ` · ⚠ 跳过非标注格式: ${skipped.join(', ')}` : ''}`);
+  setStatus(`已加载 ${manifest.frameCount} 帧 · ${marksSummary()}${skipped}`);
   $('btn-load-json').disabled = false;
   $('btn-load-bg').disabled = false;
 }
 
-// 读目录里全部 player_N.json → persons;一份都没有则 0 号人物为空标注(保存时写 player_0.json)。
-// keepId:重置时尽量留在原人物上。返回被跳过(非 COCO)的文件名。
+// 读目录里全部 player_N.json + 同目录其他合格的标注 json → persons;一份都没有则 0 号人物为空标注(保存时写 player_0.json)。
+// keepId:重置时尽量留在原人物上。返回附加到状态栏的提示(未载入原因 / 帧数提醒)。
+// 人物显示名:player_N,或独立标注文件的文件名(如 player_pred)。
+const plabel = (id) => (persons ? persons.labelOf(id) : personLabel(id));
+
 async function loadPersons(keepId = null) {
   const fallbackRaw = { images: Array.from({ length: manifest.frameCount }, (_, i) => ({ id: i })), annotations: [], categories: [] };
-  const r = await loadPersonSet({ paths: await source.listNames(), primaryPath: PRIMARY_ANNO, readJson: (n) => source.readJsonNamed(n), fallbackRaw });
+  // 打开即快速探测目录里的其他 json(gt 的 player_N 之外,如预测 player_pred.json):格式合格就列入人物。
+  const r = await loadPersonSet({ paths: await source.listNames(), primaryPath: PRIMARY_ANNO, readJson: (n) => source.readJsonNamed(n), fallbackRaw,
+    extras: true, frameCount: manifest.frameCount });
   persons = r.persons;
+  // 状态栏附带:未载入的文件及原因、已载入但需要留意的(如只覆盖前 N 帧)。
+  const msg = [...r.skipped.map((p) => `⚠ 未载入 ${p}: ${r.reasons[p] ?? '格式不符'}`),
+    ...Object.entries(r.notes).map(([p, n]) => `ℹ ${p} ${n}`)];
   if (keepId != null && persons.has(keepId)) persons.select(keepId);
   store = persons.current().store;
   personPanelKey = '';
-  return r.skipped;
+  return msg.length ? ` · ${msg.join(' · ')}` : '';
 }
 
 const isDragging = () => dragGuards.some((g) => g.isDragging());
@@ -307,31 +315,31 @@ async function afterPersonChange(msg) {
 function selectPerson(id) {
   if (!persons || isDragging()) return;
   persons.select(id, store.currentFrame());
-  afterPersonChange(`当前人物: ${personLabel(id)}`);
+  afterPersonChange(`当前人物: ${plabel(id)}`);
 }
 
 function addPerson() {
   if (!persons || isDragging()) return;
   const p = addEmptyPerson(persons, PRIMARY_ANNO, store.currentFrame());
-  afterPersonChange(`已新建 ${personLabel(p.id)}(未保存)— 在需要的帧上「新建」或「复制上一帧」开始标注`);
+  afterPersonChange(`已新建 ${plabel(p.id)}(未保存)— 在需要的帧上「新建」或「复制上一帧」开始标注`);
 }
 
 function renumberCurrent(id) {
   if (!persons || isDragging()) return;
-  const text = window.prompt(`把 ${personLabel(id)} 改为几号?(文件名随之改为 player_N.json)`, String(persons.nextId()));
+  const text = window.prompt(`把 ${plabel(id)} 改为几号?(文件名随之改为 player_N.json)`, String(persons.nextId()));
   if (text == null) return;
   try {
     const n = parsePersonId(text, persons);
     renumberPerson(persons, PRIMARY_ANNO, id, n);
-    afterPersonChange(`已改号 ${personLabel(id)} → ${personLabel(n)}(保存后生效)`);
+    afterPersonChange(`已改号 ${plabel(id)} → ${plabel(n)}(保存后生效)`);
   } catch (e) { setStatus(String(e.message ?? e)); }
 }
 
 function removePerson(id) {
   if (!persons || isDragging()) return;
-  if (!window.confirm(`删除 ${personLabel(id)}?\n其标注文件将在「保存」时从目录删除;保存前可「重置」反悔。`)) return;
+  if (!window.confirm(`删除 ${plabel(id)}?\n其标注文件 ${persons.get(id)?.path ?? ''} 将在「保存」时从目录删除;保存前可「重置」反悔。`)) return;
   try { persons.remove(id); } catch (e) { setStatus(String(e.message ?? e)); return; }
-  afterPersonChange(`已删除 ${personLabel(id)}(保存后生效)`);
+  afterPersonChange(`已删除 ${plabel(id)}(保存后生效)`);
 }
 
 // 上/下一个有标注帧(当前人物)。
@@ -394,7 +402,7 @@ async function loadAnnotationJson(file) {
   if (syncUI) ui.onChange(syncUI);
   $('slider').max = String(Math.max(0, store.frameCount() - 1));
   await showFrame(Math.min(at, store.frameCount() - 1));
-  setStatus(`已加载标注 JSON（${file.name}）到 ${personLabel(p.id)} — 保存写回 ${p.path}`);
+  setStatus(`已加载标注 JSON（${file.name}）到 ${plabel(p.id)} — 保存写回 ${p.path}`);
 }
 
 // 重置:丢弃全部人物的未保存修改(含新建/改号/删除),从目录重读。

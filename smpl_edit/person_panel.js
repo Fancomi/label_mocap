@@ -25,7 +25,7 @@ export class PersonPanel {
     this.render([], null);
   }
 
-  // persons: [{ id, count, dirty }];current: 当前人物 id。
+  // persons: [{ id, count, dirty, label? }];current: 当前人物 id。label 缺省 player_N。
   render(persons, current) {
     this._cur = current;
     this._list.innerHTML = '';
@@ -34,8 +34,9 @@ export class PersonPanel {
     }
     for (const p of persons) {
       const b = document.createElement('button');
-      b.textContent = `${personLabel(p.id)}${p.dirty ? ' *' : ''} (${p.count})`;
-      b.title = `${personLabel(p.id)}:已标注 ${p.count} 帧${p.dirty ? ' · 有未保存修改' : ''}`;
+      const name = p.label ?? personLabel(p.id);
+      b.textContent = `${name}${p.dirty ? ' *' : ''} (${p.count})`;
+      b.title = `${name}:已标注 ${p.count} 帧${p.dirty ? ' · 有未保存修改' : ''}`;
       b.style.flex = '0 0 auto';
       b.classList.toggle('on', p.id === current);
       b.addEventListener('click', () => { if (p.id !== this._cur) this._h.onSelect?.(p.id); });

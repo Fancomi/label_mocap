@@ -23,6 +23,7 @@
 - 标定相机:`cameras[]`,每项 `{ id, width, height, cam_K, R, t, view_rotation_deg, video, fps, calibration_accepted }`。`R,t` 为 OpenCV「原生相机 ← 公共系」,米;`width/height/cam_K` 为原生像素。`images[i].views[cameraId]` = 该相机视频的解码序号,`null` = 该相机本帧无画面。
 - `source`:该帧人体来自哪台相机的预测 `{ camera, decode_index, effective_state, adopted?, fused_to? }`。
 - 其他视角的独立预测:`json_results/sam3d_<cameraId>_pred.json`,同格式,不会被当成人物加载。
+- 多人物:`player_N.json` 命名族 = 人物 N。pcd_label 打开目录时另外快速探测同目录的其他 json(`person_io.js#probeAnnotation`:COCO、标注带人体参数或框、帧数不多于序列;帧数少于序列的按位置对齐前 N 帧、帧轴补齐到序列长度并在状态栏提示,未载入的文件写明原因),合格的(如预测 `player_pred.json`)也列为人物,显示名 = 文件名,编号接在 player_N 之后;这类人物不能改号(改号会改名并删原文件),删除仍是保存时删文件。`manifest.json`、隐藏文件、子目录不探测。
 
 ## 4. 显示旋转
 
