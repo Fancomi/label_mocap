@@ -145,6 +145,7 @@ export class LabelScene {
   // Person-visibility gate independent of display flags. Hides the posed
   // mesh/joints/bones for empty frames (e.g. after deleting an annotation).
   setPersonVisible(v) { this._personVisible = v; this._applyVisibility(); }
+  personVisible() { return this._personVisible; }
 
   _applyVisibility() {
     const is3d = !!(this._cam && this._cam.mode === '3d');   // 无相机(宿主自管渲染)时为 false;Object3D.visible 只认 === false

@@ -7,11 +7,13 @@
 //  - registerGuard(handle):把手柄并入本体的拖拽/悬停守卫聚合;
 //  - registerSyncHook(fn):fn 在本体 syncUI 末尾被调,返回 true 表示「接管了当前交互」
 //    (本体据此不再挂自己的单关节旋转 gizmo)。
+//  - registerRenderHook(fn):fn 在每帧绘制各视口前调用,返回取消注册的函数。
 // 单活动:任一时刻只有一个柄出三轴箭头,另一个缩为可点选标识 mesh;点 marker 切换(见下)。
 import { IKController } from './ik_controller.js';
 import { DragHandle, makeHandleMarker } from './drag_handle.js';
 import { HandleSelection } from './handle_selection.js';
 import { jointWorldQuat } from './gizmo_frame.js';
+import { IKChainGuides } from './ik_chain_guides.js';
 import * as THREE from 'three';
 
 // 安装 IK 插件。返回 uninstall 函数(调用即彻底拆除,不留痕迹)。
@@ -27,13 +29,14 @@ export function installIK(ctx) {
   let _activeCam = ctx.camera;       // 当前 active 视口相机(多视口下经 registerCameraConsumer 更新);marker 命中 raycast 用
 
   // 反解控制器:依赖注入,parents 通过 getParents 按需读取(不再 setParents)。
+  const getSkeleton = ctx.getSkeleton ?? (() => 'smpl');
   const ikController = new IKController({
     getRotation: ctx.getRotation,
     getStore: ctx.getStore,
     getLastJoints: ctx.getLastJoints,
     getLastWorldRot: ctx.getLastWorldRot,
     // 骨架名由宿主按当前人体模型给出(ik_chains.js 的键);null = 该模型无 IK 链,插件静默不生效。
-    getSkeleton: ctx.getSkeleton ?? (() => 'smpl'),
+    getSkeleton,
     getParents: ctx.getParents,
     onEdit: ctx.onEdit,
   });
@@ -56,9 +59,12 @@ export function installIK(ctx) {
       // 极向量柄随动:未存人控 pole 时它表示「当前弯曲方向」,拖末端时肢体在变,它要跟着走,
       // 否则下次选中会从旧位置跳到新位置。
       const c = currentChain();
-      if (c && !ikController.storedPole(c.name)) poleHandle.moveTo(ikController.autoPoleViz(c));
+      if (c && c.kind !== 'head' && !ikController.storedPole(c.name)) poleHandle.moveTo(ikController.autoPoleViz(c));
     },
-    onEnd: () => ikController.endDrag(),
+    onEnd: () => {
+      ikController.endDrag();
+      if (currentChain()?.kind === 'head') ctx.requestSync();
+    },
   });
   ctx.registerGuard(ikHandle);
 
@@ -96,10 +102,25 @@ export function installIK(ctx) {
   const onToggleClick = () => {
     ikEnabled = !ikEnabled;
     ctx.toggleButton.classList.toggle('on', ikEnabled);
-    ctx.setStatus(ikEnabled ? 'IK 拖拽已开启:拖手腕/脚踝' : 'IK 拖拽已关闭');
+    ctx.setStatus(ikEnabled ? 'IK 拖拽已开启，可拖动头、手腕或脚踝' : 'IK 拖拽已关闭');
     ctx.requestSync();
   };
   ctx.toggleButton.addEventListener('click', onToggleClick);
+
+  const document = ctx.toggleButton.ownerDocument;
+  const guidesLabel = document.createElement('label');
+  Object.assign(guidesLabel.style, { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#9ab' });
+  const guidesToggle = document.createElement('input');
+  guidesToggle.id = 'ik-chains-visible';
+  guidesToggle.type = 'checkbox';
+  guidesToggle.defaultChecked = true;
+  guidesLabel.append(guidesToggle, '显示 IK 链');
+  ctx.toggleButton.parentElement.after(guidesLabel);
+  const guides = new IKChainGuides(handleBase.scene);
+  const removeRenderHook = ctx.registerRenderHook(() => {
+    const joints = guidesToggle.checked && ctx.scene.personVisible() ? ctx.getLastJoints() : null;
+    guides.update(getSkeleton(), joints, joints ? currentChain() : null);
+  });
 
   // syncUI 末尾钩子:收敛原本体里的「joint-grid 末端灰显」+「IK 分支」。
   // 返回 true 表示本插件接管了当前交互(本体不再挂单关节旋转 gizmo)。
@@ -108,7 +129,7 @@ export function installIK(ctx) {
     if (!ui) return false;
     // joint-grid 末端灰显/描边:IK 开启时只有末端关节(腕/踝)可拖,其余灰掉;
     // 关闭时复位(disabled=false、去 .ik)。
-    const ikActive = ikEnabled && !!(ctx.getSkeleton ? ctx.getSkeleton() : 'smpl');
+    const ikActive = ikEnabled && !!getSkeleton();
     ctx.jointGridButtons.forEach((b, j) => {
       const isEnd = ikActive && !!ikController.chainFor(poseJointOf(j));
       b.disabled = ikActive && !isEnd;
@@ -119,13 +140,17 @@ export function installIK(ctx) {
       selection.bindChain(ikChain.name);            // 换链重置回 'end',同链保持
       // 自身轴:末端柄沿末端关节(腕/踝)朝向,极向量柄沿链根关节(肩/髋)朝向。
       const worldRot = ctx.getLastWorldRot();
-      const [jRoot, , jEnd] = ikChain.joints;
+      const jRoot = ikChain.joints[0], jEnd = ikChain.joints.at(-1);
       ikHandle.attach(ctx.scene.jointWorldPosition(poseJointOf(ui.selectedJoint)), worldRot && jointWorldQuat(worldRot, jEnd));
-      const stored = ikController.storedPole(ikChain.name);
-      poleHandle.attach(stored ?? ikController.autoPoleViz(ikChain), worldRot && jointWorldQuat(worldRot, jRoot));
+      if (ikChain.kind === 'head') {
+        poleHandle.detach();
+      } else {
+        const stored = ikController.storedPole(ikChain.name);
+        poleHandle.attach(stored ?? ikController.autoPoleViz(ikChain), worldRot && jointWorldQuat(worldRot, jRoot));
+        poleHandle.setActive(selection.active() === 'pole');
+      }
       // 单活动:按 selection 决定谁出箭头、谁作占位标识(attach 后再 setActive,以 setActive 为准)。
       ikHandle.setActive(selection.active() === 'end');
-      poleHandle.setActive(selection.active() === 'pole');
       takeoverActive = true;
       return true; // 接管:本体不要再挂单关节旋转 gizmo
     }
@@ -143,6 +168,7 @@ export function installIK(ctx) {
   // 不复用 JointPicker:标识 mesh 不是关节球,且语义(切换 vs 选关节)不同。
   const canvas = ctx.canvas;
   const markerUnder = (e) => {
+    if (currentChain()?.kind === 'head') return null;
     let nx, ny;
     if (ctx.ndcMapper) { const p = ctx.ndcMapper(e); nx = p.x; ny = p.y; } // 多视口:active 视口子矩形 NDC
     else {
@@ -180,6 +206,9 @@ export function installIK(ctx) {
     ctx.toggleButton.removeEventListener('click', onToggleClick);
     ctx.toggleButton.classList.remove('on');
     ctx.toggleButton.hidden = true;
+    removeRenderHook();
+    guides.dispose();
+    guidesLabel.remove();
     ikHandle.detach();
     poleHandle.detach();
     canvas.removeEventListener('pointerdown', onPointerDown);

@@ -13,7 +13,7 @@
 - `smpl_core/body_model.js#BodyModel`:页面只认这个接口。关节数、骨骼表、显示关节、姿态按钮、关节角读数、关键点关节与槽位、体型分组、IK 链、关节显示尺寸(`jointScale`)都来自模型配置,页面代码里不写死任何骨架索引或数量。
 - 姿态编辑状态:`smpl_edit/pose_state.js#createPoseState`。四元数权威,欧拉角只是视图。SMPL = `RotationState`;MHR = `MhrPoseState`(只解该关节的直驱参数,受限关节自动投影到可动轴,默认遵守 rig 限位)。
 - 标注文档:`CocoDocument` 只改动被编辑的字段,其余字段(如 `mhr_expr`、`source`)原样保留。字段契约按模型切换(`BODY_SCHEMAS`)。
-- 插件(IK 等)只经扩展点接入:`registerSyncHook`、`registerGuard`、`registerCameraConsumer`、`registerHandleObjects`、`registerHandleScale`、`ndcMapper`、`poseJointOf`。
+- 插件(IK 等)只经扩展点接入:`registerSyncHook`、`registerRenderHook`、`registerGuard`、`registerCameraConsumer`、`registerHandleObjects`、`registerHandleScale`、`ndcMapper`、`poseJointOf`。
 
 ## 3. 数据格式
 
@@ -54,7 +54,11 @@
 
 **关节限位**(MHR):rig 区间限位(min < max)默认生效,姿态 tab 可关。已越界的数据不会被拉回,只是不能再往外拖。到达限位时旋转手柄与欧拉滑块/输入框都停在边界(「转不下去」),往回拖立即生效;手柄拖拽时状态栏提示已到限位。手柄拖拽按增量求解(每步增量作用到关节实际朝向),超出限位很远也不会在两端之间跳变。rig 锁定为单点的 `*_flexible` 自由度不当硬限位(sam-3d-body 输出在用)。
 
-**IK**:同一个 `installIK` 插件。SMPL 链按索引;MHR 链 = 肩-肘-腕、髋-膝-踝(末端是踝 `talocrural`,不是小腿扭转)。MHR 中间关节用 rig 的真铰链轴;结果经姿态状态投影并遵守限位。拖末端时,未存人控极向量的极向量柄随动。
+**IK** 由三个标注器共用 `installIK`。开启后在姿势面板选择头、手腕或脚踝，再拖动末端手柄。手腕和脚踝沿肩肘及髋膝组成的两段链求解。MHR 使用原生铰链轴，踝末端为 `talocrural`。腕踝的极向量手柄在没有手动设置时随末端移动。
+
+头部手柄位于模型原生头关节枢轴。SMPL 通过颈部和三节脊柱求解，MHR 通过颈部和四节脊柱求解。骨盆位置、骨盆旋转和骨长保持固定，MHR 遵守已启用的 rig 限位。松开时手柄回到实际的头关节位置。一次拖拽可一次撤销。
+
+姿势面板中的「显示 IK 链」默认勾选。细线按模型的 IK 关节顺序连线，在所有视口显示当前人物的头部、手臂和腿部链。选中一条链的末端时该链高亮。细线在播放和编辑时随姿态更新，空帧时隐藏，显示状态独立于 IK 拖拽和普通骨骼开关。
 
 **快捷键**(`smpl_edit/shortcuts.js`,提示面板由同一张表生成):
 
@@ -75,7 +79,8 @@ F 的目标(`smpl_edit/framing.js#focusTarget`):姿势模式下选中了关节 �
 
 - 多路视频播放时视频原生播放,人体帧号取主相机视频的当前时间;其他视频漂移超过 2 帧才纠正。暂停/拖动时每台相机只追最新一次 seek,不排队。
 - 某相机本帧无画面时隐藏其背景平面并在标签注明,不显示白板。
-- MHR 分屏(`mhr_label/src/layout.js`):A = 3D 自由视角 + 各相机对齐视频(默认);B = 对齐视频平铺;C = 聚焦一个相机。3D 视角以人体与地面网格取景(`info.scene` 的上方向与地面高度),近处图像遮挡远处图像。
+- MHR 分屏(`mhr_label/src/layout.js`):A = 3D 自由视角与对齐视频, B = 对齐视频平铺, C = 聚焦单相机。C 默认填满画布,等比裁剪同一标定投影窗里的 RGB、人体、手柄和拾取坐标;「全幅」显示完整原画。滚轮以指针为中心缩放,拖动平移,`R` 恢复居中。
+- MHR 三维默认上轴和前轴由可选的 `info.scene.up`、`info.scene.front` 提供,支持有符号轴和三维向量。3D 轴选项只改自由相机的取景和观察方向。轴选择按数据集保存在本机浏览器。点「默认」恢复该数据集的视角。`info.scene` 的上方向与地面高度仍定义地面参考。
 
 ## 8. 资产与离线工具
 

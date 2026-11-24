@@ -29,6 +29,7 @@ import { pickDirectory, fsAccessSupported, DirSource } from '../../label/src/io/
 import { viewConfigOf } from '../../label/src/io/view_config.js';
 import { deriveFrame } from '../../label/src/edit/frame_derive.js';
 import { ViewHub } from './view_hub.js';
+import { FREE_AXES, freeFrontOptions } from './layout.js';
 import { findPredictionFiles, indexPrediction, predictionFields } from './alt_prediction.js';
 import { ANNOTATION_PATH, checkMhrDoc } from './dataset.js';
 
@@ -50,6 +51,7 @@ let camOrder = [];       // cameras[] 顺序 = 分屏顺序
 let ui = null, rotation = null;
 let lastVertices = null, lastJoints = null, lastWorldRot = null;
 let playing = false, fps = 30;
+let axisPreferenceKey = null;
 let useLimits = true;    // 姿态编辑遵守 rig 关节范围
 
 let scene, hub, panels, rootHandle, poseGizmo, jointPicker;
@@ -82,8 +84,14 @@ function decorateView(view, active) {
   const rot = c.rotationDeg ? ` · 转正 ${c.rotationDeg > 180 ? c.rotationDeg - 360 : c.rotationDeg}°` : '';
   const cal = c.calibrationAccepted === false ? ' · ⚠ 标定未验收' : '';
   const noFrame = c.decodeIndex(store?.currentFrame() ?? 0) == null ? ' · 本帧无画面' : '';
+  const sizing = hub.focusSizing();
   const buttons = hub.mode() === 'C'
-    ? camOrder.filter((id) => id !== view.camId).map((id) => ({ text: `→ ${id}`, onClick: () => setLayout('C', id) }))
+    ? [{
+      text: sizing === 'cover' ? '全幅' : '填满',
+      title: sizing === 'cover' ? '复位缩放并显示完整画面' : '保持原比例填满画布',
+      focusSizing: sizing,
+      onClick: () => { if (!isDragging()) hub.setFocusSizing(sizing === 'cover' ? 'fit' : 'cover'); },
+    }, ...camOrder.filter((id) => id !== view.camId).map((id) => ({ text: `→ ${id}`, onClick: () => setLayout('C', id) }))]
     : [{ text: '⛶', title: '只看这个视角(模式 C)', onClick: () => setLayout('C', view.camId) }];
   return { tag: `${view.camId}${cur}${rot}${cal}${noFrame}`, buttons };
 }
@@ -92,6 +100,36 @@ function setLayout(mode, focusId) {
   if (isDragging()) return;
   hub.setMode(mode, focusId);
   document.querySelectorAll('[data-layout]').forEach((b) => b.classList.toggle('on', b.dataset.layout === mode));
+}
+
+function setAxisOptions(select, names, current) {
+  select.replaceChildren(...names.map((name) => new Option(name.startsWith('-') ? `−${name.slice(1)}` : `+${name}`, name)));
+  select.value = current;
+}
+
+function syncAxisMenus() {
+  const { up, front } = hub.freeAxes();
+  $('axis-up').value = up;
+  setAxisOptions($('axis-front'), freeFrontOptions(up), front);
+}
+
+// Remember a viewer setting without changing the annotation or camera data.
+function restoreAxisPreference(raw) {
+  const { up, front } = hub.freeAxes();
+  const identity = raw.info?.source_id ?? raw.cameras.map(c => [c.id, c.width, c.height, c.view_rotation_deg]);
+  axisPreferenceKey = 'mhr-label:view-axes:' + JSON.stringify([identity, up, front]);
+  try {
+    const saved = JSON.parse(localStorage.getItem(axisPreferenceKey));
+    if (saved) hub.setFreeAxes(saved.up, saved.front);
+  } catch { /* Storage can be disabled. The dataset defaults still work. */ }
+}
+
+function saveAxisPreference(reset = false) {
+  if (!axisPreferenceKey) return;
+  try {
+    if (reset) localStorage.removeItem(axisPreferenceKey);
+    else localStorage.setItem(axisPreferenceKey, JSON.stringify(hub.freeAxes()));
+  } catch { /* The view changes still apply for the open page. */ }
 }
 
 // ── 人体模型 / 手部开关 ─────────────────────────────────────────────────────
@@ -147,6 +185,8 @@ async function openDataset() {
   $('right').classList.remove('disabled');
   hub.setSceneConfig(raw.info?.scene);
   hub.setCameras(camOrder, cfgs);
+  restoreAxisPreference(raw);
+  syncAxisMenus();
   await showFrame(0);
   frameFreeView();
   const sum = countMarked(store.annotatedMask());
@@ -363,7 +403,7 @@ function applyAxisLock(k) {
   });
 }
 
-// 当前视图变化(切视图 / 缩放):手柄与拾取换到该视图的相机;对齐视角缩放时手柄按 1/zoom 保持屏幕大小。
+// 当前视图变化(切视图 / 缩放):手柄与拾取换到该视图相机，手柄缩放跟随显示窗口。
 function onViewChange() {
   const c = hub.activeCamera();
   if (!c) return;
@@ -494,6 +534,30 @@ function boot() {
     });
   }
   document.querySelectorAll('[data-layout]').forEach((b) => b.addEventListener('click', () => setLayout(b.dataset.layout)));
+  setAxisOptions($('axis-up'), FREE_AXES, hub.freeAxes().up);
+  syncAxisMenus();
+  $('axis-up').addEventListener('change', (e) => {
+    const up = e.target.value, { front } = hub.freeAxes(), options = freeFrontOptions(up);
+    if (!isDragging()) {
+      hub.setFreeAxes(up, options.includes(front) ? front : options[0]);
+      saveAxisPreference();
+    }
+    syncAxisMenus();
+  });
+  $('axis-front').addEventListener('change', (e) => {
+    if (!isDragging()) {
+      hub.setFreeAxes(hub.freeAxes().up, e.target.value);
+      saveAxisPreference();
+    }
+    syncAxisMenus();
+  });
+  $('axis-default').addEventListener('click', () => {
+    if (isDragging()) return;
+    hub.resetFreeAxes();
+    saveAxisPreference(true);
+    frameFreeView();
+    syncAxisMenus();
+  });
   for (const [id, key] of DISPLAY_TOGGLES) {
     $(id).addEventListener('click', () => {
       const on = !$(id).classList.contains('on');
@@ -537,6 +601,7 @@ function boot() {
   window.addEventListener('resize', () => hub.relayout());
 
   handleObjects.push(...rootHandle.sceneObjects(), ...poseGizmo.sceneObjects());
+  const renderHooks = new Set();
   // IK(拖手腕/脚踝,肩肘或髋膝自动反解;MHR 的肘、膝投影到弯曲轴并遵守限位)。
   installIK({
     scene, camera: hub.activeCamera(), canvas, getStore: () => store, getRotation: () => rotation,
@@ -546,6 +611,7 @@ function boot() {
     jointGridButtons: jointFigure.buttons(), setStatus, requestSync: () => syncUI(),
     toggleButton: $('ik-toggle'), gizmoSpace,
     registerSyncHook: (fn) => syncHooks.push(fn),
+    registerRenderHook: (fn) => { renderHooks.add(fn); return () => renderHooks.delete(fn); },
     registerGuard: (g) => guards.push(g),
     registerCameraConsumer: (fn) => camConsumers.push(fn),
     registerHandleObjects: (objs) => handleObjects.push(...objs),
@@ -559,6 +625,7 @@ function boot() {
       const i = Math.min(store.frameCount() - 1, Math.floor(master.currentTime * (cfgs.get(camOrder[0]).fps || 30) + 1e-3));
       if (i !== store.currentFrame()) showFrame(i);
     }
+    for (const hook of renderHooks) hook();
     hub.render(handleObjects, (view) => scene.setLightFromCamera(view.camera, bodyBounds(lastJoints)?.center ?? null));
     requestAnimationFrame(loop);
   }

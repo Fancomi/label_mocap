@@ -92,7 +92,7 @@ test('IK on MHR: wrist reaches a reachable target; elbow stays a hinge within ri
   const { IKController } = await import('../ik_controller.js');
   const { resolveChains } = await import('../ik_chains.js');
   const chains = resolveChains(body);
-  assert.deepEqual(chains.map((c) => c.name), ['L_Arm', 'R_Arm', 'L_Leg', 'R_Leg']);
+  assert.deepEqual(chains.map((c) => c.name), ['L_Arm', 'R_Arm', 'L_Leg', 'R_Leg', 'Head']);
   const f = { ...body.defaultFields(), root_pos: [0, 0, -3] };
   let st = createPoseState(body, f);
   let out = body.forward({ ...f, ...st.toAxisAngle() }, { worldRot: true });

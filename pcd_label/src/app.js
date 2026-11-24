@@ -705,6 +705,7 @@ function boot3() {
 }
 
 function boot4() {
+  const renderHooks = new Set();
   const IK_ENABLED = true;
   if (IK_ENABLED) {
     installIK({
@@ -717,6 +718,7 @@ function boot4() {
       toggleButton: $('ik-toggle'),
       gizmoSpace,
       registerSyncHook: (fn) => syncHooks.push(fn),
+      registerRenderHook: (fn) => { renderHooks.add(fn); return () => renderHooks.delete(fn); },
       registerGuard: (g) => { dragGuards.push(g); engageGuards.push(g); },
       registerCameraConsumer: (fn) => camConsumers.push(fn),
       registerHandleObjects: (objs) => mgr.registerHandleObjects(objs),
@@ -748,6 +750,7 @@ function boot4() {
     lastTick = now;
     const gizmoBusy = engageGuards.some((g) => g.isEngaged());
     mgr.setActiveControlsEnabled(!gizmoBusy);
+    for (const hook of renderHooks) hook();
     scene.render();
     requestAnimationFrame(loop);
   }

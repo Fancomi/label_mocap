@@ -121,6 +121,7 @@ export class PcdScene {
   }
 
   setPersonVisible(v) { this._personVisible = v; this._applyVisibility(); }
+  personVisible() { return this._personVisible; }
   setFlag(key, v) { this._flags[key] = v; this._applyVisibility(); }
 
   setMeshOpacity(v) {

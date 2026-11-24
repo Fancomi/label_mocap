@@ -7,6 +7,7 @@
 // 写回 RotationState 局部四元数,复用 forwardSmpl/撤销/保存链路;不依赖 three.js。
 import { solveTwoBoneIK, shortestArcQuat } from './ik_solver.js';
 import { endEffectorChain } from './ik_chains.js';
+import { beginHeadIK, solveHeadIK } from './ik_head.js';
 import { mat3ToQuat, quatToMat3, quatConjugate, quatMultiply, quatNormalize } from '../smpl_core/rotations.js';
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -46,6 +47,7 @@ export class IKController {
   // chainRoot + perp0 * 上臂/大腿骨长。
   // 有真铰链(chain.flex)时用铰链给出的弯曲方向 −(a×dir),直肢时也稳定,与求解用的方向一致。
   autoPoleViz(chain) {
+    if (chain.kind === 'head') return null;
     const joints = this._getLastJoints();
     const [jRoot, jMid, jEnd] = chain.joints;
     const root = j3(joints, jRoot), mid = j3(joints, jMid), end = j3(joints, jEnd);
@@ -70,6 +72,11 @@ export class IKController {
     const worldRot = this._getLastWorldRot();
     const parents = this._getParents();
     if (!joints || !worldRot || !parents) { this._ref = null; return; }
+    if (chain.kind === 'head') {
+      const head = beginHeadIK(chain, joints, worldRot, parents, this._getRotation(), this._getStore()?.current?.());
+      this._ref = head ? { chain, head } : null;
+      return;
+    }
     const [jRoot, jMid, jEnd] = chain.joints;
     const root = j3(joints, jRoot);
     const mid = j3(joints, jMid);
@@ -117,6 +124,14 @@ export class IKController {
     const ref = this._ref;
     const rot = this._getRotation();
     if (!ref || !rot) return;
+    if (ref.head) {
+      const fields = solveHeadIK(ref.head, target);
+      if (fields) {
+        this._getStore().applyFields(fields);
+        this._onEdit();
+      }
+      return;
+    }
 
     const dir = norm(sub(target, ref.root));
     // 优先用存储的人控 pole:把它投影到 ⊥dir 平面得到弯曲方向(已隐含侧别,不再乘 sign)。
@@ -182,7 +197,7 @@ export class IKController {
   solveToPole(worldPole) {
     const ref = this._ref;
     const rot = this._getRotation();
-    if (!ref || !rot) return;
+    if (!ref || !rot || ref.head) return;
 
     const dir = norm(sub(ref.endRef, ref.root));         // 冻结的 根→末端 轴
     const oldBend = ref.perp0;                            // 冻结的弯折方向(⊥ dir)

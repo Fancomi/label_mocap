@@ -4,9 +4,9 @@
 // 指针按命中的视图路由:先点一下切换「当前视图」(手柄只在当前视图显示与拖拽),再操作。
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { computeWindow, zoomAtSolve, clampPan } from '../../smpl_render/view_zoom.js';
 import { focusPlacement } from '../../smpl_edit/framing.js';
-import { layoutRects, letterbox, hitRect } from './layout.js';
+import { layoutRects, letterbox, hitRect, alignedWindow, zoomAlignedAt, alignedImageOffset, applyAlignedProjection,
+  freeAxisPlacement, defaultFreeAxes, parseFreeAxis, freeFrontOptions } from './layout.js';
 
 const FAR_Z = 50;     // 对齐视角的背景平面(远)
 const NEAR_Z = 0.8;   // 3D 视角里每台相机前的小底图(离相机近,不挡在相机与人体之间太多)
@@ -21,28 +21,34 @@ class AlignedView {
     this.camera = new THREE.PerspectiveCamera(50, cfg.width / cfg.height, 0.01, 200);
     poseMatrix(cfg.pose).decompose(this.camera.position, this.camera.quaternion, this.camera.scale);
     this.camera.updateMatrixWorld(true);
+    this.viewportAspect = null;
     this.reset();
   }
   get aspect() { return this.cfg.width / this.cfg.height; }
-  _zoomArgs() { const { width, height, K } = this.cfg; return { imageW: width, imageH: height, cx: K.cx, cy: K.cy, zoom: this.zoom, panX: this.panX, panY: this.panY }; }
+  _zoomArgs() {
+    return { imageW: this.cfg.width, imageH: this.cfg.height, viewportAspect: this.viewportAspect,
+      zoom: this.zoom, panX: this.panX, panY: this.panY };
+  }
   _apply() {
     const { width: W, height: H, K } = this.cfg;
-    const win = computeWindow(this._zoomArgs());
-    this._win = win;
-    this.camera.fov = 2 * Math.atan(H / (2 * K.fy)) * 180 / Math.PI;
-    this.camera.aspect = W / H;
-    this.camera.setViewOffset(W, H, win.winX, win.winY, win.winW, win.winH);
-    this.camera.updateProjectionMatrix();
+    this._win = alignedWindow(this._zoomArgs());
+    this.panX = this._win.panX;
+    this.panY = this._win.panY;
+    applyAlignedProjection(this.camera, W, H, K, this._win);
   }
-  _setPan(zoom, panX, panY) {
-    const p = clampPan({ ...this._zoomArgs(), zoom, panX, panY });
-    this.zoom = zoom; this.panX = p.panX; this.panY = p.panY;
+  setViewportAspect(aspect) {
+    if (aspect === this.viewportAspect) return;
+    this.viewportAspect = aspect;
     this._apply();
   }
-  zoomAt(u, v, factor) { const r = zoomAtSolve({ ...this._zoomArgs(), u, v, factor }); this._setPan(r.zoom, r.panX, r.panY); }
+  _setPan(zoom, panX, panY) {
+    this.zoom = zoom; this.panX = panX; this.panY = panY;
+    this._apply();
+  }
+  zoomAt(u, v, factor) { const r = zoomAlignedAt(this._zoomArgs(), u, v, factor); this._setPan(r.zoom, r.panX, r.panY); }
   panBy(du, dv) { this._setPan(this.zoom, this.panX - du * this._win.winW, this.panY - dv * this._win.winH); }
   reset() { this.zoom = 1; this.panX = 0; this.panY = 0; this._apply(); }
-  handleScale() { return 1 / this.zoom; }
+  handleScale() { return this._win.winH / this.cfg.height; }
 }
 
 class FreeView {
@@ -55,30 +61,28 @@ class FreeView {
     this.controls.dampingFactor = 0.08;
     this.controls.enableZoom = false;   // 滚轮由 ViewHub 路由(按指针所在视图)
   }
-  // 初始:站在第一台相机处、以场景「上」为上,看向它前方 4m;有人体后由 frame() 取景。
-  place(cfg, up) {
+  // 还没有人体时以第一台相机前方为环绕中心。
+  place(cfg, axes) {
     const { R, t } = cfg.pose;
-    this.camera.up.fromArray(up);
-    this.camera.position.set(t[0], t[1], t[2]);
-    this.controls.target.set(t[0] - R[2] * 4, t[1] - R[5] * 4, t[2] - R[8] * 4);
+    this.setAxes(axes, [t[0] - R[2] * 4, t[1] - R[5] * 4, t[2] - R[8] * 4], 1.4);
+  }
+  setAxes(axes, target = this.controls.target.toArray(), radius = null) {
+    const distance = this.camera.position.distanceTo(this.controls.target);
+    const place = freeAxisPlacement(axes.up, axes.front, target, radius ?? Math.max(.2, (distance - 1) / 2.2));
+    this.camera.up.fromArray(place.up);
+    this.camera.position.fromArray(place.position);
+    this.controls.target.fromArray(place.target);
+    this.camera.lookAt(this.controls.target);
     this.controls.update();
   }
-  // 取景:人体与它脚下的地面网格一起放在视野中央。以当前水平方位为基准斜 50°、略俯视。
-  frame(center, radius, up, groundH) {
+  // 取景中心保留数据集地面，方位按所选观察轴。
+  frame(center, radius, up, groundH, axes) {
     const U = new THREE.Vector3().fromArray(up);
     const C = new THREE.Vector3().fromArray(center);
     const G = C.clone().addScaledVector(U, groundH - C.dot(U));        // 人体在地面上的投影
     const target = C.clone().lerp(G, 0.35);                              // 偏向人体,地面在下方入画
     const r = Math.max(radius, C.distanceTo(G) / 2 + radius);
-    const dir = this.camera.position.clone().sub(this.controls.target);
-    dir.addScaledVector(U, -dir.dot(U));                                 // 水平方位
-    if (dir.lengthSq() < 1e-6) dir.set(1, 0, 0).addScaledVector(U, -U.x);
-    // 绕「上」转 50°:不站在相机正后方(否则该相机的底图正好挡在视线上),斜着看人体与各相机。
-    dir.normalize().applyQuaternion(new THREE.Quaternion().setFromAxisAngle(U, 50 * Math.PI / 180));
-    dir.addScaledVector(U, 0.35).normalize();
-    this.controls.target.copy(target);
-    this.camera.position.copy(target).addScaledVector(dir, r * 3);
-    this.controls.update();
+    this.setAxes(axes, target.toArray(), r);
   }
   focus(center, radius) {
     const out = focusPlacement({ position: this.camera.position.toArray(), target: this.controls.target.toArray() }, center, radius);
@@ -111,9 +115,10 @@ class CamVisual {
   // 图像矩形在相机系 z = −d 处:像素 (u,v) → (x,y) = ((u−cx)d/fx, −(v−cy)d/fy)。
   _plane(d, order, depthWrite) {
     const { width: W, height: H, K } = this.cfg;
+    const [x, y] = alignedImageOffset(W, H, K);
     const m = new THREE.Mesh(new THREE.PlaneGeometry(W * d / K.fx, H * d / K.fy),
       new THREE.MeshBasicMaterial({ color: 0xffffff, depthWrite, side: THREE.DoubleSide }));
-    m.position.set((W / 2 - K.cx) * d / K.fx, (K.cy - H / 2) * d / K.fy, -d);
+    m.position.set(x * d / K.fx, -y * d / K.fy, -d);
     m.renderOrder = order;
     m.frustumCulled = false;
     m.visible = false;
@@ -121,7 +126,9 @@ class CamVisual {
   }
   _frustum(d) {
     const { width: W, height: H, K } = this.cfg;
-    const c = [[0, 0], [W, 0], [W, H], [0, H]].map(([u, v]) => new THREE.Vector3((u - K.cx) * d / K.fx, -(v - K.cy) * d / K.fy, -d));
+    const [x, y] = alignedImageOffset(W, H, K);
+    const c = [[0, 0], [W, 0], [W, H], [0, H]].map(([u, v]) =>
+      new THREE.Vector3((u - W / 2 + x) * d / K.fx, -(v - H / 2 + y) * d / K.fy, -d));
     const O = new THREE.Vector3();
     const g = new THREE.BufferGeometry().setFromPoints([O, c[0], O, c[1], O, c[2], O, c[3], c[0], c[1], c[1], c[2], c[2], c[3], c[3], c[0]]);
     const l = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x66aaff }));
@@ -159,20 +166,27 @@ export class ViewHub {
     this._visuals = new Map();
     this._camIds = [];
     this._mode = 'A';
+    this._focusSizing = 'cover';
     this._focusId = null;
     this._rects = [];
     this._active = 'free';
     this._showBg = true;
     this._sceneCfg = { up: [0, 1, 0], ground_height_m: -1 };
+    this._sceneAxes = {};
+    this._freeDefaults = this._freeAxes = defaultFreeAxes(null, [0, 0, 1]);
     this._grid = new THREE.GridHelper(12, 24, 0x6695c8, 0x4a6080);
     Object.assign(this._grid.material, { transparent: true, opacity: 0.8, depthWrite: false });
     scene.add(this._grid);
     this._bindPointer();
   }
 
-  // info.scene:{ up, ground_height_m }(世界系,由离线转换从人体估计)。只影响 3D 视角的网格与取景。
+  // info.scene:{ up, front?, ground_height_m }(世界系)。给定网格平面和 3D 初始取景。
   setSceneConfig(cfg) {
-    if (cfg?.up) this._sceneCfg = cfg;
+    this._sceneAxes = cfg ?? {};
+    const axes = defaultFreeAxes(cfg);
+    const up = Array.isArray(cfg?.up) && parseFreeAxis(cfg.up)
+      ? new THREE.Vector3().fromArray(cfg.up).normalize().toArray() : freeAxisPlacement(axes.up, axes.front, [0, 0, 0], 1).up;
+    this._sceneCfg = { up, ground_height_m: Number.isFinite(cfg?.ground_height_m) ? cfg.ground_height_m : -1 };
     const U = new THREE.Vector3().fromArray(this._sceneCfg.up).normalize();
     this._grid.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), U);
   }
@@ -188,19 +202,39 @@ export class ViewHub {
     this._free.focus(center, radius);
     return true;
   }
-  frameFree(center, radius) { this._free.frame(center, radius, this._sceneCfg.up, this._sceneCfg.ground_height_m); }
+  frameFree(center, radius) { this._free.frame(center, radius, this._sceneCfg.up, this._sceneCfg.ground_height_m, this._freeAxes); }
+  freeAxes() { return { ...this._freeAxes }; }
+  setFreeAxes(up, front) {
+    const u = parseFreeAxis(up), f = parseFreeAxis(front);
+    if (!u || !freeFrontOptions(u).includes(f)) return;
+    this._freeAxes = { up: u, front: f };
+    this._free.setAxes(this._freeAxes);
+    this._onChange();
+  }
+  resetFreeAxes() { this.setFreeAxes(this._freeDefaults.up, this._freeDefaults.front); }
 
   setCameras(camIds, cfgs) {
     for (const v of this._visuals.values()) v.dispose(this._scene);
     this._camIds = camIds;
     this._aligned = new Map(camIds.map((id) => [id, new AlignedView(cfgs.get(id))]));
     this._visuals = new Map(camIds.map((id) => [id, new CamVisual(cfgs.get(id), this._scene)]));
-    this._free.place(cfgs.get(camIds[0]), this._sceneCfg.up);
+    if (camIds.length) {
+      const first = cfgs.get(camIds[0]), { R } = first.pose;
+      this._freeDefaults = this._freeAxes = defaultFreeAxes(this._sceneAxes, [R[2], R[5], R[8]]);
+      this._free.place(first, this._freeAxes);
+    }
     this._active = this._mode === 'A' ? 'free' : `cam:${camIds[0]}`;
     this.relayout();
   }
 
   mode() { return this._mode; }
+  focusSizing() { return this._focusSizing; }
+  setFocusSizing(sizing) {
+    if (sizing !== 'cover' && sizing !== 'fit') return;
+    this._focusSizing = sizing;
+    if (sizing === 'fit' && this.activeView()?.kind === 'aligned') this.activeView().reset();
+    this.relayout();
+  }
   focusId() { return this._focusId; }
   setMode(mode, focusId = this._focusId) {
     this._mode = mode;
@@ -226,16 +260,23 @@ export class ViewHub {
 
   relayout() {
     const { W, H } = this._size();
+    this._layoutW = W; this._layoutH = H;
     this._renderer.setSize(W, H, false);
     this._rects = layoutRects(this._mode, { camIds: this._camIds, focusId: this._focusId, W: W || 1, H: H || 1, aspect: this._aspect() });
+    for (const rect of this._rects) {
+      if (rect.kind !== 'aligned') continue;
+      this.view(rect.name).setViewportAspect(this._covers(rect) ? (rect.w * (W || 1)) / (rect.h * (H || 1)) : null);
+    }
     if (!this._rects.some((r) => r.name === this._active)) this._active = this._rects[0]?.name ?? 'free';
     this._refreshOverlay();
     this._onChange();
   }
 
-  // 视图实际画面区域(对齐视角按图像比例内接)。
+  _covers(rect) { return rect.kind === 'aligned' && this._mode === 'C' && this._focusSizing === 'cover'; }
+
+  // A/B 或全图模式保留完整画面，C 填满模式本身就是绘制区域。
   _drawRect(rect) {
-    if (rect.kind !== 'aligned') return rect;
+    if (rect.kind !== 'aligned' || this._covers(rect)) return rect;
     const { W, H } = this._size();
     return letterbox(rect, W, H, this.view(rect.name).aspect);
   }
@@ -267,11 +308,12 @@ export class ViewHub {
     c.addEventListener('pointerdown', (e) => {
       const hit = this._hit(e);
       if (hit && hit.name !== this._active) { this.setActive(hit.name); e.stopImmediatePropagation(); this._pan = null; return; }
-      this._pan = hit?.kind === 'aligned' && !this._isEngaged() ? { x: e.clientX, y: e.clientY, id: e.pointerId, moving: false, rect: hit } : null;
+      this._pan = e.button === 0 && hit?.kind === 'aligned' && this._uvIn(hit, e) && !this._isEngaged()
+        ? { x: e.clientX, y: e.clientY, id: e.pointerId, moving: false, rect: hit } : null;
     }, true);
     c.addEventListener('pointermove', (e) => {
       const p = this._pan;
-      if (!p) return;
+      if (!p || p.id !== e.pointerId) return;
       if (!p.moving && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 4) { p.moving = true; c.setPointerCapture(p.id); }
       if (!p.moving) return;
       const d = this._drawRect(p.rect); const cr = c.getBoundingClientRect();
@@ -279,7 +321,7 @@ export class ViewHub {
       p.x = e.clientX; p.y = e.clientY;
       this._onChange();
     });
-    const end = () => { this._pan = null; };
+    const end = (e) => { if (e.pointerId === this._pan?.id) this._pan = null; };
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
     c.addEventListener('wheel', (e) => {
@@ -317,6 +359,10 @@ export class ViewHub {
       for (const b of buttons) {
         const el = document.createElement('button');
         el.textContent = b.text; if (b.title) el.title = b.title;
+        if (b.focusSizing) {
+          el.className = 'focus-sizing-btn';
+          el.dataset.focusSizing = b.focusSizing;
+        }
         el.addEventListener('click', b.onClick);
         head.appendChild(el);
       }
@@ -329,7 +375,7 @@ export class ViewHub {
   render(handleObjects, prePass) {
     const { W, H } = this._size();
     if (!W || !H) return;
-    if (this._renderer.domElement.width !== Math.floor(W * this._renderer.getPixelRatio())) this.relayout();   // 窗口尺寸变了
+    if (W !== this._layoutW || H !== this._layoutH) this.relayout();
     const r = this._renderer;
     this._free.controls.enabled = this._active === 'free' && !this._isEngaged();
     this._free.controls.update();

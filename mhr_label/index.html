@@ -41,6 +41,7 @@
     .hint { color:#9ab; font-size:11px; line-height:1.5; margin:0; background:#222b33; padding:6px 8px; border-radius:4px; }
     .hint code { color:#cde; }
     input[type=range] { width:100%; } input[type=number] { background:#222; border:1px solid #444; color:#eee; padding:3px 4px; border-radius:3px; font:inherit; width:100%; }
+    select { background:#222; border:1px solid #444; color:#eee; padding:4px; border-radius:3px; font:inherit; }
     input:disabled { opacity:.45; }
     .kgrid { display:grid; grid-template-columns:auto 70px 1fr; gap:4px 6px; align-items:center; }
     .kgrid2 { display:grid; grid-template-columns:auto 1fr; gap:4px 6px; align-items:center; }
@@ -89,9 +90,15 @@
       <div class="row">
         <button data-layout="A" class="on" title="左侧 3D 自由视角,右侧各相机对齐视频">A 3D+对齐</button>
         <button data-layout="B" title="各相机对齐视频平铺(纯二维)">B 纯二维</button>
-        <button data-layout="C" title="只看一个相机的对齐视频;视图左上角可切换相机">C 聚焦</button>
+        <button data-layout="C" title="单相机对齐画面填满画布，左上可切换全幅或相机">C 聚焦</button>
       </div>
       <p class="hint">点一下某个视图设为「当前」(蓝框),手柄只在当前视图出现。</p>
+      <h3>3D 观察轴</h3>
+      <div class="row small">
+        <span><label for="axis-up">上</label></span><select id="axis-up"></select>
+        <span><label for="axis-front">前</label></span><select id="axis-front"></select>
+        <button id="axis-default" title="恢复数据集默认观察轴">默认</button>
+      </div>
       <h3 style="margin-top:6px">显示</h3>
       <div class="row wrap">
         <button id="t-mesh" class="on">网格</button><button id="t-points" class="on">关键点</button>
@@ -140,7 +147,7 @@
       <p class="hint">点画面里的关节点或下面的按钮,再拖旋转环。肘、膝只能弯曲;灰掉的轴该关节不能动。</p>
       <div class="row" style="align-items:center;gap:6px">
         <button id="ik-toggle" hidden>🔗 IK 拖拽</button>
-        <span style="font-size:10px;color:#8ab">开启后拖手腕/脚踝,肩肘/髋膝自动反解</span>
+        <span style="font-size:10px;color:#8ab">开启后可拖头、手腕或脚踝</span>
       </div>
       <div class="row" data-space-toggle title="手柄参考系"></div>
       <label style="display:flex;align-items:center;gap:6px;color:#9ab" title="MHR rig 自带的关节活动范围(如膝只能单向弯)。已超出范围的数据不会被拉回,只是不能再往外拖"><input type="checkbox" id="t-limits" checked style="width:auto;margin:0"> 遵守关节限位</label>

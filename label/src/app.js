@@ -1032,6 +1032,7 @@ function boot() {
   // 安装 IK 插件(可插拔):本体只此一行,通过 ctx 注入扩展点;
   // 置 IK_ENABLED=false(或删此块)即彻底拆除 IK,本体不受影响。
   // 必须在 jointGridButtons 构造之后、syncUI 定义之后、首帧 loop 之前。
+  const renderHooks = new Set();
   const IK_ENABLED = true;
   if (IK_ENABLED) {
     installIK({
@@ -1045,6 +1046,7 @@ function boot() {
       toggleButton: $('ik-toggle'),
       gizmoSpace,
       registerSyncHook: (fn) => syncHooks.push(fn),
+      registerRenderHook: (fn) => { renderHooks.add(fn); return () => renderHooks.delete(fn); },
       registerGuard: (g) => { dragGuards.push(g); engageGuards.push(g); },
       registerHandleScale: (fn) => handleScalers.push(fn),
     });
@@ -1086,6 +1088,7 @@ function boot() {
     lastTick = now;
     const gizmoBusy = engageGuards.some((g) => g.isEngaged());
     if (cam) cam.controls.enabled = (cam.mode === '3d') && !gizmoBusy;
+    for (const hook of renderHooks) hook();
     scene.render();   // scene.render() calls cam.update() internally
     requestAnimationFrame(loop);
   }
