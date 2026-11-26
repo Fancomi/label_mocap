@@ -32,6 +32,7 @@ import { ViewHub } from './view_hub.js';
 import { FREE_AXES, freeFrontOptions } from './layout.js';
 import { findPredictionFiles, indexPrediction, predictionFields } from './alt_prediction.js';
 import { ANNOTATION_PATH, checkMhrDoc } from './dataset.js';
+import { installRecorder } from '../../smpl_render/recorder.js';
 
 const $ = (id) => document.getElementById(id);
 const setStatus = (t) => { $('status').textContent = t; };
@@ -652,6 +653,7 @@ function boot() {
     registerHandleScale: (fn) => handleScalers.push(fn),
     ndcMapper: (e) => hub.pointerToNdc(e),
   });
+  const recorder = installRecorder({ canvas, frame: $('views'), name: 'mhr_label', corner: 'top-right' });
   function loop() {
     if (playing && store) {
       const master = videos.get(camOrder[0]).videoEl;
@@ -661,6 +663,7 @@ function boot() {
     }
     for (const hook of renderHooks) hook();
     hub.render(handleObjects, (view) => scene.setLightFromCamera(view.camera, bodyBounds(lastJoints)?.center ?? null));
+    recorder?.afterRender();
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);

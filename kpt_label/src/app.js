@@ -13,6 +13,7 @@ import { BodyDiagram } from './body_diagram.js';
 import { VideoFrames } from './video_frames.js';
 import { buildExport } from './yolo_export.js';
 import { transform, clampCenter, screenToImg, zoomAt, ZOOM_MIN } from './viewport.js';
+import { installRecorder } from '../../smpl_render/recorder.js';
 
 const $ = (id) => document.getElementById(id);
 const skel = getSkeleton('coco17');
@@ -460,3 +461,5 @@ state.diagram = new BodyDiagram($('diagram-host'), skel, {
 $('show-kpt-label').addEventListener('change', (e) => state.diagram.setLabelVisible(e.target.checked));
 window.addEventListener('resize', () => { if (state.bitmap) { fitCanvas(); render(); } });
 syncUI();
+// 录制视图区(右下角「● 录制」):画布按需重绘,录制器自己每帧取样。
+installRecorder({ canvas, frame: $('stage'), name: 'kpt_label', corner: 'bottom-right', poll: true });

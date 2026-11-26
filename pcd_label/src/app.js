@@ -16,6 +16,7 @@ import { PoseGizmo } from '../../smpl_edit/pose_gizmo.js';
 import { installIK } from '../../smpl_edit/ik_plugin.js';
 import { PcdScene } from './scene/pcd_scene.js';
 import { OrbitCam } from '../../smpl_render/orbit_cam.js';
+import { installRecorder } from '../../smpl_render/recorder.js';
 import { PcdPanels } from './ui/pcd_panels.js';
 import { decodeXYZ } from './scene/point_cloud_decode.js';
 import { decodePngFile } from './io/png_pixels.js';
@@ -741,6 +742,7 @@ function boot4() {
     ro.observe($('stage'));
   }
 
+  const recorder = installRecorder({ canvas: $('c'), frame: $('stage'), name: 'pcd_label', corner: 'bottom-left', inset: [42, 8] });   // 状态栏上方;右上角是子视口的锁定按钮
   function loop(now) {
     if (playing && store && store.frameCount() > 0) {
       acc += now - lastTick;
@@ -752,6 +754,7 @@ function boot4() {
     mgr.setActiveControlsEnabled(!gizmoBusy);
     for (const hook of renderHooks) hook();
     scene.render();
+    recorder?.afterRender();
     requestAnimationFrame(loop);
   }
   requestAnimationFrame((now) => { lastTick = now; loop(now); });

@@ -12,6 +12,7 @@ import { createPoseState } from '../../smpl_edit/pose_state.js';
 import { JointFigure } from '../../smpl_edit/joint_figure.js';
 import { UIController } from '../../smpl_edit/ui_controller.js';
 import { JointPicker } from '../../smpl_edit/joint_picker.js';
+import { installRecorder } from '../../smpl_render/recorder.js';
 import { CameraModes } from '../../smpl_render/camera_modes.js';
 import { LabelScene } from './scene/scene.js';
 import { Panels } from './ui/panels.js';
@@ -1111,6 +1112,8 @@ function boot() {
     });
   }
 
+  // 录制视图区(左下角 ●):停止后下载视频。
+  const recorder = installRecorder({ canvas: $('c'), frame: $('stage'), name: 'label', corner: 'bottom-left' });
   function loop(now) {
     if (playing && store && store.frameCount() > 0) {
       acc += now - lastTick;
@@ -1127,6 +1130,7 @@ function boot() {
     for (const hook of renderHooks) hook();
     if (cam?.isAnimating()) syncHandleScale();   // 切换动画中手柄的屏幕大小随投影连续变化
     scene.render();   // scene.render() calls cam.update() internally
+    recorder?.afterRender();
     requestAnimationFrame(loop);
   }
   requestAnimationFrame((now) => { lastTick = now; loop(now); });
