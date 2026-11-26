@@ -1,6 +1,6 @@
 # 跨页面契约
 
-本文件记录 `label/`(SMPL)、`pcd_label/`(SMPL 点云)、`mhr_label/`(MHR)共同遵守的约定。改动这些行为时,三个页面一起改,并更新本文件。设计过程与数据核对见 `docs/superpowers/specs/2026-11-16-mhr-multiview-badcase-design.md`。
+本文件记录 `label/`(SMPL)、`pcd_label/`(SMPL 点云)、`mhr_label/`(MHR)共同遵守的约定。改动这些行为时,三个页面一起改,并更新本文件。MHR 模型、数据包与标定的实测结论见 `docs/mhr-data-notes.md`。
 
 ## 1. 页面划分
 
@@ -78,6 +78,8 @@
 焦点在滑块/按钮上时快捷键照常生效;只有在文本/数字框里打字时让给输入框。
 
 F 的目标(`smpl_edit/framing.js#focusTarget`):姿势模式下选中了关节 → 该关节(半径 0.25m × 关节尺寸系数,手指更近);否则 → 当前人物的人体包围。多人页面(label、pcd)的「当前人物」= 最后选定的人物;该人物本帧无标注时,pcd 退到点云,label 提示无可居中。
+
+**录制**(`smpl_render/recorder.js#installRecorder`,四个标注页一致,含 `kpt_label/`):视图区角落的「● 录制」按钮,点一下开始、再点停止并下载视频(mp4 优先,否则 webm),文件名 `<页面>-时间戳`。只录视图区画布(2D 留边、3D 填满、切换动画如实保留),不录面板和 DOM 叠加层;有渲染循环的页面每次渲染后调 `afterRender()` 取帧,按需重绘的 2D 画布传 `poll: true`。录制从按下开始,不含加载。
 
 ## 7. 播放与多视图
 

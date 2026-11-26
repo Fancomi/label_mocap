@@ -58,6 +58,6 @@ three.js is **vendored** (`smpl_web_viewer/public/vendor/`) and wired through an
 - **Gizmo frame bug** (`memory/pose-gizmo-frame-bug.md`): pose dragging jumps unless the per-joint gizmo uses the joint's **parent world rotation** to map local↔world. This is why `forwardSmpl` exposes world rotations.
 - **GitHub Pages can't serve Git LFS pointer files.** Any asset loaded by default from a Pages route (web runtime models under `smpl_web_viewer/public/models/`, vendored three.js) must be committed as a real file, not an LFS pointer. See `ASSETS.md` for the full runtime/offline/debug/sample asset boundaries. `main` is the deployable branch.
 
-## Specs & history
+## Docs & scratch
 
-`docs/superpowers/specs/` and `docs/superpowers/plans/` hold the design docs and milestone plans (dated). They are useful context, not runtime entry points.
+`docs/` holds conclusions only: `CONTRACTS.md` (shared annotator behaviour), `mhr-data-notes.md` (measured MHR model / data / calibration facts), `gvhmr-cloud-cors-requirement.md`. Design history lives in git, not in the tree. One-off scripts and experiment output go in `.local/` (gitignored); runtime code must never read it.

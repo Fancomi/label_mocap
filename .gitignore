@@ -219,3 +219,6 @@ __marimo__/
 
 # Ephemeral Claude Code worktrees
 .claude/worktrees/
+
+# 一次性脚本与实验产物的固定去处(验证脚本、录屏驱动、临时数据);正式代码不得读取
+.local/
