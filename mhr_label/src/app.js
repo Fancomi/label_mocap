@@ -44,7 +44,10 @@ let body = null;
 let dir = null;          // DirSource
 let store = null;        // 单人物(player_0)
 let savedRev = 0;
-let cfgs = new Map();    // cameraId → viewConfigOf(...)
+let cfgs = new Map();    // cameraId → viewConfigOf(...):数据配置(帧号、派生量、帧率都用它)
+let viewRot = new Map(); // cameraId → 标注员的显示旋转(顺时针 90° 步数),只改该视图的显示
+let viewRotKey = null;
+let docRaw = null;
 let videos = new Map();  // cameraId → VideoSource
 let preds = new Map();   // cameraId → Map(imageId → annotation)
 let camOrder = [];       // cameras[] 顺序 = 分屏顺序
@@ -76,15 +79,43 @@ async function loadModelWithProgress(url) {
   } finally { box.hidden = true; }
 }
 
+// 显示配置 = 数据配置的转正角再叠加标注员的显示旋转(docs/CONTRACTS.md §4)。存储、派生量仍走 cfgs。
+function displayCfg(id) {
+  const n = viewRot.get(id) ?? 0;
+  if (!n) return cfgs.get(id);
+  const cameras = docRaw.cameras.map((c) => (c.id === id ? { ...c, view_rotation_deg: ((c.view_rotation_deg ?? 0) + 90 * n) % 360 } : c));
+  return { ...viewConfigOf({ ...docRaw, cameras }, id), userRotN: n };
+}
+function restoreViewRotation(raw) {
+  const identity = raw.info?.source_id ?? raw.cameras.map((c) => [c.id, c.width, c.height, c.view_rotation_deg]);
+  viewRotKey = 'mhr-label:view-rotation:' + JSON.stringify(identity);
+  viewRot = new Map();
+  try {
+    const saved = JSON.parse(localStorage.getItem(viewRotKey)) ?? {};
+    for (const id of camOrder) if (Number.isInteger(saved[id]) && saved[id] % 4) viewRot.set(id, ((saved[id] % 4) + 4) % 4);
+  } catch { /* 存储被禁用时用数据的转正配置 */ }
+}
+function rotateView(id, step) {
+  if (isDragging()) return;
+  viewRot.set(id, (((viewRot.get(id) ?? 0) + step) % 4 + 4) % 4);
+  try { localStorage.setItem(viewRotKey, JSON.stringify(Object.fromEntries(viewRot))); } catch { /* 只影响本次页面 */ }
+  hub.setCameraConfig(id, displayCfg(id));
+}
+
 // 每个视图左上角的标签与按钮(ViewHub 回调)。
 function decorateView(view, active) {
   const cur = active ? ' · 当前' : '';
   if (view.kind === 'free') return { tag: `3D 自由视角${cur}`, buttons: [] };
-  const c = view.cfg;
-  const rot = c.rotationDeg ? ` · 转正 ${c.rotationDeg > 180 ? c.rotationDeg - 360 : c.rotationDeg}°` : '';
+  const c = cfgs.get(view.camId);
+  const signed = (d) => (d > 180 ? d - 360 : d);
+  const rot = (c.rotationDeg ? ` · 转正 ${signed(c.rotationDeg)}°` : '') + (view.cfg.userRotN ? ` · 显示 ${signed(view.cfg.userRotN * 90)}°` : '');
   const cal = c.calibrationAccepted === false ? ' · ⚠ 标定未验收' : '';
   const noFrame = c.decodeIndex(store?.currentFrame() ?? 0) == null ? ' · 本帧无画面' : '';
   const sizing = hub.focusSizing();
+  const rotate = [
+    { text: '⟲', title: '画面逆时针转 90°(只改显示)', onClick: () => rotateView(view.camId, -1) },
+    { text: '⟳', title: '画面顺时针转 90°(只改显示)', onClick: () => rotateView(view.camId, +1) },
+  ];
   const buttons = hub.mode() === 'C'
     ? [{
       text: sizing === 'cover' ? '全幅' : '填满',
@@ -93,6 +124,7 @@ function decorateView(view, active) {
       onClick: () => { if (!isDragging()) hub.setFocusSizing(sizing === 'cover' ? 'fit' : 'cover'); },
     }, ...camOrder.filter((id) => id !== view.camId).map((id) => ({ text: `→ ${id}`, onClick: () => setLayout('C', id) }))]
     : [{ text: '⛶', title: '只看这个视角(模式 C)', onClick: () => setLayout('C', view.camId) }];
+  buttons.unshift(...rotate);
   return { tag: `${view.camId}${cur}${rot}${cal}${noFrame}`, buttons };
 }
 
@@ -184,7 +216,9 @@ async function openDataset() {
   $('speed').value = String(fps); $('speed-val').textContent = `${fps} fps`;
   $('right').classList.remove('disabled');
   hub.setSceneConfig(raw.info?.scene);
-  hub.setCameras(camOrder, cfgs);
+  docRaw = raw;
+  restoreViewRotation(raw);
+  hub.setCameras(camOrder, new Map(camOrder.map((id) => [id, displayCfg(id)])));
   restoreAxisPreference(raw);
   syncAxisMenus();
   await showFrame(0);

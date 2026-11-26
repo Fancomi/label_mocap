@@ -4,7 +4,7 @@ import { PerspectiveCamera, Texture, Vector2, Vector3 } from '../../smpl_web_vie
 import { CameraRig } from '../../smpl_edit/camera_rig.js';
 import { canvasNormToImage } from '../../smpl_render/view_zoom.js';
 import { layoutRects, letterbox, bestGrid, hitRect, FREE_SPLIT, defaultFreeAxes, freeAxisPlacement,
-  freeFrontOptions, alignedWindow, zoomAlignedAt, alignedImageOffset, applyAlignedProjection } from '../src/layout.js';
+  freeFrontOptions, alignedWindow, alignedZoomMin, zoomAlignedAt, alignedImageOffset, applyAlignedProjection } from '../src/layout.js';
 
 const PORTRAIT = 9 / 16;
 const opts = { camIds: ['zcam1', 'zcam2'], W: 1400, H: 1000, aspect: PORTRAIT };
@@ -75,6 +75,17 @@ test('C cover fills a wide viewport, pans at 1×, and zooms around the cursor', 
   close(zoomed.winW / zoomed.winH, baseWindow.viewportAspect);
   close(nextX, x);
   close(nextY, y);
+});
+
+test('cover can zoom out until the whole image is visible, centred on the long axis', () => {
+  const minZ = alignedZoomMin(baseWindow);
+  close(minZ, 450 / 1280);
+  const out = alignedWindow({ ...baseWindow, zoom: 0.01, panX: 300, panY: 300 });
+  close(out.winH, 1280);
+  close(out.winW, 1280 * 1.6);
+  close(out.winX, (720 - out.winW) / 2);   // 宽方向窗口大于图像:居中,平移无效
+  close(out.winY, 0);
+  assert.equal(alignedZoomMin({ ...baseWindow, viewportAspect: null }), 1);
 });
 
 test('fit, cover, and pan/zoom share off-center anisotropic projection and pointer rays', () => {

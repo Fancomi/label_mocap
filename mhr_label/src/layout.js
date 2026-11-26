@@ -94,19 +94,25 @@ export function letterbox(rect, W, H, aspect) {
 
 // 以真实图像像素表示窗口。cover 时先算填满视口所需的裁取比例，再做鼠标锚定缩放；
 // 平移始终裁在整幅图像内，所以聚焦模式可拖回缩放前被裁掉的区域。
+// cover 下可缩小到看见整幅(zoom < 1),窗口比图像大的方向居中、不平移。
+export function alignedZoomMin({ imageW, imageH, viewportAspect = null }) {
+  if (viewportAspect == null) return ZOOM_MIN;
+  return Math.min(Math.min(imageW, imageH * viewportAspect) / imageW, Math.min(imageH, imageW / viewportAspect) / imageH);
+}
+const windowAxis = (img, win, pan) => (win <= img + 1e-9 ? clamp((img - win) / 2 + pan, 0, img - win) : (img - win) / 2);
 export function alignedWindow({ imageW, imageH, viewportAspect = null, zoom, panX, panY }) {
-  const z = clamp(zoom, ZOOM_MIN, ZOOM_MAX);
+  const z = clamp(zoom, alignedZoomMin({ imageW, imageH, viewportAspect }), ZOOM_MAX);
   const baseW = viewportAspect == null ? imageW : Math.min(imageW, imageH * viewportAspect);
   const baseH = viewportAspect == null ? imageH : Math.min(imageH, imageW / viewportAspect);
   const winW = baseW / z, winH = baseH / z;
-  const winX = clamp((imageW - winW) / 2 + panX, 0, imageW - winW);
-  const winY = clamp((imageH - winH) / 2 + panY, 0, imageH - winH);
+  const winX = windowAxis(imageW, winW, panX);
+  const winY = windowAxis(imageH, winH, panY);
   return { winX, winY, winW, winH, panX: winX - (imageW - winW) / 2, panY: winY - (imageH - winH) / 2 };
 }
 
 export function zoomAlignedAt(args, u, v, factor) {
   const [x, y] = canvasNormToImage(u, v, alignedWindow(args));
-  const zoom = clamp(args.zoom * factor, ZOOM_MIN, ZOOM_MAX);
+  const zoom = clamp(args.zoom * factor, alignedZoomMin(args), ZOOM_MAX);
   const next = alignedWindow({ ...args, zoom });
   const panX = x - u * next.winW - (args.imageW - next.winW) / 2;
   const panY = y - v * next.winH - (args.imageH - next.winH) / 2;

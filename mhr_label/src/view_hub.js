@@ -17,11 +17,15 @@ class AlignedView {
   constructor(cfg) {
     this.kind = 'aligned';
     this.camId = cfg.cameraId;
-    this.cfg = cfg;
     this.camera = new THREE.PerspectiveCamera(50, cfg.width / cfg.height, 0.01, 200);
+    this.viewportAspect = null;
+    this.setConfig(cfg);
+  }
+  // 换显示配置(显示旋转):同一个 three 相机对象,手柄/拾取持有的引用不变。
+  setConfig(cfg) {
+    this.cfg = cfg;
     poseMatrix(cfg.pose).decompose(this.camera.position, this.camera.quaternion, this.camera.scale);
     this.camera.updateMatrixWorld(true);
-    this.viewportAspect = null;
     this.reset();
   }
   get aspect() { return this.cfg.width / this.cfg.height; }
@@ -243,6 +247,19 @@ export class ViewHub {
   }
 
   setTexture(camId, tex) { this._visuals.get(camId)?.setTexture(tex); }
+  // 换某台相机的显示配置(标注员的显示旋转)。对齐视角相机原地更新,场景里的底图/视锥按新配置重建,当前帧画面沿用。
+  setCameraConfig(camId, cfg) {
+    const view = this._aligned.get(camId), old = this._visuals.get(camId);
+    if (!view || !old) return;
+    view.setConfig(cfg);
+    const tex = old.far.material.map;
+    old.dispose(this._scene);
+    const vis = new CamVisual(cfg, this._scene);
+    if (tex) vis.setTexture(tex);   // 新材质:按新配置的旋转重贴
+    vis.hasFrame = old.hasFrame;
+    this._visuals.set(camId, vis);
+    this.relayout();
+  }
   setShowBackground(on) { this._showBg = on; }
 
   view(name) { return name === 'free' ? this._free : this._aligned.get(name.slice(4)); }
@@ -272,7 +289,14 @@ export class ViewHub {
     this._onChange();
   }
 
-  _covers(rect) { return rect.kind === 'aligned' && this._mode === 'C' && this._focusSizing === 'cover'; }
+  // 填满:C 按「填满/全幅」按钮;A/B 里画面是竖图而分区更宽时自动填满(两侧不留空,可滚轮缩小看全图)。
+  _covers(rect) {
+    if (rect.kind !== 'aligned') return false;
+    if (this._mode === 'C') return this._focusSizing === 'cover';
+    const { W, H } = this._size();
+    const a = this.view(rect.name).aspect;
+    return a < 1 && (rect.w * (W || 1)) / (rect.h * (H || 1)) > a * 1.05;
+  }
 
   // A/B 或全图模式保留完整画面，C 填满模式本身就是绘制区域。
   _drawRect(rect) {

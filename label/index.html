@@ -61,6 +61,9 @@
       background:#262b33; border:1px solid #3a4150; border-radius:6px;
       box-shadow:0 6px 18px rgba(0,0,0,.5); }
     #open-menu[hidden] { display:none; }
+    .view-tools { position:absolute; top:8px; right:8px; z-index:6; display:flex; gap:3px; align-items:center; background:rgba(17,25,34,.85); border:1px solid #2a3340; border-radius:6px; padding:3px; }
+    .view-tools button { padding:3px 7px; font-size:12px; }
+    .view-tools span { color:#bcd; font-size:11px; min-width:28px; text-align:center; }
     .kbd-hint { position:absolute; right:8px; bottom:8px; z-index:6; background:#111922; border:1px solid #2a3340; border-radius:6px; color:#bcd; font-size:11px; min-width:120px; }
     .kbd-hint-head { display:flex; justify-content:space-between; align-items:center; padding:4px 8px; border-bottom:1px solid #2a3340; }
     .kbd-hint-head button { background:none; border:none; color:#8ab; cursor:pointer; font-size:12px; }
@@ -136,6 +139,10 @@
   </aside>
 
   <div id="stage"><canvas id="c"></canvas>
+    <div class="view-tools" title="只旋转显示,不改数据;3D 的上方向跟着变">
+      <button id="view-rot-ccw" title="画面逆时针转 90°">⟲</button><span id="view-rot-label">0°</span><button id="view-rot-cw" title="画面顺时针转 90°">⟳</button>
+      <button id="view-fit" title="2D:填满视口 / 显示全幅">填满</button>
+    </div>
     <div id="kbd-hint" class="kbd-hint">
       <div class="kbd-hint-head"><span>快捷键</span><button id="kbd-hint-toggle" title="最小化">▾</button></div>
       <div class="kbd-hint-body"><div><b>F</b> 居中当前人物(3D)</div><div><b>[ / ]</b> 上 / 下一有标注帧</div></div>

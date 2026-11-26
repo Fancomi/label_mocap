@@ -133,9 +133,9 @@ const editorModes = ['root', 'pose', 'bbox', 'beta'];
 function isImageName(name) { return /\.(jpe?g|png|bmp)$/i.test(name); }
 
 // 2D viewOffset 假缩放下 TC 的 size 公式不吃 viewOffset,手柄屏幕尺寸不随缩放变。
-// 按 1/zoom 反向缩放手柄抵消(3D 用真相机,size 公式自适应 → 复位为 1)。
+// 按 1/放大倍数 反向缩放手柄抵消(含「填满」裁剪带来的放大;3D 用真相机,size 公式自适应 → 复位为 1)。
 function syncHandleScale() {
-  const s = (cam && cam.mode === '2d') ? 1 / Math.max(1e-3, cam.getZoom()) : 1;
+  const s = cam ? cam.handleScale() : 1;
   poseGizmo?.setHandleScale(s);
   rootHandle?.setHandleScale(s);
   handleScalers.forEach((fn) => fn(s));
@@ -146,8 +146,35 @@ function syncHandleScale() {
 // 3D 视野被旧画布框死(与 viewer 模式切换 resize 对齐)。随后刷新 bbox/手柄。
 function onModeSwitched() {
   scene.resize();
-  if (bboxOverlay) bboxOverlay.render(store?.current()?.bbox ?? null);
+  if (bboxOverlay) bboxOverlay.render(bboxShownNow() ? (store?.current()?.bbox ?? null) : null);
   syncHandleScale();
+  syncViewTools();
+}
+
+// 显示旋转(画面 ⟲/⟳):只转视图相机绕光轴的朝向,数据、内参、派生量都按原生像素(docs/CONTRACTS.md §4)。
+// 3D 环绕的上方向与地面网格随之转,同点云页的上轴设置。按数据集记在本机浏览器。
+let viewRotKey = null;
+function restoreViewRotation(coco) {
+  const ids = coco.imageIds();
+  viewRotKey = 'label:view-rotation:' + JSON.stringify([coco.imageInfo(ids[0])?.file_name ?? '', ids.length, cam.imageW, cam.imageH]);
+  let n = 0;
+  try { n = Number(localStorage.getItem(viewRotKey)) || 0; } catch { /* 存储被禁用时用 0° */ }
+  applyViewRotation(n, { save: false });
+}
+function applyViewRotation(n, { save = true } = {}) {
+  cam.setViewRotation(n);
+  scene.setGridFrame(cam.viewRollWorldQuat());
+  if (save && viewRotKey) { try { localStorage.setItem(viewRotKey, String(cam.viewRotation())); } catch { /* 只影响本次页面 */ } }
+  onModeSwitched();
+  syncViewTools();
+}
+function syncViewTools() {
+  if (!cam) return;
+  $('view-rot-label').textContent = `${cam.viewRotation() * 90}°`;
+  const cover = cam.coverActive();
+  $('view-fit').classList.toggle('on', cover);
+  $('view-fit').title = cover ? '2D 填满视口(裁掉多出的方向),点击显示全幅' : '2D 显示全幅,点击填满视口';
+  $('view-fit').disabled = cam.intendedMode() !== '2d';
 }
 
 // 姿态 tab 的关节选择:人形图 + 分组按钮,由 body 配置生成(smpl_edit/joint_figure.js)。
@@ -194,6 +221,7 @@ async function mountDataset({ background, hint = {} }) {
   const pose = viewCfg ? viewCfg.pose : { R: [1, 0, 0, 0, 1, 0, 0, 0, 1], t: [0, 0, 0] };
   cam.setViewPose(pose);
   scene.setDataCamera(cam.viewPose(), viewCfg ? viewCfg.rotationDeg : 0);
+  restoreViewRotation(coco);
   cam.resetZoom();
   scene.prepareForSequence({ K: cam.K, image_w: cam.imageW, image_h: cam.imageH });
   cam.snapTo('2d');
@@ -657,6 +685,7 @@ function boot() {
   scene = new LabelScene($('c'));
   cam = new CameraModes({ canvas: $('c'), meta: { K: { fx: 1850, fy: 1850, cx: 960, cy: 540 }, image_w: 1920, image_h: 1080 } });
   scene.setCamera(cam);
+  cam.onSettled = () => onModeSwitched();   // 2D↔3D 动画结束:画布按目标模式重排(2D 留边/填满),框与手柄重画
   $('btn-open').addEventListener('click', (e) => {
     if (!fsAccessSupported()) { $('dir-input').click(); return; }
     e.stopPropagation();
@@ -734,7 +763,7 @@ function boot() {
       if (cam.mode !== '2d') { setStatus('3D 视角按 F 居中;R 复位 2D 对齐视角的缩放/平移'); return; }
       cam.resetZoom(); syncHandleScale();
       if (bboxOverlay) bboxOverlay.render(bboxShownNow() ? (store?.current()?.bbox ?? null) : null);
-      setStatus('已复位 2D 缩放/平移');
+      setStatus(cam.coverActive() ? '已复位 2D 缩放/平移(填满视口)' : '已复位 2D 缩放/平移');
     },
   };
   bindShortcuts({ actions: shortcutActions, enabled: (a) => !!store && !isBusy() && (a === 'play' || a === 'undo' || !isDragging()) });
@@ -1027,7 +1056,14 @@ function boot() {
   $('btn-save').addEventListener('click', () => saveJson().catch((e) => setStatus(String(e))));
   $('btn-reset').addEventListener('click', () => resetFromDisk().catch((e) => setStatus(String(e))));
 
-  window.addEventListener('resize', () => { scene.resize(); if (bboxOverlay) bboxOverlay.render(bboxShownNow() ? (store?.current()?.bbox ?? null) : null); });
+  window.addEventListener('resize', () => onModeSwitched());
+  $('view-rot-ccw').addEventListener('click', () => { if (store && !isDragging()) applyViewRotation(cam.viewRotation() - 1); });
+  $('view-rot-cw').addEventListener('click', () => { if (store && !isDragging()) applyViewRotation(cam.viewRotation() + 1); });
+  $('view-fit').addEventListener('click', () => {
+    if (!store || cam.intendedMode() !== '2d') return;
+    cam.setFitMode(cam.coverActive() ? 'contain' : 'cover');
+    onModeSwitched();
+  });
 
   // 安装 IK 插件(可插拔):本体只此一行,通过 ctx 注入扩展点;
   // 置 IK_ENABLED=false(或删此块)即彻底拆除 IK,本体不受影响。
@@ -1089,6 +1125,7 @@ function boot() {
     const gizmoBusy = engageGuards.some((g) => g.isEngaged());
     if (cam) cam.controls.enabled = (cam.mode === '3d') && !gizmoBusy;
     for (const hook of renderHooks) hook();
+    if (cam?.isAnimating()) syncHandleScale();   // 切换动画中手柄的屏幕大小随投影连续变化
     scene.render();   // scene.render() calls cam.update() internally
     requestAnimationFrame(loop);
   }

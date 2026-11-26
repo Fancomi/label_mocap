@@ -114,7 +114,7 @@ export class LabelScene {
     }
     const divisions = Math.max(2, Math.round(this._gridSize / this._gridStep));
     this._grid = new THREE.GridHelper(this._gridSize, divisions, 0x6695c8, 0x4a6080);
-    this._grid.position.y = -1.0;
+    this._applyGridFrame();
     this._grid.material.opacity = 0.85;
     this._grid.material.transparent = true;
     this._grid.material.depthWrite = false;
@@ -123,6 +123,15 @@ export class LabelScene {
       this._axes = new THREE.AxesHelper(0.5);
       this._scene.add(this._axes);
     }
+  }
+
+  // 地面网格跟随显示旋转的「上」(3D 环绕的上 = 转后画面的上,同点云的上轴设置)。q = 世界系旋转,null = 不转。
+  setGridFrame(q) { this._gridQ = q ? q.clone() : null; this._applyGridFrame(); }
+  _applyGridFrame() {
+    if (!this._grid) return;
+    const q = this._gridQ ?? new THREE.Quaternion();
+    this._grid.quaternion.copy(q);
+    this._grid.position.set(0, -1, 0).applyQuaternion(q);
   }
 
   setGrid(size, step) {
@@ -148,16 +157,25 @@ export class LabelScene {
   personVisible() { return this._personVisible; }
 
   _applyVisibility() {
-    const is3d = !!(this._cam && this._cam.mode === '3d');   // 无相机(宿主自管渲染)时为 false;Object3D.visible 只认 === false
+    // 3D 专属物件的可见度:2D = 0,3D = 1,2D↔3D 切换动画中渐隐渐显。无相机(宿主自管渲染)时为 0。
+    const w = this._cam ? (this._cam.blend3D?.() ?? (this._cam.mode === '3d' ? 1 : 0)) : 0;
+    const fade = (obj, on, base = 1) => {
+      if (!obj) return;
+      obj.visible = on && w > 0;
+      const m = obj.material;
+      const transparent = base < 1 || w < 1;
+      if (m.transparent !== transparent) { m.transparent = transparent; m.needsUpdate = true; }
+      m.opacity = base * w;
+    };
     if (this._mesh) this._mesh.visible = this._flags.mesh && this._personVisible;
     if (this._jointsGroup) this._jointsGroup.visible = this._flags.points && this._personVisible;
     if (this._bonesGroup) this._bonesGroup.visible = this._flags.bones && this._personVisible;
-    if (this._grid) this._grid.visible = this._flags.grid && is3d;
-    if (this._axes) this._axes.visible = this._flags.axes && is3d;
+    fade(this._grid, this._flags.grid, 0.85);
+    fade(this._axes, this._flags.axes);
     // 没有底图(该帧无画面 / 加载失败)时整块隐藏,而不是显示一块白色平面。
     if (this._bgFar) this._bgFar.visible = this._flags.bg && !!this._bgTex;
-    if (this._bgNear) this._bgNear.visible = this._flags.bg && is3d && !!this._bgTex;
-    if (this._frustum) this._frustum.visible = is3d;
+    fade(this._bgNear, this._flags.bg && !!this._bgTex);
+    fade(this._frustum, true);
   }
 
   prepareForSequence(meta) {
@@ -227,14 +245,18 @@ export class LabelScene {
   //   其余   → fill buffer + container aspect (3D 自由视野跟容器，修了 letterbox bug)
   resize() {
     if (!this._cam) return;
+    const host = this._canvas.parentElement;
+    this._cam.setViewportSize?.(host.clientWidth, host.clientHeight);   // 先定 contain / cover,再按它排画布
+    // 2D↔3D 切换动画中画布填满容器(投影过渡在 CameraModes 里按容器算),结束后再按目标模式排。
     applyContainerResize({
       renderer: this._renderer,
       camera: this._cam.camera,
       canvas: this._canvas,
       container: this._canvas.parentElement,
       imageAspect: this._cam.effectiveAspect(),
-      effectiveMode: this._cam.intendedMode(),
+      effectiveMode: this._cam.isAnimating() ? '3d' : this._cam.intendedMode(),
     });
+    if (!this._cam.isAnimating()) this._cam.refreshProjection?.();   // 2D:相机 aspect 回到整幅比例,由 viewOffset 窗口决定画布比例(cover)
   }
 
   updateMesh(vertices, joints) {
@@ -334,10 +356,19 @@ export class LabelScene {
       this._pendingTex = null;
     }
 
+    this._cam.update();   // 先推进切换动画:可见度与头灯按本帧相机
     this._applyVisibility();
     this.setLightFromCamera(this._cam.camera, this._followCenter);
-    this._cam.update();
-    this._renderer.render(this._scene, this._cam.camera);
+    const rect = this._cam.transitionRect?.();
+    if (!rect) { this._renderer.render(this._scene, this._cam.camera); return; }
+    // 2D↔3D 切换中:只在过渡矩形里出图(投影已按整个容器算好),矩形外保持底色。
+    const r = this._renderer, size = r.getSize(new THREE.Vector2());
+    r.setScissorTest(false);
+    r.clear();
+    r.setScissor(rect.x0 * size.x, (1 - rect.y1) * size.y, (rect.x1 - rect.x0) * size.x, (rect.y1 - rect.y0) * size.y);
+    r.setScissorTest(true);
+    r.render(this._scene, this._cam.camera);
+    r.setScissorTest(false);
   }
 
   setFollowCenter(c) { this._followCenter = c; }

@@ -74,7 +74,8 @@ export class BboxOverlay {
     // 用 intendedMode():切换动画(1s slerp)期间 cam.mode 仍是旧值,会导致
     // 「切 2D 时框消失、切 3D 时框出现」的反相 bug。intendedMode 取的是目标模式。
     const mode2d = cam && (cam.intendedMode ? cam.intendedMode() === '2d' : cam.mode === '2d');
-    const visible = bbox && mode2d && this._getBboxVisible();
+    // 2D↔3D 切换动画中不画(画布与投影都在过渡),动画结束由宿主重画。
+    const visible = bbox && mode2d && !cam.isAnimating?.() && this._getBboxVisible();
     if (!visible) {
       this._box.style.display = 'none';
       for (const corner of CORNERS) this._handles[corner].style.display = 'none';
@@ -83,16 +84,19 @@ export class BboxOverlay {
     const rect = this._canvas.getBoundingClientRect();
     const stageRect = this._stage.getBoundingClientRect();
     const [x, y, w, h] = bbox;
-    const [sx0, sy0] = this._imgToScreen(x, y, cam, rect, stageRect);
-    const [sx1, sy1] = this._imgToScreen(x + w, y + h, cam, rect, stageRect);
+    // 角名是原生图像里的角(tl = 原生左上);画面旋转后它可能在屏幕任一角,所以逐角映射,
+    // 框取四角的屏幕包围。拖某个角手柄改的仍是原生那个角,与显示方向无关。
+    const pts = {
+      tl: this._imgToScreen(x, y, cam, rect, stageRect), tr: this._imgToScreen(x + w, y, cam, rect, stageRect),
+      bl: this._imgToScreen(x, y + h, cam, rect, stageRect), br: this._imgToScreen(x + w, y + h, cam, rect, stageRect),
+    };
+    const xs = CORNERS.map((c) => pts[c][0]), ys = CORNERS.map((c) => pts[c][1]);
+    const sx0 = Math.min(...xs), sy0 = Math.min(...ys);
     this._box.style.display = 'block';
     this._box.style.left = `${sx0}px`;
     this._box.style.top = `${sy0}px`;
-    this._box.style.width = `${sx1 - sx0}px`;
-    this._box.style.height = `${sy1 - sy0}px`;
-    const pts = {
-      tl: [sx0, sy0], tr: [sx1, sy0], bl: [sx0, sy1], br: [sx1, sy1],
-    };
+    this._box.style.width = `${Math.max(...xs) - sx0}px`;
+    this._box.style.height = `${Math.max(...ys) - sy0}px`;
     for (const corner of CORNERS) {
       const [hx, hy] = pts[corner];
       const handle = this._handles[corner];

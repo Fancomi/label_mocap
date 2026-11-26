@@ -71,3 +71,25 @@ test('角落放大:zoomAtSolve 越界 pan 经 clampPan 收敛到有效区间', (
   // 主点居中、z=2:有效 pan ∈ [0, 960]×[0,540];左上角放大定点应收敛到 0
   close(c.panX, 0); close(c.panY, 0);
 });
+
+test('cover(aspect): portrait image in a wide canvas fills width, crops height, can zoom out to the whole image', async () => {
+  const { zoomRange, centeredPan } = await import('../view_zoom.js');
+  const P = { imageW: 1080, imageH: 1920, cx: 540, cy: 960, aspect: 1.6 };
+  const c = centeredPan(P);
+  const w = computeWindow({ ...P, zoom: 1, ...c });
+  close(w.winW, 1080); close(w.winH, 1080 / 1.6);
+  close(w.winY, (1920 - 1080 / 1.6) / 2);                       // 默认居中
+  const [zmin] = zoomRange(P);
+  close(zmin, (1080 / 1.6) / 1920);
+  const out = computeWindow({ ...P, zoom: zmin, panX: 999, panY: 999 });
+  close(out.winH, 1920); assert.ok(out.winW > 1080);            // 看到整幅,横向超出部分居中
+  close(out.winX, (1080 - out.winW) / 2);
+  const z = zoomAtSolve({ ...P, zoom: 1, ...c, u: 0.5, v: 0.5, factor: 0.01 });
+  close(z.zoom, zmin);
+});
+
+test('aspect omitted keeps the contain behaviour exactly', () => {
+  const a = computeWindow({ ...K, zoom: 2, panX: 100, panY: 50 });
+  const b = computeWindow({ ...K, zoom: 2, panX: 100, panY: 50, aspect: undefined });
+  assert.deepEqual(a, b);
+});
